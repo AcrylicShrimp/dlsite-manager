@@ -1,0 +1,31 @@
+{
+  "name": "dlsite-manager",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./jsconfig.json",
+    "check:watch": "svelte-kit sync && svelte-check --tsconfig ./jsconfig.json --watch",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^1.1.0"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "next",
+    "@sveltejs/kit": "next",
+    "@tauri-apps/cli": "^1.1.0",
+    "autoprefixer": "^10.4.12",
+    "postcss": "^8.4.18",
+    "svelte": "^3.49.0",
+    "svelte-check": "^2.7.1",
+    "svelte-preprocess": "^4.10.6",
+    "tailwindcss": "^3.2.1",
+    "tslib": "^2.3.1",
+    "typescript": "^4.8.4",
+    "vite": "^3.1.0"
+  }
+}
