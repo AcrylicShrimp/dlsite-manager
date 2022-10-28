@@ -25,11 +25,13 @@ pub enum ApplicationError {
         reqwest_error: reqwest::Error,
     },
     #[error("the DLsite does not provide a required cookie(domain='{cookie_domain}', path='{cookie_path}', name='{cookie_name}')")]
-    DLsiteCookieNotFoundError {
+    DLsiteCookieNotFound {
         cookie_domain: String,
         cookie_path: String,
         cookie_name: String,
     },
+    #[error("you're not authenticated to the DLsite")]
+    DLsiteNotAuthenticated,
 }
 
 impl serde::Serialize for ApplicationError {

@@ -1,6 +1,6 @@
 use crate::{
-    application_error::Result,
-    dlsite::test_account,
+    application_error::{Error, Result},
+    dlsite::{get_product_count, login},
     storage::account::*,
     window::{AccountEditWindow, AccountManagementWindow, WindowInfoProvider},
 };
@@ -68,9 +68,11 @@ pub fn account_management_remove_account<R: Runtime>(
 
 #[tauri::command]
 pub async fn account_management_test_account(username: String, password: String) -> Result<isize> {
-    if let Some(product_count) = test_account(username, password).await? {
-        Ok(product_count as isize)
-    } else {
-        Ok(-1)
+    match get_product_count(login(username.clone(), password.clone()).await?).await {
+        Ok(product_count) => Ok(product_count as isize),
+        Err(err) => match err {
+            Error::DLsiteNotAuthenticated => Ok(-1),
+            _ => return Err(err),
+        },
     }
 }
