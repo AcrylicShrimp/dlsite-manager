@@ -76,18 +76,16 @@
       <div
         class="p-1 pl-2 border border-1/5 rounded flex flex-row items-center justify-start"
       >
-        <p
-          class="text-4/5 max-w-xs truncate flex flex-row items-center justify-center"
-        >
+        <p class="text-4/5 truncate">
           {account.username}
           {#if account.memo}
             <span class="w-1" />
-            <span class="truncate text-sm text-4/5/50">({account.memo})</span>
+            <span class="text-sm text-4/5/50 truncate">({account.memo})</span>
           {/if}
         </p>
         <span class="flex-1" />
         <SmallButton on:click={() => edit(account)}>Edit</SmallButton>
-        <span class="block w-1" />
+        <span class="flex-none block w-1" />
         <SmallRedButton on:click={() => remove(account)}>Remove</SmallRedButton>
       </div>
       {#if index < accounts.length - 1}

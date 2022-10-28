@@ -1,5 +1,5 @@
 use crate::{
-    application_error::Result,
+    application_error::{Error, Result},
     dlsite::{get_product, get_product_count, login},
     storage::{
         account::Account,
@@ -21,10 +21,28 @@ pub async fn product_update_products() -> Result<Vec<Product>> {
 
         let mut page = 1;
         let mut count = 0;
-        let product_count = get_product_count(cookie_store.clone()).await?;
+        let product_count = match get_product_count(cookie_store.clone()).await {
+            Ok(product_count) => product_count,
+            Err(err) => {
+                if let Error::DLsiteNotAuthenticated = err {
+                    continue;
+                } else {
+                    return Err(err);
+                }
+            }
+        };
 
         while count < product_count {
-            let products = get_product(cookie_store.clone(), page).await?;
+            let products = match get_product(cookie_store.clone(), page).await {
+                Ok(products) => products,
+                Err(err) => {
+                    if let Error::DLsiteNotAuthenticated = err {
+                        continue;
+                    } else {
+                        return Err(err);
+                    }
+                }
+            };
 
             page += 1;
             count += products.len();

@@ -8,8 +8,8 @@ export interface Product {
 
 export interface DLsiteProduct {
   id: string;
-  ty: string;
-  age: string;
+  ty: DLsiteProductType;
+  age: DLsiteProductAge;
   title: DLsiteProductLocalizedString;
   group: DLsiteProductGroup;
   icon: DLsiteProductIcon;
@@ -35,3 +35,35 @@ export interface DLsiteProductIcon {
   main: string;
   small: string;
 }
+
+export type DLsiteProductType =
+  | "Unknown"
+  | "Adult"
+  | "Doujinsji"
+  | "Software"
+  | "Game"
+  | "Action"
+  | "Adventure"
+  | "AudioMaterial"
+  | "Comic"
+  | "DigitalNovel"
+  | "Other"
+  | "OtherGame"
+  | "Illust"
+  | "ImageMaterial"
+  | "Manga"
+  | "Anime"
+  | "Music"
+  | "Novel"
+  | "Puzzle"
+  | "Quiz"
+  | "RolePlaying"
+  | "Gekiga"
+  | "Simulation"
+  | "Voice"
+  | "Shooter"
+  | "Tabletop"
+  | "Utility"
+  | "Typing"
+  | "SexualNovel";
+export type DLsiteProductAge = "All" | "R15" | "R18";
