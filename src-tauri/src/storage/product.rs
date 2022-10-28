@@ -219,26 +219,7 @@ INSERT INTO products (
     ?18,
     ?19,
     ?20
-) ON CONFLICT (product_id) DO UPDATE SET
-    account_id = excluded.account_id,
-    product_type = excluded.product_type,
-    product_age = excluded.product_age,
-    product_title_ja = excluded.product_title_ja,
-    product_title_en = excluded.product_title_en,
-    product_title_ko = excluded.product_title_ko,
-    product_title_tw = excluded.product_title_tw,
-    product_title_cn = excluded.product_title_cn,
-    product_group_id = excluded.product_group_id,
-    product_group_name_ja = excluded.product_group_name_ja,
-    product_group_name_en = excluded.product_group_name_en,
-    product_group_name_ko = excluded.product_group_name_ko,
-    product_group_name_tw = excluded.product_group_name_tw,
-    product_group_name_cn = excluded.product_group_name_cn,
-    product_icon_main = excluded.product_icon_main,
-    product_icon_small = excluded.product_icon_small,
-    registered_at = excluded.registered_at,
-    upgraded_at = excluded.upgraded_at,
-    purchased_at = excluded.purchased_at
+) ON CONFLICT (product_id) DO NOTHING
 ",
             )?;
 
