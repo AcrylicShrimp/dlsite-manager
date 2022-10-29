@@ -1,6 +1,6 @@
 use crate::{
     application_error::{Error, Result},
-    dlsite::{get_product_count, login},
+    dlsite::api::{get_product_count, login},
     storage::account::*,
     window::{AccountEditWindow, AccountManagementWindow, WindowInfoProvider},
 };

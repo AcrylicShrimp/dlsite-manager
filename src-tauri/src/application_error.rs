@@ -24,6 +24,10 @@ pub enum ApplicationError {
         #[from]
         reqwest_error: reqwest::Error,
     },
+    #[error("reqwest cookie store error: {reqwest_cookie_store_error}")]
+    ReqwestCookieStoreError {
+        reqwest_cookie_store_error: Box<dyn std::error::Error + Send + Sync>,
+    },
     #[error("the DLsite does not provide a required cookie(domain='{cookie_domain}', path='{cookie_path}', name='{cookie_name}')")]
     DLsiteCookieNotFound {
         cookie_domain: String,
@@ -32,6 +36,8 @@ pub enum ApplicationError {
     },
     #[error("you're not authenticated to the DLsite")]
     DLsiteNotAuthenticated,
+    #[error("the Account(id='{account_id}') does not exists")]
+    AccountNotExists { account_id: i64 },
 }
 
 impl serde::Serialize for ApplicationError {

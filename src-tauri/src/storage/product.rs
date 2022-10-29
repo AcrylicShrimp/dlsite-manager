@@ -2,7 +2,7 @@ use super::account::Account;
 use crate::{
     application::use_application,
     application_error::Result,
-    dlsite::{
+    dlsite::api::{
         DLsiteProduct, DLsiteProductAgeCategory, DLsiteProductGroup, DLsiteProductIcon,
         DLsiteProductLocalizedString, DLsiteProductType,
     },

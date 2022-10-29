@@ -1,235 +1,174 @@
-use crate::application_error::{Error, Result};
-use chrono::{DateTime, Utc};
-use reqwest::ClientBuilder;
+pub mod api;
+
+use crate::{
+    application_error::{Error, Result},
+    storage::{
+        account::Account,
+        product::{InsertedProduct, Product},
+    },
+};
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
-use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc};
-use strum_macros::{EnumString, IntoStaticStr};
+use std::{io::BufWriter, sync::Arc};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DLsiteProductList {
-    pub last: DateTime<Utc>,
-    pub limit: usize,
-    pub offset: usize,
-    pub works: Vec<DLsiteProduct>,
-}
+static PAGE_LIMIT: usize = 50;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DLsiteProduct {
-    #[serde(rename(deserialize = "workno"))]
-    pub id: String,
-    #[serde(rename(deserialize = "work_type"), default)]
-    pub ty: DLsiteProductType,
-    #[serde(rename(deserialize = "age_category"), default)]
-    pub age: DLsiteProductAgeCategory,
-    #[serde(rename(deserialize = "name"))]
-    pub title: DLsiteProductLocalizedString,
-    #[serde(rename(deserialize = "maker"))]
-    pub group: DLsiteProductGroup,
-    #[serde(rename(deserialize = "work_files"))]
-    pub icon: DLsiteProductIcon,
-    #[serde(rename(deserialize = "regist_date"))]
-    pub registered_at: Option<DateTime<Utc>>,
-    #[serde(rename(deserialize = "upgrade_date"))]
-    pub upgraded_at: Option<DateTime<Utc>>,
-    #[serde(rename(deserialize = "sales_date"))]
-    pub purchased_at: DateTime<Utc>,
-}
+async fn get_product_count_and_cookie_store(
+    account_id: i64,
+) -> Result<(usize, Arc<CookieStoreMutex>)> {
+    let cookie_json = if let Some(cookie_json) = Account::get_one_cookie_json(account_id)? {
+        cookie_json
+    } else {
+        return Err(Error::AccountNotExists { account_id });
+    };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DLsiteProductLocalizedString {
-    #[serde(rename(deserialize = "ja_JP"))]
-    pub japanese: Option<String>,
-    #[serde(rename(deserialize = "en_US"))]
-    pub english: Option<String>,
-    #[serde(rename(deserialize = "ko_KR"))]
-    pub korean: Option<String>,
-    #[serde(rename(deserialize = "zh_TW"))]
-    pub taiwanese: Option<String>,
-    #[serde(rename(deserialize = "zh_CN"))]
-    pub chinese: Option<String>,
-}
+    if let Ok(cookie_store) = CookieStore::load_json(cookie_json.as_bytes()) {
+        let cookie_store = Arc::new(CookieStoreMutex::new(cookie_store));
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DLsiteProductGroup {
-    pub id: String,
-    pub name: DLsiteProductLocalizedString,
-}
-
-#[derive(
-    EnumString, IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize,
-)]
-pub enum DLsiteProductType {
-    Unknown,
-    #[serde(rename(deserialize = "ADL"))]
-    Adult,
-    #[serde(rename(deserialize = "DOH"))]
-    Doujinsji,
-    #[serde(rename(deserialize = "SOF"))]
-    Software,
-    #[serde(rename(deserialize = "GAM"))]
-    Game,
-    #[serde(rename(deserialize = "ACN"))]
-    Action,
-    #[serde(rename(deserialize = "ADV"))]
-    Adventure,
-    #[serde(rename(deserialize = "AMT"))]
-    AudioMaterial,
-    #[serde(rename(deserialize = "COM"))]
-    Comic,
-    #[serde(rename(deserialize = "DNV"))]
-    DigitalNovel,
-    #[serde(rename(deserialize = "ET3"))]
-    Other,
-    #[serde(rename(deserialize = "ETC"))]
-    OtherGame,
-    #[serde(rename(deserialize = "ICG"))]
-    Illust,
-    #[serde(rename(deserialize = "IMT"))]
-    ImageMaterial,
-    #[serde(rename(deserialize = "MNG"))]
-    Manga,
-    #[serde(rename(deserialize = "MOV"))]
-    Anime,
-    #[serde(rename(deserialize = "MUS"))]
-    Music,
-    #[serde(rename(deserialize = "NRE"))]
-    Novel,
-    #[serde(rename(deserialize = "PZL"))]
-    Puzzle,
-    #[serde(rename(deserialize = "QIZ"))]
-    Quiz,
-    #[serde(rename(deserialize = "RPG"))]
-    RolePlaying,
-    #[serde(rename(deserialize = "SCM"))]
-    Gekiga, // See https://en.wikipedia.org/wiki/Gekiga
-    #[serde(rename(deserialize = "SLN"))]
-    Simulation,
-    #[serde(rename(deserialize = "SOU"))]
-    Voice,
-    #[serde(rename(deserialize = "STG"))]
-    Shooter,
-    #[serde(rename(deserialize = "TBL"))]
-    Tabletop,
-    #[serde(rename(deserialize = "TOL"))]
-    Utility,
-    #[serde(rename(deserialize = "TYP"))]
-    Typing,
-    #[serde(rename(deserialize = "KSV"))]
-    SexualNovel,
-}
-
-impl Default for DLsiteProductType {
-    fn default() -> Self {
-        Self::Unknown
+        match api::get_product_count(cookie_store.clone()).await {
+            Ok(product_count) => {
+                Account::update_one_product_count_and_cookie_json(
+                    account_id,
+                    product_count as i32,
+                    {
+                        let mut writer = BufWriter::new(Vec::new());
+                        cookie_store
+                            .lock()
+                            .unwrap()
+                            .save_json(&mut writer)
+                            .map_err(|err| Error::ReqwestCookieStoreError {
+                                reqwest_cookie_store_error: err,
+                            })?;
+                        String::from_utf8(writer.into_inner().unwrap()).unwrap()
+                    },
+                )?;
+                return Ok((product_count, cookie_store));
+            }
+            Err(err) => match err {
+                Error::DLsiteNotAuthenticated => {}
+                _ => return Err(err),
+            },
+        }
     }
+
+    let (username, password) =
+        if let Some(username_and_password) = Account::get_one_username_and_password(account_id)? {
+            username_and_password
+        } else {
+            return Err(Error::AccountNotExists { account_id });
+        };
+    let cookie_store = api::login(username, password).await?;
+
+    let product_count = api::get_product_count(cookie_store.clone()).await?;
+    Account::update_one_product_count_and_cookie_json(account_id, product_count as i32, {
+        let mut writer = BufWriter::new(Vec::new());
+        cookie_store
+            .lock()
+            .unwrap()
+            .save_json(&mut writer)
+            .map_err(|err| Error::ReqwestCookieStoreError {
+                reqwest_cookie_store_error: err,
+            })?;
+        String::from_utf8(writer.into_inner().unwrap()).unwrap()
+    })?;
+
+    Ok((product_count, cookie_store))
 }
 
-#[derive(
-    EnumString, IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize,
-)]
-pub enum DLsiteProductAgeCategory {
-    #[serde(rename(deserialize = "all"))]
-    All,
-    #[serde(rename(deserialize = "r15"))]
-    R15,
-    #[serde(rename(deserialize = "r18"))]
-    R18,
-}
+pub async fn update_product(mut on_progress: impl FnMut(usize, usize) -> Result<()>) -> Result<()> {
+    let account_ids = Account::list_all_id()?;
+    let mut progress = 0;
+    let mut total_progress = 0;
+    let mut details = Vec::with_capacity(account_ids.len());
 
-impl Default for DLsiteProductAgeCategory {
-    fn default() -> Self {
-        Self::All
+    for account_id in account_ids {
+        let prev_product_count =
+            Account::get_one_product_count(account_id)?.unwrap_or_else(|| 0) as usize;
+        let (new_product_count, cookie_store) =
+            get_product_count_and_cookie_store(account_id).await?;
+
+        if new_product_count <= prev_product_count {
+            continue;
+        }
+
+        total_progress += new_product_count - prev_product_count;
+        details.push((
+            account_id,
+            prev_product_count,
+            new_product_count,
+            cookie_store,
+        ));
     }
-}
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct DLsiteProductIcon {
-    pub main: String,
-    #[serde(rename(deserialize = "sam"))]
-    pub small: String,
-}
-
-pub async fn login(
-    username: impl AsRef<str>,
-    password: impl AsRef<str>,
-) -> Result<Arc<CookieStoreMutex>> {
-    let cookie_store = Arc::new(CookieStoreMutex::new(CookieStore::default()));
-    let client = ClientBuilder::new()
-        .cookie_store(true)
-        .cookie_provider(cookie_store.clone())
-        .build()?;
-
-    client
-        .get("https://www.dlsite.com/maniax/login/=/skip_register/1")
-        .send()
-        .await?;
-    client.get("https://login.dlsite.com/login").send().await?;
-
-    // We must ignore the response of this login request here.
-    // The DLsite always responds with normal 200 status even if the login has been failed.
-    client
-        .post("https://login.dlsite.com/login")
-        .form(&[
-            ("login_id", username.as_ref()),
-            ("password", password.as_ref()),
-            ("_token", &{
-                let cookie = cookie_store
-                    .lock()
-                    .unwrap()
-                    .get("login.dlsite.com", "/", "XSRF-TOKEN")
-                    .ok_or_else(|| Error::DLsiteCookieNotFound {
-                        cookie_domain: "login.dlsite.com".to_owned(),
-                        cookie_path: "/".to_owned(),
-                        cookie_name: "XSRF-TOKEN".to_owned(),
-                    })?
-                    .value()
-                    .to_owned();
-                cookie
-            }),
-        ])
-        .send()
-        .await?;
-
-    Ok(cookie_store)
-}
-
-pub async fn get_product_count(cookie_store: Arc<CookieStoreMutex>) -> Result<usize> {
-    let client = ClientBuilder::new()
-        .cookie_store(true)
-        .cookie_provider(cookie_store)
-        .build()?;
-    let response = client
-        .get("https://play.dlsite.com/api/product_count")
-        .send()
-        .await?;
-
-    // The body of the response will be a valid json if the login has been succeed.
-    match response.json::<HashMap<String, usize>>().await {
-        Ok(product_count) => Ok(product_count.get("user").cloned().unwrap_or(0)),
-        Err(err) => Err(Error::DLsiteNotAuthenticated),
+    if total_progress == 0 {
+        return Ok(());
     }
+
+    on_progress(progress, total_progress)?;
+
+    for (account_id, mut prev_product_count, new_product_count, cookie_store) in details {
+        while prev_product_count < new_product_count {
+            let page = 1 + prev_product_count / PAGE_LIMIT;
+            let products = api::get_product(cookie_store.clone(), page).await?;
+            prev_product_count += products.len();
+            progress += products.len();
+
+            on_progress(progress, total_progress)?;
+
+            Product::insert_all(products.into_iter().map(|product| InsertedProduct {
+                account_id,
+                product,
+            }))?;
+        }
+    }
+
+    Ok(())
 }
 
-pub async fn get_product(
-    cookie_store: Arc<CookieStoreMutex>,
-    page: usize,
-) -> Result<Vec<DLsiteProduct>> {
-    let client = ClientBuilder::new()
-        .cookie_store(true)
-        .cookie_provider(cookie_store)
-        .build()?;
-    let response = client
-        .get(format!(
-            "https://play.dlsite.com/api/purchases?page={}",
-            page
-        ))
-        .send()
-        .await?;
+pub async fn refresh_product(
+    mut on_progress: impl FnMut(usize, usize) -> Result<()>,
+) -> Result<()> {
+    Product::remove_all()?;
 
-    // The body of the response will be a valid json if the login has been succeed.
-    match response.json::<DLsiteProductList>().await {
-        Ok(product_list) => Ok(product_list.works),
-        Err(err) => Err(Error::DLsiteNotAuthenticated),
+    let account_ids = Account::list_all_id()?;
+    let mut progress = 0;
+    let mut total_progress = 0;
+    let mut details = Vec::with_capacity(account_ids.len());
+
+    for account_id in account_ids {
+        let (new_product_count, cookie_store) =
+            get_product_count_and_cookie_store(account_id).await?;
+
+        if new_product_count == 0 {
+            continue;
+        }
+
+        total_progress += new_product_count;
+        details.push((account_id, new_product_count, cookie_store));
     }
+
+    if total_progress == 0 {
+        return Ok(());
+    }
+
+    on_progress(progress, total_progress)?;
+
+    for (account_id, new_product_count, cookie_store) in details {
+        let mut prev_product_count = 0;
+
+        while prev_product_count < new_product_count {
+            let page = 1 + prev_product_count / PAGE_LIMIT;
+            let products = api::get_product(cookie_store.clone(), page).await?;
+            prev_product_count += products.len();
+            progress += products.len();
+
+            on_progress(progress, total_progress)?;
+
+            Product::insert_all(products.into_iter().map(|product| InsertedProduct {
+                account_id,
+                product,
+            }))?;
+        }
+    }
+
+    Ok(())
 }

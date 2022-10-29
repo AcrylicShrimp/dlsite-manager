@@ -95,6 +95,22 @@ ORDER BY id ASC
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    pub fn list_all_id() -> Result<Vec<i64>> {
+        Ok(use_application()
+            .storage()
+            .connection()
+            .prepare(
+                "
+SELECT
+    id
+FROM accounts
+ORDER BY id ASC
+        ",
+            )?
+            .query_map((), |row| row.get("id"))?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     pub fn get_one(id: i64) -> Result<Option<Account>> {
         Ok(use_application()
             .storage()
@@ -115,6 +131,57 @@ WHERE id = ?1
         ",
             )?
             .query_row(params![id], |row| Self::try_from(row))
+            .optional()?)
+    }
+
+    pub fn get_one_username_and_password(id: i64) -> Result<Option<(String, String)>> {
+        Ok(use_application()
+            .storage()
+            .connection()
+            .prepare(
+                "
+SELECT
+    username,
+    password
+FROM accounts
+WHERE id = ?1
+        ",
+            )?
+            .query_row(params![id], |row| {
+                Ok((row.get("username")?, row.get("password")?))
+            })
+            .optional()?)
+    }
+
+    pub fn get_one_product_count(id: i64) -> Result<Option<i32>> {
+        Ok(use_application()
+            .storage()
+            .connection()
+            .prepare(
+                "
+SELECT
+    product_count
+FROM accounts
+WHERE id = ?1
+        ",
+            )?
+            .query_row(params![id], |row| Ok(row.get("product_count")?))
+            .optional()?)
+    }
+
+    pub fn get_one_cookie_json(id: i64) -> Result<Option<String>> {
+        Ok(use_application()
+            .storage()
+            .connection()
+            .prepare(
+                "
+SELECT
+    cookie_json
+FROM accounts
+WHERE id = ?1
+        ",
+            )?
+            .query_row(params![id], |row| Ok(row.get("cookie_json")?))
             .optional()?)
     }
 
@@ -170,6 +237,27 @@ WHERE id = ?1
         } else {
             Err(Error::DatabaseUpdatedItemNotAccessible)
         }
+    }
+
+    pub fn update_one_product_count_and_cookie_json(
+        id: i64,
+        product_count: i32,
+        cookie_json: impl AsRef<str>,
+    ) -> Result<()> {
+        use_application()
+            .storage()
+            .connection()
+            .prepare(
+                "
+UPDATE accounts
+SET
+    product_count = ?2,
+    cookie_json = ?3
+WHERE id = ?1
+        ",
+            )?
+            .execute(params![id, product_count, cookie_json.as_ref()])?;
+        Ok(())
     }
 
     pub fn remove_one(id: i64) -> Result<()> {

@@ -3,21 +3,47 @@
 
   import type { PageData } from "./$types";
   import type { Product } from "@app/types/product";
+  import type { RefreshProgress } from "@app/types/refresh-event";
   import { BgCssAge, BgCssType, DisplayTypeString } from "./product-values";
   import SmallRedButton from "@app/lib/buttons/SmallRedButton.svelte";
   import SmallButtonLink from "@app/lib/buttons/SmallButtonLink.svelte";
   import Input from "@app/lib/inputs/Input.svelte";
 
   import { invoke } from "@tauri-apps/api/tauri";
+  import { appWindow } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
 
   export let data: PageData;
+  let query: string = "";
   let products: Product[] = [];
+  let updating: boolean = false;
+  let progress: number = 0;
+  let progressTotal: number = 0;
 
   onMount(async () => {
     products = data.products;
 
+    const unlistens = await Promise.all([
+      appWindow.listen("refresh-begin", () => {
+        updating = true;
+        progress = 0;
+        progressTotal = 0;
+      }),
+      appWindow.listen<RefreshProgress>("refresh-progress", (event) => {
+        progress = event.payload.progress;
+        progressTotal = event.payload.total_progress;
+      }),
+      appWindow.listen("refresh-end", async () => {
+        await query_products();
+        updating = false;
+      }),
+    ]);
+
     await invoke("show_window");
+
+    return () => {
+      for (const unlisten of unlistens) unlisten();
+    };
   });
 
   const throttledSearch = throttle(search, 100, {
@@ -25,9 +51,14 @@
     trailing: true,
   });
   async function search(event: Event): Promise<void> {
+    query = (event.target as HTMLInputElement).value;
+    await query_products();
+  }
+
+  async function query_products(): Promise<void> {
     products = await invoke<Product[]>("product_list_products", {
       query: {
-        query: (event.target as HTMLInputElement).value,
+        query,
       },
     });
   }
@@ -101,3 +132,11 @@
     {/each}
   </div>
 </section>
+{#if updating}
+  <div
+    class="fixed inset-0 bg-1/5/90 flex flex-col items-center justify-center"
+  >
+    <p class="text-4/5 text-xl">Updating...</p>
+    <p class="text-4/5 text-xl">{progress}/{progressTotal}</p>
+  </div>
+{/if}

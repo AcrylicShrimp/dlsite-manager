@@ -3,6 +3,7 @@ use crate::{
     storage::Storage,
     window::{BuildableWindow, MainWindow},
 };
+use parking_lot::{Mutex, MutexGuard};
 use std::{mem::MaybeUninit, sync::Arc};
 use tauri::{App, AppHandle};
 
@@ -25,6 +26,7 @@ pub fn create_application(app: &App) -> Result<Arc<Application>> {
 pub struct Application {
     app_handle: AppHandle,
     storage: Storage,
+    is_updating_product: Mutex<bool>,
 }
 
 impl Application {
@@ -38,6 +40,7 @@ impl Application {
         Ok(Self {
             app_handle: app.handle(),
             storage: Storage::load(app_dir.join("database.db"))?,
+            is_updating_product: Mutex::new(false),
         })
     }
 
@@ -47,6 +50,10 @@ impl Application {
 
     pub fn storage(&self) -> &Storage {
         &self.storage
+    }
+
+    pub fn is_updating_product(&self) -> MutexGuard<bool> {
+        self.is_updating_product.lock()
     }
 
     pub fn init(&self) -> Result<()> {

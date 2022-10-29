@@ -24,7 +24,6 @@ where
             account_management::account_management_remove_account,
             account_management::account_management_test_account,
             product::product_list_products,
-            product::product_update_products,
             window::show_window,
             window::spawn_window_account_add,
             window::spawn_window_account_edit,
