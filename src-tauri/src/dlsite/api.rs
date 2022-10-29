@@ -207,7 +207,7 @@ pub async fn get_product_count(cookie_store: Arc<CookieStoreMutex>) -> Result<us
     // The body of the response will be a valid json if the login has been succeed.
     match response.json::<HashMap<String, usize>>().await {
         Ok(product_count) => Ok(product_count.get("user").cloned().unwrap_or(0)),
-        Err(err) => Err(Error::DLsiteNotAuthenticated),
+        Err(..) => Err(Error::DLsiteNotAuthenticated),
     }
 }
 
@@ -230,6 +230,6 @@ pub async fn get_product(
     // The body of the response will be a valid json if the login has been succeed.
     match response.json::<DLsiteProductList>().await {
         Ok(product_list) => Ok(product_list.works),
-        Err(err) => Err(Error::DLsiteNotAuthenticated),
+        Err(..) => Err(Error::DLsiteNotAuthenticated),
     }
 }
