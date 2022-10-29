@@ -1,16 +1,18 @@
 <script lang="ts">
+  import { throttle } from "lodash";
+
   import type { PageData } from "./$types";
   import type { Product } from "@app/types/product";
+  import { BgCssAge, BgCssType, DisplayTypeString } from "./product-values";
+  import SmallRedButton from "@app/lib/buttons/SmallRedButton.svelte";
+  import SmallButtonLink from "@app/lib/buttons/SmallButtonLink.svelte";
+  import Input from "@app/lib/inputs/Input.svelte";
 
   import { invoke } from "@tauri-apps/api/tauri";
   import { onMount } from "svelte";
-  import { BgCssAge, BgCssType, DisplayTypeString } from "./product-values";
-  import SmallButton from "@app/lib/buttons/SmallButton.svelte";
-  import SmallRedButton from "@app/lib/buttons/SmallRedButton.svelte";
-  import SmallButtonLink from "@app/lib/buttons/SmallButtonLink.svelte";
 
-  let products: Product[] = [];
   export let data: PageData;
+  let products: Product[] = [];
 
   onMount(async () => {
     products = data.products;
@@ -18,18 +20,26 @@
     await invoke("show_window");
   });
 
-  async function update(): Promise<void> {
-    products = [];
-    products = await invoke<Product[]>("product_update_products");
+  const throttledSearch = throttle(search, 100, {
+    leading: false,
+    trailing: true,
+  });
+  async function search(event: Event): Promise<void> {
+    products = await invoke<Product[]>("product_list_products", {
+      query: {
+        query: (event.target as HTMLInputElement).value,
+      },
+    });
   }
-
-  function visitProductPage(product: Product): void {}
 </script>
 
 <h1 class="text-center">Product List</h1>
-<span class="block h-4" />
+<span class="block h-8" />
 <section>
-  <button on:click={update}>Update</button>
+  <div class="flex flex-row items-center justify-start">
+    <Input placeholder="Search..." on:input={throttledSearch} />
+  </div>
+  <span class="block h-2" />
   <div>
     {#each products as product, index (product)}
       <div class="p-2 border border-1/5 rounded">

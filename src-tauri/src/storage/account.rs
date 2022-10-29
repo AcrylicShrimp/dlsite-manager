@@ -53,7 +53,7 @@ impl<'stmt> TryFrom<&'stmt Row<'stmt>> for Account {
 impl Account {
     pub fn get_ddl() -> &'static str {
         "
-CREATE TABLE IF NOT EXISTS accounts(
+CREATE TABLE IF NOT EXISTS accounts (
     id INTEGER PRIMARY KEY NOT NULL,
     username TEXT NOT NULL,
     password TEXT NOT NULL,

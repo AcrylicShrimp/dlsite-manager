@@ -36,34 +36,40 @@ export interface DLsiteProductIcon {
   small: string;
 }
 
-export type DLsiteProductType =
-  | "Unknown"
-  | "Adult"
-  | "Doujinsji"
-  | "Software"
-  | "Game"
-  | "Action"
-  | "Adventure"
-  | "AudioMaterial"
-  | "Comic"
-  | "DigitalNovel"
-  | "Other"
-  | "OtherGame"
-  | "Illust"
-  | "ImageMaterial"
-  | "Manga"
-  | "Anime"
-  | "Music"
-  | "Novel"
-  | "Puzzle"
-  | "Quiz"
-  | "RolePlaying"
-  | "Gekiga"
-  | "Simulation"
-  | "Voice"
-  | "Shooter"
-  | "Tabletop"
-  | "Utility"
-  | "Typing"
-  | "SexualNovel";
-export type DLsiteProductAge = "All" | "R15" | "R18";
+export enum DLsiteProductType {
+  Unknown = "Unknown",
+  Adult = "Adult",
+  Doujinsji = "Doujinsji",
+  Software = "Software",
+  Game = "Game",
+  Action = "Action",
+  Adventure = "Adventure",
+  AudioMaterial = "AudioMaterial",
+  Comic = "Comic",
+  DigitalNovel = "DigitalNovel",
+  Other = "Other",
+  OtherGame = "OtherGame",
+  Illust = "Illust",
+  ImageMaterial = "ImageMaterial",
+  Manga = "Manga",
+  Anime = "Anime",
+  Music = "Music",
+  Novel = "Novel",
+  Puzzle = "Puzzle",
+  Quiz = "Quiz",
+  RolePlaying = "RolePlaying",
+  Gekiga = "Gekiga",
+  Simulation = "Simulation",
+  Voice = "Voice",
+  Shooter = "Shooter",
+  Tabletop = "Tabletop",
+  Utility = "Utility",
+  Typing = "Typing",
+  SexualNovel = "SexualNovel",
+}
+
+export enum DLsiteProductAge {
+  All = "All",
+  R15 = "R15",
+  R18 = "R18",
+}

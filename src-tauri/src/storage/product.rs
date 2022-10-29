@@ -2,10 +2,13 @@ use super::account::Account;
 use crate::{
     application::use_application,
     application_error::Result,
-    dlsite::{DLsiteProduct, DLsiteProductGroup, DLsiteProductIcon, DLsiteProductLocalizedString},
+    dlsite::{
+        DLsiteProduct, DLsiteProductAgeCategory, DLsiteProductGroup, DLsiteProductIcon,
+        DLsiteProductLocalizedString, DLsiteProductType,
+    },
 };
-use rusqlite::{params, Row};
-use serde::Serialize;
+use rusqlite::{params, params_from_iter, Row};
+use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 #[derive(Debug, Clone, Serialize)]
@@ -13,6 +16,13 @@ pub struct Product {
     pub id: i64,
     pub account: Account,
     pub product: DLsiteProduct,
+}
+
+#[derive(Default, Debug, Clone, Deserialize)]
+pub struct ProductQuery {
+    pub query: Option<String>,
+    pub ty: Option<DLsiteProductType>,
+    pub age: Option<DLsiteProductAgeCategory>,
 }
 
 #[derive(Debug, Clone)]
@@ -89,7 +99,7 @@ impl<'stmt> TryFrom<&'stmt Row<'stmt>> for Product {
 impl Product {
     pub fn get_ddl() -> &'static str {
         "
-CREATE TABLE IF NOT EXISTS products(
+CREATE TABLE IF NOT EXISTS products (
     id INTEGER PRIMARY KEY NOT NULL,
     account_id INTEGER NOT NULL,
     product_id TEXT NOT NULL UNIQUE,
@@ -122,23 +132,59 @@ WHEN NEW.updated_at = OLD.updated_at
 BEGIN
     UPDATE products SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
 END;
-        "
+
+CREATE VIRTUAL TABLE IF NOT EXISTS indexed_products USING fts5 (
+    product_id,
+    product_title_ja,
+    product_title_en,
+    product_title_ko,
+    product_title_tw,
+    product_title_cn,
+    product_group_id,
+    product_group_name_ja,
+    product_group_name_en,
+    product_group_name_ko,
+    product_group_name_tw,
+    product_group_name_cn,
+    tokenize = 'trigram'
+);"
     }
 
-    pub fn list_all() -> Result<Vec<Self>> {
+    pub fn list_all(query: &ProductQuery) -> Result<Vec<Self>> {
+        let mut where_clause = "TRUE".to_owned();
+        let mut params = Vec::new();
+
+        if let Some(query) = &query.query {
+            let query = query.trim();
+            if query.len() != 0 {
+                where_clause.push_str(" AND indexed_products MATCH ?");
+                params.push(query);
+            }
+        }
+
+        if let Some(ty) = query.ty {
+            where_clause.push_str(" AND product.product_type = ?");
+            params.push(<_ as Into<&'static str>>::into(ty));
+        }
+
+        if let Some(age) = query.age {
+            where_clause.push_str(" AND product.product_age = ?");
+            params.push(<_ as Into<&'static str>>::into(age));
+        }
+
         Ok(use_application()
             .storage()
             .connection()
-            .prepare(
+            .prepare(&format!(
                 "
 SELECT
-    account.username as account_username,
-    account.password as account_password,
-    account.memo as account_memo,
-    account.product_count as account_product_count,
-    account.cookie_json as account_cookie_json,
-    account.created_at as account_created_at,
-    account.updated_at as account_updated_at,
+    account.username AS account_username,
+    account.password AS account_password,
+    account.memo AS account_memo,
+    account.product_count AS account_product_count,
+    account.cookie_json AS account_cookie_json,
+    account.created_at AS account_created_at,
+    account.updated_at AS account_updated_at,
     product.id,
     product.account_id,
     product.product_id,
@@ -162,12 +208,15 @@ SELECT
     product.purchased_at,
     product.created_at,
     product.updated_at
-FROM products AS product
-INNER JOIN accounts AS account ON account.id = account_id
-ORDER BY product.purchased_at DESC, product.id ASC
-        ",
-            )?
-            .query_map((), |row| Self::try_from(row))?
+FROM indexed_products
+INNER JOIN products AS product ON product.product_id = indexed_products.product_id
+INNER JOIN accounts AS account ON account.id = product.account_id
+WHERE {}
+GROUP BY product.product_id
+ORDER BY product.purchased_at DESC, product.id ASC",
+                where_clause
+            ))?
+            .query_map(params_from_iter(&params), |row| Self::try_from(row))?
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
@@ -175,7 +224,7 @@ ORDER BY product.purchased_at DESC, product.id ASC
         let mut connection = use_application().storage().connection();
         let tx = connection.transaction()?;
         {
-            let mut stmt = tx.prepare(
+            let mut insert_stmt = tx.prepare(
                 "
 INSERT INTO products (
     account_id,
@@ -219,32 +268,75 @@ INSERT INTO products (
     ?18,
     ?19,
     ?20
-) ON CONFLICT (product_id) DO NOTHING
-",
+) ON CONFLICT (product_id) DO NOTHING",
+            )?;
+            let mut index_stmt = tx.prepare(
+                "
+INSERT INTO indexed_products (
+    product_id,
+    product_title_ja,
+    product_title_en,
+    product_title_ko,
+    product_title_tw,
+    product_title_cn,
+    product_group_id,
+    product_group_name_ja,
+    product_group_name_en,
+    product_group_name_ko,
+    product_group_name_tw,
+    product_group_name_cn
+) VALUES (
+    ?1,
+    ?2,
+    ?3,
+    ?4,
+    ?5,
+    ?6,
+    ?7,
+    ?8,
+    ?9,
+    ?10,
+    ?11,
+    ?12
+)",
             )?;
 
             while let Some(product) = products.next() {
-                stmt.execute(params![
+                insert_stmt.execute(params![
                     product.account_id,
-                    product.product.id,
+                    &product.product.id,
                     <_ as Into<&'static str>>::into(product.product.ty),
                     <_ as Into<&'static str>>::into(product.product.age),
-                    product.product.title.japanese,
-                    product.product.title.english,
-                    product.product.title.korean,
-                    product.product.title.taiwanese,
-                    product.product.title.chinese,
-                    product.product.group.id,
-                    product.product.group.name.japanese,
-                    product.product.group.name.english,
-                    product.product.group.name.korean,
-                    product.product.group.name.taiwanese,
-                    product.product.group.name.chinese,
+                    &product.product.title.japanese,
+                    &product.product.title.english,
+                    &product.product.title.korean,
+                    &product.product.title.taiwanese,
+                    &product.product.title.chinese,
+                    &product.product.group.id,
+                    &product.product.group.name.japanese,
+                    &product.product.group.name.english,
+                    &product.product.group.name.korean,
+                    &product.product.group.name.taiwanese,
+                    &product.product.group.name.chinese,
                     product.product.icon.main,
                     product.product.icon.small,
                     product.product.registered_at,
                     product.product.upgraded_at,
                     product.product.purchased_at,
+                ])?;
+                index_stmt.execute(params![
+                    &product.product.id,
+                    &product.product.title.japanese,
+                    &product.product.title.english,
+                    &product.product.title.korean,
+                    &product.product.title.taiwanese,
+                    &product.product.title.chinese,
+                    &product.product.group.id,
+                    &product.product.group.name.japanese,
+                    &product.product.group.name.english,
+                    &product.product.group.name.korean,
+                    &product.product.group.name.taiwanese,
+                    &product.product.group.name.chinese,
                 ])?;
             }
         }
@@ -256,8 +348,8 @@ INSERT INTO products (
         use_application().storage().connection().execute_batch(
             "
 DELETE FROM products;
-VACUUM;
-        ",
+DELETE FROM indexed_products;
+VACUUM;",
         )?;
         Ok(())
     }

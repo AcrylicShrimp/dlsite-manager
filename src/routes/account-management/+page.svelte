@@ -8,8 +8,8 @@
   import { appWindow } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
 
-  let accounts: Account[] = [];
   export let data: PageData;
+  let accounts: Account[] = [];
 
   onMount(async () => {
     accounts = data.accounts;

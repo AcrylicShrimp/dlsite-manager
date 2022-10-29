@@ -7,13 +7,13 @@
   import { invoke } from "@tauri-apps/api/tauri";
   import { onMount } from "svelte";
 
+  export let data: PageData;
   let id: number;
   let username: string;
   let password: string;
   let memo: string;
   let isTesting: boolean = false;
   let testResult: null | number = null;
-  export let data: PageData;
 
   onMount(async () => {
     id = data.account.id;

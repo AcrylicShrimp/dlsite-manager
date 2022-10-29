@@ -3,13 +3,13 @@ use crate::{
     dlsite::{get_product, get_product_count, login},
     storage::{
         account::Account,
-        product::{InsertedProduct, Product},
+        product::{InsertedProduct, Product, ProductQuery},
     },
 };
 
 #[tauri::command]
-pub fn product_list_products() -> Result<Vec<Product>> {
-    Product::list_all()
+pub fn product_list_products(query: Option<ProductQuery>) -> Result<Vec<Product>> {
+    Ok(Product::list_all(&query.unwrap_or_default()).unwrap())
 }
 
 #[tauri::command]
@@ -54,5 +54,5 @@ pub async fn product_update_products() -> Result<Vec<Product>> {
         }
     }
 
-    Product::list_all()
+    Product::list_all(&ProductQuery::default())
 }
