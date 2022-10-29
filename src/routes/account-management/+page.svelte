@@ -94,6 +94,12 @@
       {#if index < accounts.length - 1}
         <span class="block h-2" />
       {/if}
+    {:else}
+      <div class="h-[200px] flex flex-col items-center justify-center">
+        <p class="text-xl text-2/5 select-none">
+          It seems that you haven't any account.
+        </p>
+      </div>
     {/each}
   </div>
 </section>

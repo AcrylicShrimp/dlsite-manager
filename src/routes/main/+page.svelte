@@ -129,6 +129,14 @@
       {#if index < products.length - 1}
         <span class="block h-2" />
       {/if}
+    {:else}
+      <div class="h-[200px] flex flex-col items-center justify-center">
+        <p class="text-xl text-2/5 select-none">There's no product.</p>
+        <span class="block h-4" />
+        <p class="text-xl text-2/5 select-none">
+          You can fetch products from the menu.
+        </p>
+      </div>
     {/each}
   </div>
 </section>
