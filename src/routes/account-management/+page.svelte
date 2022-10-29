@@ -68,9 +68,12 @@
 </script>
 
 <h1 class="text-center">Account Management</h1>
-<span class="block h-4" />
+<span class="block h-8" />
 <section>
-  <button on:click={add}>Add</button>
+  <div class="flex flex-row items-center justify-end">
+    <SmallRedButton on:click={add}>Add</SmallRedButton>
+  </div>
+  <span class="block h-2" />
   <div>
     {#each accounts as account, index (account)}
       <div
