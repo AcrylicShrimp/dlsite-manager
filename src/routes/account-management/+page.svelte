@@ -1,8 +1,9 @@
 <script lang="ts">
   import type { PageData } from "./$types";
+  import type { Account } from "@app/types/account";
+
   import SmallButton from "@app/lib/buttons/SmallButton.svelte";
   import SmallRedButton from "@app/lib/buttons/SmallRedButton.svelte";
-  import type { Account } from "@app/types/account";
 
   import { invoke } from "@tauri-apps/api/tauri";
   import { appWindow } from "@tauri-apps/api/window";

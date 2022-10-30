@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { PageData } from "./$types";
+  import type { Account } from "@app/types/account";
+
   import PrimaryButton from "@app/lib/buttons/PrimaryButton.svelte";
   import SecondaryButton from "@app/lib/buttons/SecondaryButton.svelte";
   import LabeledInput from "@app/lib/inputs/LabeledInput.svelte";
@@ -7,7 +8,6 @@
   import { invoke } from "@tauri-apps/api/tauri";
   import { onMount } from "svelte";
 
-  export let data: PageData;
   let id: number;
   let username: string;
   let password: string;
@@ -16,10 +16,13 @@
   let testResult: null | number = null;
 
   onMount(async () => {
-    id = data.account.id;
-    username = data.account.username;
-    password = data.account.password;
-    memo = data.account.memo ?? "";
+    const account = await invoke<Account>("account_management_get_account", {
+      accountId: Number(window.accountId),
+    });
+    id = account.id;
+    username = account.username;
+    password = account.password;
+    memo = account.memo ?? "";
 
     await invoke("show_window");
   });

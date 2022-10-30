@@ -6,6 +6,9 @@ pub trait WindowInfoProvider {
     fn title(&self) -> String;
     fn size(&self) -> (f64, f64);
     fn resizable(&self) -> bool;
+    fn init_scripts(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 pub trait BuildableWindow<R>
@@ -24,17 +27,20 @@ where
     fn build<'m, M: Manager<R>>(&self, manager: &'m M) -> Result<Window<R>> {
         let (width, height) = self.size();
 
-        let window = WindowBuilder::new(
+        let mut builder = WindowBuilder::new(
             manager,
             &self.label(),
             WindowUrl::App(<_>::from(&self.entry())),
         )
         .title(self.title())
         .inner_size(width, height)
-        .resizable(self.resizable())
-        .visible(false)
-        .build()?;
+        .resizable(self.resizable());
 
+        for script in self.init_scripts() {
+            builder = builder.initialization_script(&script);
+        }
+
+        let window = builder.build()?;
         Ok(window)
     }
 

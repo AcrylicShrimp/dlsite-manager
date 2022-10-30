@@ -3,5 +3,11 @@
 
 import type { Account } from "./types/account";
 
+declare global {
+  interface Window {
+    accountId?: number;
+  }
+}
+
 // and what to do when importing types
 declare namespace App {}

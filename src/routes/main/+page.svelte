@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { throttle } from "lodash";
-
   import type { PageData } from "./$types";
   import type { Product } from "@app/types/product";
   import type { RefreshProgress } from "@app/types/refresh-event";
+
+  import { throttle } from "lodash";
+
   import { BgCssAge, BgCssType, DisplayTypeString } from "./product-values";
   import SmallRedButton from "@app/lib/buttons/SmallRedButton.svelte";
   import SmallButtonLink from "@app/lib/buttons/SmallButtonLink.svelte";

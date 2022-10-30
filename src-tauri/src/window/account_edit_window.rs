@@ -7,11 +7,11 @@ pub struct AccountEditWindow {
 
 impl WindowInfoProvider for AccountEditWindow {
     fn label(&self) -> String {
-        format!("account-edit-{}", self.account_id)
+        "account-edit".to_owned()
     }
 
     fn entry(&self) -> String {
-        format!("account-edit/{}", self.account_id)
+        "account-edit".to_owned()
     }
 
     fn title(&self) -> String {
@@ -24,5 +24,9 @@ impl WindowInfoProvider for AccountEditWindow {
 
     fn resizable(&self) -> bool {
         false
+    }
+
+    fn init_scripts(&self) -> Vec<String> {
+        vec![format!("window.accountId = {}", self.account_id)]
     }
 }
