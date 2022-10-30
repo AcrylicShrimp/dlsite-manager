@@ -10,7 +10,11 @@ const config = {
   }),
 
   kit: {
-    adapter: staticAdapter(),
+    adapter: staticAdapter({
+      pages: "build",
+      assets: "build",
+      fallback: "app.html",
+    }),
     alias: {
       "@app/*": "src/*",
     },
