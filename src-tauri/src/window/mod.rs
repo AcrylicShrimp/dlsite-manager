@@ -34,7 +34,8 @@ where
         )
         .title(self.title())
         .inner_size(width, height)
-        .resizable(self.resizable());
+        .resizable(self.resizable())
+        .visible(false);
 
         for script in self.init_scripts() {
             builder = builder.initialization_script(&script);
