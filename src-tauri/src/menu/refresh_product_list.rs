@@ -21,7 +21,7 @@ pub async fn refresh_product_list() -> Result<()> {
         window.emit("refresh-begin", ())?;
     }
 
-    refresh_product(|progress, total_progress| {
+    let result = refresh_product(|progress, total_progress| {
         if let Some(window) = use_application()
             .app_handle()
             .get_window(&MainWindow.label())
@@ -37,7 +37,7 @@ pub async fn refresh_product_list() -> Result<()> {
 
         Ok(())
     })
-    .await?;
+    .await;
 
     if let Some(window) = use_application()
         .app_handle()
@@ -46,5 +46,5 @@ pub async fn refresh_product_list() -> Result<()> {
         window.emit("refresh-end", ())?;
     }
 
-    Ok(())
+    result
 }

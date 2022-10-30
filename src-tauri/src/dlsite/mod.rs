@@ -84,7 +84,13 @@ pub async fn update_product(mut on_progress: impl FnMut(usize, usize) -> Result<
         let prev_product_count =
             Account::get_one_product_count(account_id)?.unwrap_or_else(|| 0) as usize;
         let (new_product_count, cookie_store) =
-            get_product_count_and_cookie_store(account_id).await?;
+            match get_product_count_and_cookie_store(account_id).await {
+                Ok(product_count_and_cookie_store) => product_count_and_cookie_store,
+                Err(err) => match err {
+                    Error::DLsiteNotAuthenticated => continue,
+                    _ => return Err(err),
+                },
+            };
 
         if new_product_count <= prev_product_count {
             continue;
@@ -108,7 +114,17 @@ pub async fn update_product(mut on_progress: impl FnMut(usize, usize) -> Result<
     for (account_id, mut prev_product_count, new_product_count, cookie_store) in details {
         while prev_product_count < new_product_count {
             let page = 1 + prev_product_count / PAGE_LIMIT;
-            let products = api::get_product(cookie_store.clone(), page).await?;
+            let products = match api::get_product(cookie_store.clone(), page).await {
+                Ok(products) => products,
+                Err(err) => match err {
+                    Error::DLsiteNotAuthenticated => {
+                        progress += new_product_count - prev_product_count;
+                        on_progress(progress, total_progress)?;
+                        break;
+                    }
+                    _ => return Err(err),
+                },
+            };
             prev_product_count += products.len();
             progress += products.len();
 
@@ -136,7 +152,13 @@ pub async fn refresh_product(
 
     for account_id in account_ids {
         let (new_product_count, cookie_store) =
-            get_product_count_and_cookie_store(account_id).await?;
+            match get_product_count_and_cookie_store(account_id).await {
+                Ok(product_count_and_cookie_store) => product_count_and_cookie_store,
+                Err(err) => match err {
+                    Error::DLsiteNotAuthenticated => continue,
+                    _ => return Err(err),
+                },
+            };
 
         if new_product_count == 0 {
             continue;
@@ -157,7 +179,17 @@ pub async fn refresh_product(
 
         while prev_product_count < new_product_count {
             let page = 1 + prev_product_count / PAGE_LIMIT;
-            let products = api::get_product(cookie_store.clone(), page).await?;
+            let products = match api::get_product(cookie_store.clone(), page).await {
+                Ok(products) => products,
+                Err(err) => match err {
+                    Error::DLsiteNotAuthenticated => {
+                        progress += new_product_count - prev_product_count;
+                        on_progress(progress, total_progress)?;
+                        break;
+                    }
+                    _ => return Err(err),
+                },
+            };
             prev_product_count += products.len();
             progress += products.len();
 

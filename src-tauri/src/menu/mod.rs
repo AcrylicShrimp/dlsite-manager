@@ -75,8 +75,10 @@ impl MenuProvider for ApplicationMenu {
                         *is_updating_product = true;
                     }
 
-                    update_product_list().await.unwrap();
+                    let result = update_product_list().await;
                     *use_application().is_updating_product() = false;
+
+                    result.unwrap();
                 })());
             }
             "product/refresh-product-list" => {
@@ -91,8 +93,10 @@ impl MenuProvider for ApplicationMenu {
                         *is_updating_product = true;
                     }
 
-                    refresh_product_list().await.unwrap();
+                    let result = refresh_product_list().await;
                     *use_application().is_updating_product() = false;
+
+                    result.unwrap();
                 })());
             }
             _ => {}
