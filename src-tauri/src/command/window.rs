@@ -11,13 +11,13 @@ pub fn show_window<R: Runtime>(window: Window<R>) -> Result<()> {
 }
 
 #[tauri::command]
-pub fn spawn_window_account_add<R: Runtime>(app_handle: tauri::AppHandle<R>) -> Result<()> {
+pub async fn spawn_window_account_add<R: Runtime>(app_handle: tauri::AppHandle<R>) -> Result<()> {
     AccountAddWindow.build_or_focus(&app_handle)?;
     Ok(())
 }
 
 #[tauri::command]
-pub fn spawn_window_account_edit<R: Runtime>(
+pub async fn spawn_window_account_edit<R: Runtime>(
     app_handle: tauri::AppHandle<R>,
     account_id: i64,
 ) -> Result<()> {

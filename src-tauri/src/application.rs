@@ -4,7 +4,7 @@ use crate::{
     window::{BuildableWindow, MainWindow},
 };
 use parking_lot::{Mutex, MutexGuard};
-use std::{mem::MaybeUninit, sync::Arc};
+use std::{fs::create_dir_all, mem::MaybeUninit, sync::Arc};
 use tauri::{App, AppHandle};
 
 static mut APPLICATION: MaybeUninit<Arc<Application>> = MaybeUninit::uninit();
@@ -36,6 +36,8 @@ impl Application {
         } else {
             return Err(Error::AppDirNotExist);
         };
+
+        create_dir_all(&app_dir).map_err(|err| Error::AppDirCreationError { io_error: err })?;
 
         Ok(Self {
             app_handle: app.handle(),
