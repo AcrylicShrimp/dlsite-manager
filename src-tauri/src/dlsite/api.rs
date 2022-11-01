@@ -16,37 +16,37 @@ pub struct DLsiteProductList {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DLsiteProduct {
-    #[serde(rename(deserialize = "workno"))]
+    #[serde(alias = "workno")]
     pub id: String,
-    #[serde(rename(deserialize = "work_type"), default)]
+    #[serde(alias = "work_type", default)]
     pub ty: DLsiteProductType,
-    #[serde(rename(deserialize = "age_category"), default)]
+    #[serde(alias = "age_category", default)]
     pub age: DLsiteProductAgeCategory,
-    #[serde(rename(deserialize = "name"))]
+    #[serde(alias = "name")]
     pub title: DLsiteProductLocalizedString,
-    #[serde(rename(deserialize = "maker"))]
+    #[serde(alias = "maker")]
     pub group: DLsiteProductGroup,
-    #[serde(rename(deserialize = "work_files"))]
+    #[serde(alias = "work_files")]
     pub icon: DLsiteProductIcon,
-    #[serde(rename(deserialize = "regist_date"))]
+    #[serde(alias = "regist_date")]
     pub registered_at: Option<DateTime<Utc>>,
-    #[serde(rename(deserialize = "upgrade_date"))]
+    #[serde(alias = "upgrade_date")]
     pub upgraded_at: Option<DateTime<Utc>>,
-    #[serde(rename(deserialize = "sales_date"))]
+    #[serde(alias = "sales_date")]
     pub purchased_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DLsiteProductLocalizedString {
-    #[serde(rename(deserialize = "ja_JP"))]
+    #[serde(alias = "ja_JP")]
     pub japanese: Option<String>,
-    #[serde(rename(deserialize = "en_US"))]
+    #[serde(alias = "en_US")]
     pub english: Option<String>,
-    #[serde(rename(deserialize = "ko_KR"))]
+    #[serde(alias = "ko_KR")]
     pub korean: Option<String>,
-    #[serde(rename(deserialize = "zh_TW"))]
+    #[serde(alias = "zh_TW")]
     pub taiwanese: Option<String>,
-    #[serde(rename(deserialize = "zh_CN"))]
+    #[serde(alias = "zh_CN")]
     pub chinese: Option<String>,
 }
 
@@ -61,61 +61,61 @@ pub struct DLsiteProductGroup {
 )]
 pub enum DLsiteProductType {
     Unknown,
-    #[serde(rename(deserialize = "ADL"))]
+    #[serde(alias = "ADL")]
     Adult,
-    #[serde(rename(deserialize = "DOH"))]
+    #[serde(alias = "DOH")]
     Doujinsji,
-    #[serde(rename(deserialize = "SOF"))]
+    #[serde(alias = "SOF")]
     Software,
-    #[serde(rename(deserialize = "GAM"))]
+    #[serde(alias = "GAM")]
     Game,
-    #[serde(rename(deserialize = "ACN"))]
+    #[serde(alias = "ACN")]
     Action,
-    #[serde(rename(deserialize = "ADV"))]
+    #[serde(alias = "ADV")]
     Adventure,
-    #[serde(rename(deserialize = "AMT"))]
+    #[serde(alias = "AMT")]
     AudioMaterial,
-    #[serde(rename(deserialize = "COM"))]
+    #[serde(alias = "COM")]
     Comic,
-    #[serde(rename(deserialize = "DNV"))]
+    #[serde(alias = "DNV")]
     DigitalNovel,
-    #[serde(rename(deserialize = "ET3"))]
+    #[serde(alias = "ET3")]
     Other,
-    #[serde(rename(deserialize = "ETC"))]
+    #[serde(alias = "ETC")]
     OtherGame,
-    #[serde(rename(deserialize = "ICG"))]
+    #[serde(alias = "ICG")]
     Illust,
-    #[serde(rename(deserialize = "IMT"))]
+    #[serde(alias = "IMT")]
     ImageMaterial,
-    #[serde(rename(deserialize = "MNG"))]
+    #[serde(alias = "MNG")]
     Manga,
-    #[serde(rename(deserialize = "MOV"))]
+    #[serde(alias = "MOV")]
     Anime,
-    #[serde(rename(deserialize = "MUS"))]
+    #[serde(alias = "MUS")]
     Music,
-    #[serde(rename(deserialize = "NRE"))]
+    #[serde(alias = "NRE")]
     Novel,
-    #[serde(rename(deserialize = "PZL"))]
+    #[serde(alias = "PZL")]
     Puzzle,
-    #[serde(rename(deserialize = "QIZ"))]
+    #[serde(alias = "QIZ")]
     Quiz,
-    #[serde(rename(deserialize = "RPG"))]
+    #[serde(alias = "RPG")]
     RolePlaying,
-    #[serde(rename(deserialize = "SCM"))]
+    #[serde(alias = "SCM")]
     Gekiga, // See https://en.wikipedia.org/wiki/Gekiga
-    #[serde(rename(deserialize = "SLN"))]
+    #[serde(alias = "SLN")]
     Simulation,
-    #[serde(rename(deserialize = "SOU"))]
+    #[serde(alias = "SOU")]
     Voice,
-    #[serde(rename(deserialize = "STG"))]
+    #[serde(alias = "STG")]
     Shooter,
-    #[serde(rename(deserialize = "TBL"))]
+    #[serde(alias = "TBL")]
     Tabletop,
-    #[serde(rename(deserialize = "TOL"))]
+    #[serde(alias = "TOL")]
     Utility,
-    #[serde(rename(deserialize = "TYP"))]
+    #[serde(alias = "TYP")]
     Typing,
-    #[serde(rename(deserialize = "KSV"))]
+    #[serde(alias = "KSV")]
     SexualNovel,
 }
 
@@ -129,11 +129,11 @@ impl Default for DLsiteProductType {
     EnumString, IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize,
 )]
 pub enum DLsiteProductAgeCategory {
-    #[serde(rename(deserialize = "all"))]
+    #[serde(alias = "all")]
     All,
-    #[serde(rename(deserialize = "r15"))]
+    #[serde(alias = "r15")]
     R15,
-    #[serde(rename(deserialize = "r18"))]
+    #[serde(alias = "r18")]
     R18,
 }
 
@@ -146,13 +146,13 @@ impl Default for DLsiteProductAgeCategory {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DLsiteProductIcon {
     pub main: String,
-    #[serde(rename(deserialize = "sam"))]
+    #[serde(alias = "sam")]
     pub small: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DLsiteProductDetail {
-    #[serde(rename(deserialize = "image_main"))]
+    #[serde(alias = "image_main")]
     pub image: DLsiteProductDetailImage,
     pub contents: Vec<DLsiteProductDetailContent>,
 }
