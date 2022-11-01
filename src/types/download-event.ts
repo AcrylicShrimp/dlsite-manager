@@ -7,5 +7,5 @@ export interface DownloadProgress {
 
 export interface DownloadComplete {
   product_id: string;
-  download: ProductDownload;
+  download?: ProductDownload;
 }

@@ -22,7 +22,7 @@ pub struct ProductDownloadProgressEvent<'s> {
 #[derive(Debug, Clone, Serialize)]
 pub struct ProductDownloadEndEvent<'s> {
     pub product_id: &'s str,
-    pub download: ProductDownload,
+    pub download: Option<ProductDownload>,
 }
 
 #[tauri::command]
@@ -46,22 +46,30 @@ pub async fn product_download_product<R: Runtime>(
             .unwrap_or_else(|| app_handle.path_resolver().app_dir().unwrap())
             .join("DLsite")
     });
-    let path = download_product(account_id, &product_id, path, |progress, total_progress| {
-        if let Some(window) = app_handle.get_window(&MainWindow.label()) {
-            window.emit(
-                "download-progress",
-                ProductDownloadProgressEvent {
-                    product_id: &product_id,
-                    progress: (progress as f64 / total_progress as f64 * 100f64).round() as usize,
-                },
-            )?;
-        }
 
-        Ok(())
-    })
-    .await?;
+    let download =
+        match download_product(account_id, &product_id, path, |progress, total_progress| {
+            if let Some(window) = app_handle.get_window(&MainWindow.label()) {
+                window.emit(
+                    "download-progress",
+                    ProductDownloadProgressEvent {
+                        product_id: &product_id,
+                        progress: (progress as f64 / total_progress as f64 * 100f64).round()
+                            as usize,
+                    },
+                )?;
+            }
 
-    let download = Product::insert_download(&product_id, path.to_str().unwrap())?;
+            Ok(())
+        })
+        .await
+        {
+            Ok(path) => Some(Product::insert_download(
+                &product_id,
+                path.to_str().unwrap(),
+            )?),
+            Err(..) => None,
+        };
 
     if let Some(window) = app_handle.get_window(&MainWindow.label()) {
         window.emit(
