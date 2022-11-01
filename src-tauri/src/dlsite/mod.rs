@@ -343,7 +343,7 @@ pub async fn download_product(
     }
 
     #[cfg(target_family = "windows")]
-    if detail.contents.len() == 1 && detail.contents[0].file_name.ends_with(".exe") {
+    if detail.contents.len() != 0 && detail.contents[0].file_name.ends_with(".exe") {
         use std::{io::Result as IOResult, process::Command};
 
         let tmp_path = path.join("__tmp__");
