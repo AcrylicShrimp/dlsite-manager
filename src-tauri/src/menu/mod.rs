@@ -5,7 +5,7 @@ use self::{refresh_product_list::refresh_product_list, update_product_list::upda
 use crate::{
     application::use_application,
     application_error::Result,
-    window::{AccountManagementWindow, BuildableWindow},
+    window::{AccountManagementWindow, BuildableWindow, SettingWindow},
 };
 use tauri::{async_runtime::spawn, CustomMenuItem, Menu, MenuItem, Submenu, WindowMenuEvent};
 
@@ -56,6 +56,10 @@ impl MenuProvider for ApplicationMenu {
                         "Refresh Product All",
                     )),
             ))
+            .add_submenu(Submenu::new(
+                "Setting",
+                Menu::new().add_item(CustomMenuItem::new("setting/open-setting", "Open Settings")),
+            ))
     }
 
     fn handle_menu(event: WindowMenuEvent) -> Result<()> {
@@ -98,6 +102,9 @@ impl MenuProvider for ApplicationMenu {
 
                     result.unwrap();
                 })());
+            }
+            "setting/open-setting" => {
+                SettingWindow.build_or_focus(use_application().app_handle())?;
             }
             _ => {}
         }

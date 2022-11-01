@@ -1,8 +1,9 @@
 use crate::{application::use_application, application_error::Result};
 use rusqlite::{params, OptionalExtension, Row};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Setting {
     pub download_root_dir: Option<PathBuf>,
 }

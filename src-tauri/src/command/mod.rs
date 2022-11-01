@@ -2,6 +2,7 @@ use tauri::{generate_handler, Builder, Runtime};
 
 mod account_management;
 mod product;
+mod setting;
 mod window;
 
 pub trait CommandProvider<R>
@@ -26,6 +27,10 @@ where
             product::product_list_products,
             product::product_download_product,
             product::product_open_downloaded_folder,
+            setting::setting_get,
+            setting::setting_browse_default_root_directory,
+            setting::setting_close,
+            setting::setting_save_and_close,
             window::show_window,
             window::spawn_window_account_add,
             window::spawn_window_account_edit,

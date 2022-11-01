@@ -59,10 +59,12 @@ mod account_add_window;
 mod account_edit_window;
 mod account_management_window;
 mod main_window;
+mod setting_window;
 
 pub use account_add_window::*;
 pub use account_edit_window::*;
 pub use account_management_window::*;
 pub use main_window::*;
+pub use setting_window::*;
 
 use crate::application_error::Result;
