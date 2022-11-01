@@ -17,7 +17,9 @@ You can register many accounts as you want. Products from each account are merge
 
 Don't forget to test your account!
 
-<img src="./docs/img-am-2.png" alt="account-management-image-2" width="300">
+<p align="center">
+  <img src="./docs/img-am-2.png" alt="account-management-image-2" width="300">
+</p>
 
 ## Product download
 
