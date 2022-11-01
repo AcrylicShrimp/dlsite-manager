@@ -13,7 +13,7 @@
   "tauri": {
     "allowlist": {
       "shell": {
-        "open": true
+        "open": ""
       }
     },
     "bundle": {
