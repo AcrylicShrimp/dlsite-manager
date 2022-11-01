@@ -297,7 +297,7 @@ pub async fn download_product(
             .create_new(true)
             .open(path.join(&detail.contents[index].file_name))
             .map_err(|err| Error::ProductFileCreationError { io_error: err })?;
-        let mut writer = BufWriter::new(file);
+        let mut writer = BufWriter::with_capacity(1 * 1024 * 1024, file);
         let mut response = client.get(file_url).send().await?;
         let mut last_progress_time = Instant::now();
 
