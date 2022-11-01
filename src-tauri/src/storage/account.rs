@@ -239,11 +239,7 @@ WHERE id = ?1
         }
     }
 
-    pub fn update_one_product_count_and_cookie_json(
-        id: i64,
-        product_count: i32,
-        cookie_json: impl AsRef<str>,
-    ) -> Result<()> {
+    pub fn update_one_product_count(id: i64, product_count: i32) -> Result<()> {
         use_application()
             .storage()
             .connection()
@@ -251,12 +247,27 @@ WHERE id = ?1
                 "
 UPDATE accounts
 SET
-    product_count = ?2,
-    cookie_json = ?3
+    product_count = ?2
 WHERE id = ?1
         ",
             )?
-            .execute(params![id, product_count, cookie_json.as_ref()])?;
+            .execute(params![id, product_count])?;
+        Ok(())
+    }
+
+    pub fn update_one_cookie_json(id: i64, cookie_json: impl AsRef<str>) -> Result<()> {
+        use_application()
+            .storage()
+            .connection()
+            .prepare(
+                "
+UPDATE accounts
+SET
+    cookie_json = ?2
+WHERE id = ?1
+        ",
+            )?
+            .execute(params![id, cookie_json.as_ref()])?;
         Ok(())
     }
 

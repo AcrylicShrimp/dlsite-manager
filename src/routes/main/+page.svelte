@@ -1,13 +1,17 @@
 <script lang="ts">
   import type { PageData } from "./$types";
   import type { Product } from "@app/types/product";
+  import type {
+    DownloadComplete,
+    DownloadProgress,
+  } from "@app/types/download-event";
   import type { RefreshProgress } from "@app/types/refresh-event";
 
   import { throttle } from "lodash";
 
   import { BgCssAge, BgCssType, DisplayTypeString } from "./product-values";
-  import SmallRedButton from "@app/lib/buttons/SmallRedButton.svelte";
   import SmallButtonLink from "@app/lib/buttons/SmallButtonLink.svelte";
+  import SmallFixedRedButton from "@app/lib/buttons/SmallFixedRedButton.svelte";
   import Input from "@app/lib/inputs/Input.svelte";
 
   import { invoke } from "@tauri-apps/api/tauri";
@@ -17,6 +21,7 @@
   export let data: PageData;
   let query: string = "";
   let products: Product[] = [];
+  let productDownloads: Map<string, number> = new Map();
   let updating: boolean = false;
   let progress: number = 0;
   let progressTotal: number = 0;
@@ -38,6 +43,33 @@
         await query_products();
         updating = false;
       }),
+      appWindow.listen<string>("download-begin", (event) => {
+        productDownloads.set(event.payload, 0);
+        productDownloads = productDownloads;
+      }),
+      appWindow.listen<DownloadProgress>("download-progress", (event) => {
+        productDownloads.set(event.payload.product_id, event.payload.progress);
+        productDownloads = productDownloads;
+      }),
+      appWindow.listen<DownloadComplete>("download-end", (event) => {
+        const index = products.findIndex(
+          (p) => p.product.id === event.payload.product_id
+        );
+
+        if (0 <= index) products[index].download = event.payload.download;
+
+        productDownloads.delete(event.payload.product_id);
+        products = products;
+        productDownloads = productDownloads;
+      }),
+      appWindow.listen<string>("download-invalid", (event) => {
+        const index = products.findIndex((p) => p.product.id === event.payload);
+
+        if (index < 0) return;
+
+        products[index].download = undefined;
+        products = products;
+      }),
     ]);
 
     await invoke("show_window");
@@ -47,7 +79,7 @@
     };
   });
 
-  const throttledSearch = throttle(search, 100, {
+  const throttledSearch = throttle(search, 250, {
     leading: false,
     trailing: true,
   });
@@ -61,6 +93,22 @@
       query: {
         query,
       },
+    });
+  }
+
+  async function requestDownload(product: Product): Promise<void> {
+    if (productDownloads.has(product.product.id)) return;
+
+    productDownloads.set(product.product.id, 0);
+    await invoke("product_download_product", {
+      accountId: product.account.id,
+      productId: product.product.id,
+    });
+  }
+
+  async function openDownloadedFolder(product: Product): Promise<void> {
+    await invoke("product_open_downloaded_folder", {
+      productId: product.product.id,
     });
   }
 </script>
@@ -122,7 +170,26 @@
                 rel="noreferrer">Visit Product Page</SmallButtonLink
               >
               <span class="flex-none block w-1" />
-              <SmallRedButton>Download</SmallRedButton>
+
+              {#if product.download}
+                <SmallFixedRedButton
+                  on:click={() => openDownloadedFolder(product)}
+                >
+                  Open Folder
+                </SmallFixedRedButton>
+              {:else if productDownloads.has(product.product.id)}
+                <SmallFixedRedButton disabled>
+                  {#if productDownloads.get(product.product.id)}
+                    Downloading... {productDownloads.get(product.product.id)}%
+                  {:else}
+                    Downloading...
+                  {/if}
+                </SmallFixedRedButton>
+              {:else}
+                <SmallFixedRedButton on:click={() => requestDownload(product)}>
+                  Download
+                </SmallFixedRedButton>
+              {/if}
             </div>
           </div>
         </div>

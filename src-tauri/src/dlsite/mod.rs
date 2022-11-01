@@ -2,76 +2,107 @@ pub mod api;
 
 use crate::{
     application_error::{Error, Result},
+    dlsite::api::DLsiteProductDetail,
     storage::{
         account::Account,
         product::{InsertedProduct, Product},
     },
 };
+use reqwest::ClientBuilder;
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
-use std::{io::BufWriter, sync::Arc};
+use std::{
+    fs::{create_dir_all, read_dir, remove_dir_all, remove_file, rename, OpenOptions},
+    io::{BufReader, BufWriter, Write},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 static PAGE_LIMIT: usize = 50;
+
+macro_rules! with_cookie_store {
+    ($account_id:ident, $f:ident) => {
+        let cookie_json = if let Some(cookie_json) = Account::get_one_cookie_json($account_id)? {
+            cookie_json
+        } else {
+            return Err(Error::AccountNotExists { $account_id });
+        };
+
+        if let Ok(cookie_store) = CookieStore::load_json(cookie_json.as_bytes()) {
+            match $f(Arc::new(CookieStoreMutex::new(cookie_store))).await {
+                Ok(result) => {
+                    Account::update_one_cookie_json($account_id, cookie_json)?;
+                    return Ok(result);
+                }
+                Err(err) => match err {
+                    Error::DLsiteNotAuthenticated => {}
+                    _ => return Err(err),
+                },
+            }
+        }
+
+        let (username, password) = if let Some(username_and_password) =
+            Account::get_one_username_and_password($account_id)?
+        {
+            username_and_password
+        } else {
+            return Err(Error::AccountNotExists { $account_id });
+        };
+        let cookie_store = api::login(username, password).await?;
+
+        match $f(cookie_store.clone()).await {
+            Ok(result) => {
+                Account::update_one_cookie_json($account_id, {
+                    let mut writer = BufWriter::new(Vec::new());
+                    cookie_store
+                        .lock()
+                        .unwrap()
+                        .save_json(&mut writer)
+                        .map_err(|err| Error::ReqwestCookieStoreError {
+                            reqwest_cookie_store_error: err,
+                        })?;
+                    String::from_utf8(writer.into_inner().unwrap()).unwrap()
+                })?;
+                return Ok(result);
+            }
+            Err(err) => return Err(err),
+        }
+    };
+}
 
 async fn get_product_count_and_cookie_store(
     account_id: i64,
 ) -> Result<(usize, Arc<CookieStoreMutex>)> {
-    let cookie_json = if let Some(cookie_json) = Account::get_one_cookie_json(account_id)? {
-        cookie_json
-    } else {
-        return Err(Error::AccountNotExists { account_id });
-    };
-
-    if let Ok(cookie_store) = CookieStore::load_json(cookie_json.as_bytes()) {
-        let cookie_store = Arc::new(CookieStoreMutex::new(cookie_store));
-
-        match api::get_product_count(cookie_store.clone()).await {
-            Ok(product_count) => {
-                Account::update_one_product_count_and_cookie_json(
-                    account_id,
-                    product_count as i32,
-                    {
-                        let mut writer = BufWriter::new(Vec::new());
-                        cookie_store
-                            .lock()
-                            .unwrap()
-                            .save_json(&mut writer)
-                            .map_err(|err| Error::ReqwestCookieStoreError {
-                                reqwest_cookie_store_error: err,
-                            })?;
-                        String::from_utf8(writer.into_inner().unwrap()).unwrap()
-                    },
-                )?;
-                return Ok((product_count, cookie_store));
-            }
-            Err(err) => match err {
-                Error::DLsiteNotAuthenticated => {}
-                _ => return Err(err),
-            },
-        }
+    async fn body(
+        account_id: i64,
+        cookie_store: Arc<CookieStoreMutex>,
+    ) -> Result<(usize, Arc<CookieStoreMutex>)> {
+        let product_count = api::get_product_count(cookie_store.clone()).await?;
+        Account::update_one_product_count(account_id, product_count as i32)?;
+        Ok((product_count, cookie_store))
     }
 
-    let (username, password) =
-        if let Some(username_and_password) = Account::get_one_username_and_password(account_id)? {
-            username_and_password
-        } else {
-            return Err(Error::AccountNotExists { account_id });
-        };
-    let cookie_store = api::login(username, password).await?;
+    let body = move |cookie_store: Arc<CookieStoreMutex>| body(account_id, cookie_store);
 
-    let product_count = api::get_product_count(cookie_store.clone()).await?;
-    Account::update_one_product_count_and_cookie_json(account_id, product_count as i32, {
-        let mut writer = BufWriter::new(Vec::new());
-        cookie_store
-            .lock()
-            .unwrap()
-            .save_json(&mut writer)
-            .map_err(|err| Error::ReqwestCookieStoreError {
-                reqwest_cookie_store_error: err,
-            })?;
-        String::from_utf8(writer.into_inner().unwrap()).unwrap()
-    })?;
+    with_cookie_store!(account_id, body);
+}
 
-    Ok((product_count, cookie_store))
+async fn get_product_details_and_cookie_store(
+    account_id: i64,
+    product_id: impl AsRef<str>,
+) -> Result<(Vec<DLsiteProductDetail>, Arc<CookieStoreMutex>)> {
+    async fn body(
+        product_id: impl AsRef<str>,
+        cookie_store: Arc<CookieStoreMutex>,
+    ) -> Result<(Vec<DLsiteProductDetail>, Arc<CookieStoreMutex>)> {
+        Ok((
+            api::get_product_details(cookie_store.clone(), product_id).await?,
+            cookie_store,
+        ))
+    }
+
+    let body = |cookie_store: Arc<CookieStoreMutex>| body(product_id.as_ref(), cookie_store);
+
+    with_cookie_store!(account_id, body);
 }
 
 pub async fn update_product(mut on_progress: impl FnMut(usize, usize) -> Result<()>) -> Result<()> {
@@ -203,4 +234,113 @@ pub async fn refresh_product(
     }
 
     Ok(())
+}
+
+pub async fn download_product(
+    account_id: i64,
+    product_id: impl AsRef<str>,
+    base_path: impl AsRef<Path>,
+    on_progress: impl Fn(u64, u64) -> Result<()>,
+) -> Result<PathBuf> {
+    let (details, cookie_store) =
+        get_product_details_and_cookie_store(account_id, product_id.as_ref()).await?;
+
+    if details.len() != 1 {
+        return Err(Error::DLsiteProductDetailMissingOrNotUnique);
+    }
+
+    let detail = details.into_iter().next().unwrap();
+    let file_size = detail.contents.iter().fold(0, |acc, detail| {
+        acc + detail.file_size.parse::<u64>().unwrap()
+    });
+    let file_urls;
+
+    match detail.contents.len() {
+        1 => {
+            file_urls = vec![format!(
+                "https://www.dlsite.com/maniax/download/=/product_id/{}.html",
+                product_id.as_ref()
+            )];
+        }
+        len => {
+            file_urls = (1..=len)
+                .map(|index| {
+                    format!(
+                        "https://www.dlsite.com/maniax/download/=/number/{}/product_id/{}.html",
+                        index,
+                        product_id.as_ref()
+                    )
+                })
+                .collect()
+        }
+    }
+
+    let path = base_path.as_ref().join(product_id.as_ref());
+
+    if path.exists() {
+        remove_dir_all(&path).map_err(|err| Error::ProductDirCreationError { io_error: err })?;
+    }
+
+    create_dir_all(&path).map_err(|err| Error::ProductDirCreationError { io_error: err })?;
+    on_progress(0, file_size)?;
+
+    let mut progress = 0;
+    let client = ClientBuilder::new()
+        .cookie_store(true)
+        .cookie_provider(cookie_store)
+        .build()?;
+
+    for (index, file_url) in file_urls.into_iter().enumerate() {
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path.join(&detail.contents[index].file_name))
+            .map_err(|err| Error::ProductFileCreationError { io_error: err })?;
+        let mut writer = BufWriter::new(file);
+        let mut response = client.get(file_url).send().await?;
+
+        while let Some(chunk) = response.chunk().await? {
+            writer
+                .write_all(&chunk)
+                .map_err(|err| Error::ProductFileWriteError { io_error: err })?;
+            progress += chunk.len();
+
+            on_progress(progress as u64, file_size)?;
+        }
+    }
+
+    if detail.contents.len() == 1 && detail.contents[0].file_name.ends_with(".zip") {
+        let tmp_path = path.join("__tmp__");
+        let file_path = path.join(&detail.contents[0].file_name);
+        let file = OpenOptions::new()
+            .read(true)
+            .open(&file_path)
+            .map_err(|err| Error::ProductArchiveOpenError { io_error: err })?;
+        let reader = BufReader::new(file);
+
+        zip_extract::extract(reader, &tmp_path, true)
+            .map_err(|err| Error::ProductArchiveExtractError { extract_error: err })?;
+
+        remove_file(&file_path)
+            .map_err(|err| Error::ProductArchiveDeleteError { io_error: err })?;
+
+        for content_path in read_dir(&tmp_path)
+            .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?
+        {
+            let content_path = content_path
+                .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?
+                .path();
+
+            rename(
+                &content_path,
+                path.join(content_path.strip_prefix(&tmp_path).unwrap()),
+            )
+            .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?;
+        }
+
+        remove_dir_all(&tmp_path)
+            .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?;
+    }
+
+    Ok(path)
 }

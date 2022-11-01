@@ -1,21 +1,44 @@
 use super::account::Account;
 use crate::{
     application::use_application,
-    application_error::Result,
+    application_error::{Error, Result},
     dlsite::api::{
         DLsiteProduct, DLsiteProductAgeCategory, DLsiteProductGroup, DLsiteProductIcon,
         DLsiteProductLocalizedString, DLsiteProductType,
     },
 };
-use rusqlite::{params, params_from_iter, Row};
+use chrono::{DateTime, Utc};
+use rusqlite::{params, params_from_iter, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
+use std::{path::PathBuf, str::FromStr};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Product {
     pub id: i64,
     pub account: Account,
     pub product: DLsiteProduct,
+    pub download: Option<ProductDownload>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProductDownload {
+    pub id: i64,
+    pub path: PathBuf,
+    pub created_at: DateTime<Utc>,
+}
+
+impl<'stmt> TryFrom<&'stmt Row<'stmt>> for ProductDownload {
+    type Error = rusqlite::Error;
+
+    fn try_from(row: &'stmt Row<'stmt>) -> std::result::Result<Self, Self::Error> {
+        Ok(Self {
+            id: row.get("id")?,
+            path: PathBuf::from(row.get::<_, String>("path")?),
+            created_at: row.get("created_at")?,
+        })
+    }
 }
 
 #[derive(Default, Debug, Clone, Deserialize)]
@@ -92,6 +115,19 @@ impl<'stmt> TryFrom<&'stmt Row<'stmt>> for Product {
                 upgraded_at: row.get("upgraded_at")?,
                 purchased_at: row.get("purchased_at")?,
             },
+            download: {
+                if let Some(id) = row.get("download_id")? {
+                    Some(ProductDownload {
+                        id,
+                        path: PathBuf::from(row.get::<_, String>("download_path")?),
+                        created_at: row.get("download_created_at")?,
+                    })
+                } else {
+                    None
+                }
+            },
+            created_at: row.get("created_at")?,
+            updated_at: row.get("updated_at")?,
         })
     }
 }
@@ -147,6 +183,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS indexed_products USING fts5 (
     product_group_name_tw,
     product_group_name_cn,
     tokenize = 'trigram'
+);
+
+CREATE TABLE IF NOT EXISTS product_downloads (
+    id INTEGER PRIMARY KEY NOT NULL,
+    product_id TEXT NOT NULL UNIQUE,
+    path TEXT NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY(product_id) REFERENCES products(product_id) ON UPDATE CASCADE ON DELETE CASCADE
 );"
     }
 
@@ -207,10 +252,14 @@ SELECT
     product.upgraded_at,
     product.purchased_at,
     product.created_at,
-    product.updated_at
+    product.updated_at,
+    download.id as download_id,
+    download.path as download_path,
+    download.created_at as download_created_at
 FROM indexed_products
 INNER JOIN products AS product ON product.product_id = indexed_products.product_id
 INNER JOIN accounts AS account ON account.id = product.account_id
+LEFT JOIN product_downloads as download ON download.product_id = indexed_products.product_id
 WHERE {}
 GROUP BY product.product_id
 ORDER BY product.purchased_at DESC, product.id ASC",
@@ -218,6 +267,25 @@ ORDER BY product.purchased_at DESC, product.id ASC",
             ))?
             .query_map(params_from_iter(&params), |row| Self::try_from(row))?
             .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn get_one_download(product_id: impl AsRef<str>) -> Result<Option<ProductDownload>> {
+        Ok(use_application()
+            .storage()
+            .connection()
+            .prepare(
+                "
+SELECT
+    id,
+    path,
+    created_at
+FROM product_downloads
+WHERE product_id = ?1",
+            )?
+            .query_row(params![product_id.as_ref()], |row| {
+                ProductDownload::try_from(row)
+            })
+            .optional()?)
     }
 
     pub fn insert_all(mut products: impl Iterator<Item = InsertedProduct>) -> Result<()> {
@@ -344,6 +412,33 @@ INSERT INTO indexed_products (
         Ok(())
     }
 
+    pub fn insert_download(
+        product_id: impl AsRef<str>,
+        path: impl AsRef<str>,
+    ) -> Result<ProductDownload> {
+        use_application()
+            .storage()
+            .connection()
+            .prepare(
+                "
+INSERT INTO product_downloads (
+    product_id,
+    path
+) VALUES (
+    ?1,
+    ?2
+)
+            ",
+            )?
+            .insert(params![product_id.as_ref(), path.as_ref()])?;
+
+        if let Some(download) = Self::get_one_download(product_id.as_ref())? {
+            Ok(download)
+        } else {
+            Err(Error::DatabaseCreatedItemNotAccessible)
+        }
+    }
+
     pub fn remove_all() -> Result<()> {
         use_application().storage().connection().execute_batch(
             "
@@ -351,6 +446,19 @@ DELETE FROM products;
 DELETE FROM indexed_products;
 VACUUM;",
         )?;
+        Ok(())
+    }
+
+    pub fn remove_one_download(product_id: impl AsRef<str>) -> Result<()> {
+        use_application()
+            .storage()
+            .connection()
+            .prepare(
+                "
+DELETE FROM product_downloads
+WHERE product_id = ?1",
+            )?
+            .execute(params![product_id.as_ref()])?;
         Ok(())
     }
 }

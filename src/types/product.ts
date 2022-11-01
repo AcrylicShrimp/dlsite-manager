@@ -4,6 +4,12 @@ export interface Product {
   id: number;
   account: Account;
   product: DLsiteProduct;
+  download?: ProductDownload;
+}
+
+export interface ProductDownload {
+  id: number;
+  path: string;
 }
 
 export interface DLsiteProduct {

@@ -38,8 +38,28 @@ pub enum ApplicationError {
     },
     #[error("you're not authenticated to the DLsite")]
     DLsiteNotAuthenticated,
+    #[error("the product details from the DLsite is not in expected form")]
+    DLsiteProductDetailMissingOrNotUnique,
     #[error("the Account(id='{account_id}') does not exists")]
     AccountNotExists { account_id: i64 },
+    #[error("cannot create product directory due to: {io_error}")]
+    ProductDirCreationError { io_error: std::io::Error },
+    #[error("cannot open product file due to: {io_error}")]
+    ProductFileCreationError { io_error: std::io::Error },
+    #[error("cannot write to product file due to: {io_error}")]
+    ProductFileWriteError { io_error: std::io::Error },
+    #[error("cannot access product archive due to: {io_error}")]
+    ProductArchiveOpenError { io_error: std::io::Error },
+    #[error("cannot extract product archive due to: {extract_error}")]
+    ProductArchiveExtractError {
+        extract_error: zip_extract::ZipExtractError,
+    },
+    #[error("cannot delete product archive due to: {io_error}")]
+    ProductArchiveDeleteError { io_error: std::io::Error },
+    #[error("cannot cleanup product archive due to: {io_error}")]
+    ProductArchiveCleanupError { io_error: std::io::Error },
+    #[error("cannot open product path due to: {tauri_error}")]
+    ProductPathOpenError { tauri_error: tauri::api::Error },
 }
 
 impl serde::Serialize for ApplicationError {

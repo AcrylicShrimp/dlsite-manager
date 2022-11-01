@@ -1,4 +1,4 @@
-use self::{account::Account, product::Product};
+use self::{account::Account, product::Product, setting::Setting};
 use crate::application_error::Result;
 use parking_lot::{Mutex, MutexGuard};
 use rusqlite::Connection;
@@ -6,6 +6,7 @@ use std::path::Path;
 
 pub mod account;
 pub mod product;
+pub mod setting;
 
 pub struct Storage {
     connection: Mutex<Connection>,
@@ -31,8 +32,10 @@ PRAGMA foreign_keys = ON;
 BEGIN;
 {}
 {}
+{}
 COMMIT;
 ",
+            Setting::get_ddl(),
             Account::get_ddl(),
             Product::get_ddl(),
         ))?;

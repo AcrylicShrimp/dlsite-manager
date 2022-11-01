@@ -150,6 +150,26 @@ pub struct DLsiteProductIcon {
     pub small: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DLsiteProductDetail {
+    #[serde(rename(deserialize = "image_main"))]
+    pub image: DLsiteProductDetailImage,
+    pub contents: Vec<DLsiteProductDetailContent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DLsiteProductDetailImage {
+    pub file_name: String,
+    pub file_size: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DLsiteProductDetailContent {
+    pub file_name: String,
+    pub file_size: String,
+}
+
 pub async fn login(
     username: impl AsRef<str>,
     password: impl AsRef<str>,
@@ -231,5 +251,31 @@ pub async fn get_product(
     match response.json::<DLsiteProductList>().await {
         Ok(product_list) => Ok(product_list.works),
         Err(..) => Err(Error::DLsiteNotAuthenticated),
+    }
+}
+
+pub async fn get_product_details(
+    cookie_store: Arc<CookieStoreMutex>,
+    product_id: impl AsRef<str>,
+) -> Result<Vec<DLsiteProductDetail>> {
+    let client = ClientBuilder::new()
+        .cookie_store(true)
+        .cookie_provider(cookie_store)
+        .build()?;
+    let response = client
+        .get(format!(
+            "https://www.dlsite.com/maniax/api/=/product.json?workno={}",
+            product_id.as_ref()
+        ))
+        .send()
+        .await?;
+
+    // The body of the response will be a valid json if the login has been succeed.
+    match response.json::<Vec<DLsiteProductDetail>>().await {
+        Ok(details) => Ok(details),
+        Err(err) => {
+            println!("{:#?}", err);
+            Err(Error::DLsiteNotAuthenticated)
+        }
     }
 }
