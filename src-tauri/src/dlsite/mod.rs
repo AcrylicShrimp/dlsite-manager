@@ -15,6 +15,7 @@ use std::{
     io::{BufReader, BufWriter, Write},
     path::{Path, PathBuf},
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 static PAGE_LIMIT: usize = 50;
@@ -298,6 +299,7 @@ pub async fn download_product(
             .map_err(|err| Error::ProductFileCreationError { io_error: err })?;
         let mut writer = BufWriter::new(file);
         let mut response = client.get(file_url).send().await?;
+        let mut last_progress_time = Instant::now();
 
         while let Some(chunk) = response.chunk().await? {
             writer
@@ -305,9 +307,16 @@ pub async fn download_product(
                 .map_err(|err| Error::ProductFileWriteError { io_error: err })?;
             progress += chunk.len();
 
+            let now = Instant::now();
+
+            if Duration::from_secs(1) <= now - last_progress_time {
+                last_progress_time = now;
             on_progress(progress as u64, file_size)?;
         }
     }
+    }
+
+    on_progress(file_size, file_size)?;
 
     if detail.contents.len() == 1 && detail.contents[0].file_name.ends_with(".zip") {
         let tmp_path = path.join("__tmp__");
