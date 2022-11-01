@@ -311,9 +311,9 @@ pub async fn download_product(
 
             if Duration::from_secs(1) <= now - last_progress_time {
                 last_progress_time = now;
-            on_progress(progress as u64, file_size)?;
+                on_progress(progress as u64, file_size)?;
+            }
         }
-    }
 
         writer
             .flush()
@@ -375,10 +375,16 @@ pub async fn download_product(
             });
         }
 
+        for content in &detail.contents {
+            remove_file(path.join(&content.file_name))
+                .map_err(|err| Error::ProductArchiveDeleteError { io_error: err })?;
+        }
+
         let mut content_paths = read_dir(&tmp_path)
             .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?
             .collect::<IOResult<Vec<_>>>()
             .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?;
+        let content_prefix_path;
 
         if content_paths.len() == 1
             && content_paths[0]
@@ -386,10 +392,13 @@ pub async fn download_product(
                 .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?
                 .is_dir()
         {
+            content_prefix_path = content_paths[0].path();
             content_paths = read_dir(content_paths[0].path())
                 .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?
                 .collect::<IOResult<Vec<_>>>()
                 .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?;
+        } else {
+            content_prefix_path = tmp_path.clone();
         }
 
         for content_path in content_paths {
@@ -397,7 +406,7 @@ pub async fn download_product(
 
             rename(
                 &content_path,
-                path.join(content_path.strip_prefix(&tmp_path).unwrap()),
+                path.join(content_path.strip_prefix(&content_prefix_path).unwrap()),
             )
             .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?;
         }
