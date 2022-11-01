@@ -24,9 +24,7 @@
         "depends": []
       },
       "externalBin": [],
-      "icon": [
-        "icons/icon.ico"
-      ],
+      "icon": ["icons/icon.ico"],
       "identifier": "dev.ashrimp.dlsite-manager",
       "longDescription": "",
       "macOS": {
