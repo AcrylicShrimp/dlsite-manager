@@ -314,6 +314,10 @@ pub async fn download_product(
             on_progress(progress as u64, file_size)?;
         }
     }
+
+        writer
+            .flush()
+            .map_err(|err| Error::ProductFileWriteError { io_error: err })?;
     }
 
     on_progress(file_size, file_size)?;
