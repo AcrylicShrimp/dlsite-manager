@@ -1,8 +1,8 @@
 [package]
 name = "dlsite-manager"
 version = "0.0.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "manage your DLsite accounts and products at once"
+authors = ["AcrylicShrimp"]
 license = ""
 repository = ""
 edition = "2021"
