@@ -15,7 +15,7 @@ impl WindowInfoProvider for AccountEditWindow {
     }
 
     fn title(&self) -> String {
-        "DLsite Manager - Edit Account".to_owned()
+        "Edit Account - DLsite Manager".to_owned()
     }
 
     fn size(&self) -> (f64, f64) {
