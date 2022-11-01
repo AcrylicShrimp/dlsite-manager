@@ -342,5 +342,56 @@ pub async fn download_product(
             .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?;
     }
 
+    #[cfg(target_family = "windows")]
+    if detail.contents.len() == 1 && detail.contents[0].file_name.ends_with(".exe") {
+        use std::{io::Result as IOResult, process::Command};
+
+        let tmp_path = path.join("__tmp__");
+        let file_path = path.join(&detail.contents[0].file_name);
+        let sfx_output = Command::new(file_path)
+            .args(["-s2", "-d__tmp__"])
+            .current_dir(&path)
+            .spawn()
+            .map_err(|err| Error::ProductSfxExtractError { io_error: err })?
+            .wait_with_output()
+            .map_err(|err| Error::ProductSfxExtractError { io_error: err })?;
+
+        if !sfx_output.status.success() {
+            return Err(Error::ProductSfxExtractFailed {
+                std_err: String::from_utf8_lossy(&sfx_output.stderr).into_owned(),
+            });
+        }
+
+        let mut content_paths = read_dir(&tmp_path)
+            .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?
+            .collect::<IOResult<Vec<_>>>()
+            .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?;
+
+        if content_paths.len() == 1
+            && content_paths[0]
+                .file_type()
+                .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?
+                .is_dir()
+        {
+            content_paths = read_dir(content_paths[0].path())
+                .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?
+                .collect::<IOResult<Vec<_>>>()
+                .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?;
+        }
+
+        for content_path in content_paths {
+            let content_path = content_path.path();
+
+            rename(
+                &content_path,
+                path.join(content_path.strip_prefix(&tmp_path).unwrap()),
+            )
+            .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?;
+        }
+
+        remove_dir_all(&tmp_path)
+            .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?;
+    }
+
     Ok(path)
 }

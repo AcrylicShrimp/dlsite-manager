@@ -60,6 +60,12 @@ pub enum ApplicationError {
     ProductArchiveCleanupError { io_error: std::io::Error },
     #[error("cannot open product path due to: {tauri_error}")]
     ProductPathOpenError { tauri_error: tauri::api::Error },
+    #[cfg(target_family = "windows")]
+    #[error("cannot extract sfx product due to: {io_error}")]
+    ProductSfxExtractError { io_error: std::io::Error },
+    #[cfg(target_family = "windows")]
+    #[error("failed to extract sfx product due to: {std_err}")]
+    ProductSfxExtractFailed { std_err: String },
 }
 
 impl serde::Serialize for ApplicationError {
