@@ -1,7 +1,7 @@
-import { invoke } from "@tauri-apps/api/tauri";
+import type { PageLoad } from "./$types";
 import type { Product } from "src/types/product";
 
-import type { PageLoad } from "./$types";
+import { invoke } from "@tauri-apps/api/tauri";
 
 export const load: PageLoad = async () => {
   return {
