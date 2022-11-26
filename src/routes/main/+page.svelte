@@ -63,10 +63,12 @@
       appWindow.listen<string>("download-begin", (event) => {
         productDownloads.set(event.payload, 0);
         productDownloads = productDownloads;
+        filterProducts(products);
       }),
       appWindow.listen<DownloadProgress>("download-progress", (event) => {
         productDownloads.set(event.payload.product_id, event.payload.progress);
         productDownloads = productDownloads;
+        filterProducts(products);
       }),
       appWindow.listen<DownloadComplete>("download-end", (event) => {
         const index = products.findIndex(
@@ -76,8 +78,8 @@
         if (0 <= index) products[index].download = event.payload.download;
 
         productDownloads.delete(event.payload.product_id);
-        products = products;
         productDownloads = productDownloads;
+        filterProducts(products);
       }),
       appWindow.listen<string>("download-invalid", (event) => {
         const index = products.findIndex((p) => p.product.id === event.payload);
@@ -85,7 +87,7 @@
         if (index < 0) return;
 
         products[index].download = undefined;
-        products = products;
+        filterProducts(products);
       }),
     ]);
 
@@ -130,6 +132,10 @@
       }
     );
 
+    filterProducts(unfilteredProducts);
+  }
+
+  function filterProducts(unfilteredProducts: Product[]): void {
     switch (queryDownloadState) {
       case "Not Downloaded":
         products = unfilteredProducts.filter(
