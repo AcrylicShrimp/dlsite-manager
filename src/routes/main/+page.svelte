@@ -1,6 +1,10 @@
 <script lang="ts">
   import type { PageData } from "./$types";
-  import type { Product } from "@app/types/product";
+  import type {
+    DLsiteProductAge,
+    DLsiteProductType,
+    Product,
+  } from "@app/types/product";
   import type {
     DownloadComplete,
     DownloadProgress,
@@ -13,13 +17,26 @@
   import SmallButtonLink from "@app/lib/buttons/SmallButtonLink.svelte";
   import SmallFixedRedButton from "@app/lib/buttons/SmallFixedRedButton.svelte";
   import Input from "@app/lib/inputs/Input.svelte";
+  import LabeledSelect from "@app/lib/selects/LabeledSelect.svelte";
 
   import { invoke } from "@tauri-apps/api/tauri";
   import { appWindow } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
 
+  type Age = "" | DLsiteProductAge;
+  type Type = "" | DLsiteProductType;
+  type DownloadState =
+    | ""
+    | "Not Downloaded"
+    | "Downloading"
+    | "Downloaded"
+    | "Downloading and Downloaded";
+
   export let data: PageData;
   let query: string = "";
+  let queryAge: Age = "";
+  let queryType: Type = "";
+  let queryDownloadState: DownloadState = "";
   let products: Product[] = [];
   let productDownloads: Map<string, number> = new Map();
   let updating: boolean = false;
@@ -40,7 +57,7 @@
         progressTotal = event.payload.total_progress;
       }),
       appWindow.listen("refresh-end", async () => {
-        await query_products();
+        await queryProducts();
         updating = false;
       }),
       appWindow.listen<string>("download-begin", (event) => {
@@ -85,15 +102,59 @@
   });
   async function search(event: Event): Promise<void> {
     query = (event.target as HTMLInputElement).value;
-    await query_products();
+    await queryProducts();
+  }
+  async function setQueryAge(event: Event): Promise<void> {
+    queryAge = (event.target as HTMLSelectElement).value as Age;
+    await queryProducts();
+  }
+  async function setQueryType(event: Event): Promise<void> {
+    queryType = (event.target as HTMLSelectElement).value as Type;
+    await queryProducts();
+  }
+  async function setQueryDownloadState(event: Event): Promise<void> {
+    queryDownloadState = (event.target as HTMLSelectElement)
+      .value as DownloadState;
+    await queryProducts();
   }
 
-  async function query_products(): Promise<void> {
-    products = await invoke<Product[]>("product_list_products", {
-      query: {
-        query,
-      },
-    });
+  async function queryProducts(): Promise<void> {
+    const unfilteredProducts = await invoke<Product[]>(
+      "product_list_products",
+      {
+        query: {
+          query,
+          ...(queryAge ? { age: queryAge } : {}),
+          ...(queryType ? { ty: queryType } : {}),
+        },
+      }
+    );
+
+    switch (queryDownloadState) {
+      case "Not Downloaded":
+        products = unfilteredProducts.filter(
+          (product) =>
+            !product.download && !productDownloads.has(product.product.id)
+        );
+        break;
+      case "Downloading":
+        products = unfilteredProducts.filter((product) =>
+          productDownloads.has(product.product.id)
+        );
+        break;
+      case "Downloaded":
+        products = unfilteredProducts.filter((product) => product.download);
+        break;
+      case "Downloading and Downloaded":
+        products = unfilteredProducts.filter(
+          (product) =>
+            product.download || productDownloads.has(product.product.id)
+        );
+        break;
+      default:
+        products = unfilteredProducts;
+        break;
+    }
   }
 
   async function requestDownload(product: Product): Promise<void> {
@@ -116,6 +177,57 @@
 <h1 class="text-center">Product List</h1>
 <span class="block h-8" />
 <section>
+  <div class="flex flex-row items-center justify-start">
+    <LabeledSelect label="Age" on:change={setQueryAge}>
+      <option value="" selected>-</option>
+      <option value="All">All</option>
+      <option value="R15">R15</option>
+      <option value="R18">R18</option>
+    </LabeledSelect>
+    <span class="flex-none inline-block w-4" />
+    <LabeledSelect label="Type" on:change={setQueryType}>
+      <option value="" selected>-</option>
+      <option value="Adult">Adult</option>
+      <option value="Doujinsji">Doujinsji</option>
+      <option value="Software">Software</option>
+      <option value="Game">Game</option>
+      <option value="Action">Action</option>
+      <option value="Adventure">Adventure</option>
+      <option value="AudioMaterial">AudioMaterial</option>
+      <option value="Comic">Comic</option>
+      <option value="DigitalNovel">DigitalNovel</option>
+      <option value="Other">Other</option>
+      <option value="OtherGame">OtherGame</option>
+      <option value="Illust">Illust</option>
+      <option value="ImageMaterial">ImageMaterial</option>
+      <option value="Manga">Manga</option>
+      <option value="Anime">Anime</option>
+      <option value="Music">Music</option>
+      <option value="Novel">Novel</option>
+      <option value="Puzzle">Puzzle</option>
+      <option value="Quiz">Quiz</option>
+      <option value="RolePlaying">RolePlaying</option>
+      <option value="Gekiga">Gekiga</option>
+      <option value="Simulation">Simulation</option>
+      <option value="Voice">Voice</option>
+      <option value="Shooter">Shooter</option>
+      <option value="Tabletop">Tabletop</option>
+      <option value="Utility">Utility</option>
+      <option value="Typing">Typing</option>
+      <option value="SexualNovel">SexualNovel</option>
+    </LabeledSelect>
+    <span class="flex-none inline-block w-4" />
+    <LabeledSelect label="Download State" on:change={setQueryDownloadState}>
+      <option value="" selected>-</option>
+      <option value="Not Downloaded">Not Downloaded</option>
+      <option value="Downloading">Downloading</option>
+      <option value="Downloaded">Downloaded</option>
+      <option value="Downloading and Downloaded"
+        >Downloading and Downloaded</option
+      >
+    </LabeledSelect>
+  </div>
+  <span class="block h-2" />
   <div class="flex flex-row items-center justify-start">
     <Input placeholder="Search..." on:input={throttledSearch} />
   </div>
