@@ -1,6 +1,6 @@
 [package]
 name = "dlsite-manager"
-version = "1.0.1"
+version = "1.1.0"
 description = "manage your DLsite accounts and products at once"
 authors = ["AcrylicShrimp"]
 license = ""
