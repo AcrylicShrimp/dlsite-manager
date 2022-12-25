@@ -1,10 +1,13 @@
-use self::{account::Account, product::Product, setting::Setting};
+use self::{
+    account::Account, latest_product_query::LatestProductQuery, product::Product, setting::Setting,
+};
 use crate::application_error::Result;
 use parking_lot::{Mutex, MutexGuard};
 use rusqlite::Connection;
 use std::path::Path;
 
 pub mod account;
+pub mod latest_product_query;
 pub mod product;
 pub mod setting;
 
@@ -33,11 +36,13 @@ BEGIN;
 {}
 {}
 {}
+{}
 COMMIT;
 ",
             Setting::get_ddl(),
             Account::get_ddl(),
             Product::get_ddl(),
+            LatestProductQuery::get_ddl(),
         ))?;
 
         Ok(())

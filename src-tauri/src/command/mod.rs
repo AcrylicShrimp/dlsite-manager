@@ -1,6 +1,7 @@
 use tauri::{generate_handler, Builder, Runtime};
 
 mod account_management;
+mod latest_product_query;
 mod product;
 mod setting;
 mod window;
@@ -24,6 +25,8 @@ where
             account_management::account_management_update_account,
             account_management::account_management_remove_account,
             account_management::account_management_test_account,
+            latest_product_query::latest_product_query_get,
+            latest_product_query::latest_product_query_set,
             product::product_list_products,
             product::product_download_product,
             product::product_open_downloaded_folder,

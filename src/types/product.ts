@@ -12,6 +12,26 @@ export interface ProductDownload {
   path: string;
 }
 
+export interface ProductQuery {
+  query?: string;
+  age?: DLsiteProductAge;
+  ty?: DLsiteProductType;
+  order_by?: ProductQueryOrderBy;
+}
+
+export enum ProductQueryOrderBy {
+  IdAsc = "IdAsc",
+  IdDesc = "IdDesc",
+  TitleAsc = "TitleAsc",
+  TitleDesc = "TitleDesc",
+  GroupAsc = "GroupAsc",
+  GroupDesc = "GroupDesc",
+  RegistrationDateAsc = "RegistrationDateAsc",
+  RegistrationDateDesc = "RegistrationDateDesc",
+  PurchaseDateAsc = "PurchaseDateAsc",
+  PurchaseDateDesc = "PurchaseDateDesc",
+}
+
 export interface DLsiteProduct {
   id: string;
   ty: DLsiteProductType;
@@ -78,4 +98,11 @@ export enum DLsiteProductAge {
   All = "All",
   R15 = "R15",
   R18 = "R18",
+}
+
+export enum DLsiteProductDownloadState {
+  NotDownloaded = "NotDownloaded",
+  Downloading = "Downloading",
+  Downloaded = "Downloaded",
+  DownloadingAndDownloaded = "DownloadingAndDownloaded",
 }

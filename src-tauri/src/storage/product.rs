@@ -11,6 +11,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, params_from_iter, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, str::FromStr};
+use strum_macros::{EnumString, IntoStaticStr};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Product {
@@ -41,11 +42,44 @@ impl<'stmt> TryFrom<&'stmt Row<'stmt>> for ProductDownload {
     }
 }
 
-#[derive(Default, Debug, Clone, Deserialize)]
+#[derive(
+    EnumString, IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize,
+)]
+pub enum ProductQueryOrderBy {
+    IdAsc,
+    IdDesc,
+    TitleAsc,
+    TitleDesc,
+    GroupAsc,
+    GroupDesc,
+    RegistrationDateAsc,
+    RegistrationDateDesc,
+    PurchaseDateAsc,
+    PurchaseDateDesc,
+}
+
+#[derive(
+    EnumString, IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize,
+)]
+pub enum ProductDownloadState {
+    NotDownloaded,
+    Downloading,
+    Downloaded,
+    DownloadingAndDownloaded,
+}
+
+impl Default for ProductQueryOrderBy {
+    fn default() -> Self {
+        Self::PurchaseDateDesc
+    }
+}
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct ProductQuery {
     pub query: Option<String>,
     pub ty: Option<DLsiteProductType>,
     pub age: Option<DLsiteProductAgeCategory>,
+    pub order_by: ProductQueryOrderBy,
 }
 
 #[derive(Debug, Clone)]
@@ -217,6 +251,27 @@ CREATE TABLE IF NOT EXISTS product_downloads (
             params.push(<_ as Into<&'static str>>::into(age));
         }
 
+        let order_by_clause = match query.order_by {
+            ProductQueryOrderBy::IdAsc => "product.id ASC",
+            ProductQueryOrderBy::IdDesc => "product.id DESC",
+            ProductQueryOrderBy::TitleAsc => "product.product_title_ja ASC, product.id ASC",
+            ProductQueryOrderBy::TitleDesc => "product.product_title_ja DESC, product.id DESC",
+            ProductQueryOrderBy::GroupAsc => {
+                "product.product_group_name_ja ASC, product.product_group_id ASC, product.id ASC"
+            }
+            ProductQueryOrderBy::GroupDesc => {
+                "product.product_group_name_ja DESC, product.product_group_id DESC, product.id DESC"
+            }
+            ProductQueryOrderBy::RegistrationDateAsc => {
+                "product.registered_at ASC, product.upgraded_at ASC, product.id ASC"
+            }
+            ProductQueryOrderBy::RegistrationDateDesc => {
+                "product.registered_at DESC, product.upgraded_at DESC, product.id DESC"
+            }
+            ProductQueryOrderBy::PurchaseDateAsc => "product.purchased_at ASC, product.id ASC",
+            ProductQueryOrderBy::PurchaseDateDesc => "product.purchased_at DESC, product.id DESC",
+        };
+
         Ok(use_application()
             .storage()
             .connection()
@@ -262,8 +317,8 @@ INNER JOIN accounts AS account ON account.id = product.account_id
 LEFT JOIN product_downloads as download ON download.product_id = indexed_products.product_id
 WHERE {}
 GROUP BY product.product_id
-ORDER BY product.purchased_at DESC, product.id ASC",
-                where_clause
+ORDER BY {}",
+                where_clause, order_by_clause
             ))?
             .query_map(params_from_iter(&params), |row| Self::try_from(row))?
             .collect::<rusqlite::Result<Vec<_>>>()?)

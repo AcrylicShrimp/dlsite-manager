@@ -1,9 +1,11 @@
 <script lang="ts">
   import type { PageData } from "./$types";
-  import type {
-    DLsiteProductAge,
-    DLsiteProductType,
-    Product,
+  import {
+    DLsiteProductDownloadState,
+    ProductQueryOrderBy,
+    type DLsiteProductAge,
+    type DLsiteProductType,
+    type Product,
   } from "@app/types/product";
   import type {
     DownloadComplete,
@@ -25,18 +27,14 @@
 
   type Age = "" | DLsiteProductAge;
   type Type = "" | DLsiteProductType;
-  type DownloadState =
-    | ""
-    | "Not Downloaded"
-    | "Downloading"
-    | "Downloaded"
-    | "Downloading and Downloaded";
+  type DownloadState = "" | DLsiteProductDownloadState;
 
   export let data: PageData;
   let query: string = "";
   let queryAge: Age = "";
   let queryType: Type = "";
   let queryDownloadState: DownloadState = "";
+  let queryOrderBy = ProductQueryOrderBy.PurchaseDateDesc;
   let products: Product[] = [];
   let productDownloads: Map<string, number> = new Map();
   let updating: boolean = false;
@@ -44,7 +42,12 @@
   let progressTotal: number = 0;
 
   onMount(async () => {
-    products = data.products;
+    query = data.query.query.query ?? "";
+    queryAge = data.query.query.age ?? "";
+    queryType = data.query.query.ty ?? "";
+    queryDownloadState = data.query.download ?? "";
+    queryOrderBy =
+      data.query.query.order_by ?? ProductQueryOrderBy.PurchaseDateDesc;
 
     const unlistens = await Promise.all([
       appWindow.listen("refresh-begin", () => {
@@ -91,6 +94,7 @@
       }),
     ]);
 
+    await queryProducts();
     await invoke("show_window");
 
     return () => {
@@ -119,16 +123,31 @@
       .value as DownloadState;
     await queryProducts();
   }
+  async function setQueryOrderBy(event: Event): Promise<void> {
+    queryOrderBy = (event.target as HTMLSelectElement)
+      .value as ProductQueryOrderBy;
+    await queryProducts();
+  }
 
   async function queryProducts(): Promise<void> {
+    const productQuery = {
+      query,
+      ...(queryAge ? { age: queryAge } : {}),
+      ...(queryType ? { ty: queryType } : {}),
+      order_by: queryOrderBy,
+    };
+
+    await invoke("latest_product_query_set", {
+      query: {
+        query: productQuery,
+        ...(queryDownloadState ? { download: queryDownloadState } : {}),
+      },
+    });
+
     const unfilteredProducts = await invoke<Product[]>(
       "product_list_products",
       {
-        query: {
-          query,
-          ...(queryAge ? { age: queryAge } : {}),
-          ...(queryType ? { ty: queryType } : {}),
-        },
+        query: productQuery,
       }
     );
 
@@ -137,21 +156,21 @@
 
   function filterProducts(unfilteredProducts: Product[]): void {
     switch (queryDownloadState) {
-      case "Not Downloaded":
+      case DLsiteProductDownloadState.NotDownloaded:
         products = unfilteredProducts.filter(
           (product) =>
             !product.download && !productDownloads.has(product.product.id)
         );
         break;
-      case "Downloading":
+      case DLsiteProductDownloadState.Downloading:
         products = unfilteredProducts.filter((product) =>
           productDownloads.has(product.product.id)
         );
         break;
-      case "Downloaded":
+      case DLsiteProductDownloadState.Downloaded:
         products = unfilteredProducts.filter((product) => product.download);
         break;
-      case "Downloading and Downloaded":
+      case DLsiteProductDownloadState.DownloadingAndDownloaded:
         products = unfilteredProducts.filter(
           (product) =>
             product.download || productDownloads.has(product.product.id)
@@ -180,18 +199,26 @@
   }
 </script>
 
-<h1 class="text-center">Product List</h1>
+<h1 class="text-center">DLsite Manager</h1>
 <span class="block h-8" />
 <section>
   <div class="flex flex-row items-center justify-start">
-    <LabeledSelect label="Age" on:change={setQueryAge}>
+    <Input
+      placeholder="Search anything e.g. title, group, artist"
+      bind:value={query}
+      on:input={throttledSearch}
+    />
+  </div>
+  <span class="block h-2" />
+  <div class="px-3 py-2 bg-1/5 rounded-lg">
+    <LabeledSelect label="Age" bind:value={queryAge} on:change={setQueryAge}>
       <option value="" selected>-</option>
       <option value="All">All</option>
       <option value="R15">R15</option>
       <option value="R18">R18</option>
     </LabeledSelect>
-    <span class="flex-none inline-block w-4" />
-    <LabeledSelect label="Type" on:change={setQueryType}>
+    <span class="block h-2" />
+    <LabeledSelect label="Type" bind:value={queryType} on:change={setQueryType}>
       <option value="" selected>-</option>
       <option value="Adult">Adult</option>
       <option value="Doujinsji">Doujinsji</option>
@@ -222,20 +249,43 @@
       <option value="Typing">Typing</option>
       <option value="SexualNovel">SexualNovel</option>
     </LabeledSelect>
-    <span class="flex-none inline-block w-4" />
-    <LabeledSelect label="Download State" on:change={setQueryDownloadState}>
+    <span class="block h-2" />
+    <LabeledSelect
+      label="Download"
+      bind:value={queryDownloadState}
+      on:change={setQueryDownloadState}
+    >
       <option value="" selected>-</option>
-      <option value="Not Downloaded">Not Downloaded</option>
+      <option value="NotDownloaded">Not Downloaded</option>
       <option value="Downloading">Downloading</option>
       <option value="Downloaded">Downloaded</option>
-      <option value="Downloading and Downloaded"
+      <option value="DownloadingAndDownloaded"
         >Downloading and Downloaded</option
       >
     </LabeledSelect>
   </div>
   <span class="block h-2" />
-  <div class="flex flex-row items-center justify-start">
-    <Input placeholder="Search..." on:input={throttledSearch} />
+  <div class="px-3 py-2 bg-1/5 rounded-lg">
+    <LabeledSelect
+      label="Order By"
+      bind:value={queryOrderBy}
+      on:change={setQueryOrderBy}
+    >
+      <option value="IdAsc">Product Id [Ascending]</option>
+      <option value="IdDesc">Product Id [Descending]</option>
+      <option value="TitleAsc">Product Title [Ascending]</option>
+      <option value="TitleDesc">Product Title [Descending]</option>
+      <option value="GroupAsc">Product Group [Ascending]</option>
+      <option value="GroupDesc">Product Group [Descending]</option>
+      <option value="RegistrationDateAsc">Registration Date [Ascending]</option>
+      <option value="RegistrationDateDesc"
+        >Registration Date [Descending]</option
+      >
+      <option value="PurchaseDateAsc">Purchase Date [Ascending]</option>
+      <option value="PurchaseDateDesc" selected
+        >Purchase Date [Descending]</option
+      >
+    </LabeledSelect>
   </div>
   <span class="block h-2" />
   <div>

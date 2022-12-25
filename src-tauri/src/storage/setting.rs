@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS settings (
 );"
     }
 
-    pub fn get() -> Result<Setting> {
+    pub fn get() -> Result<Self> {
         Ok(use_application()
             .storage()
             .connection()
@@ -43,7 +43,7 @@ FROM settings;",
             .unwrap_or_default())
     }
 
-    pub fn set(setting: Setting) -> Result<()> {
+    pub fn set(setting: Self) -> Result<()> {
         let connection = use_application().storage().connection();
         connection.execute(
             "
