@@ -298,26 +298,47 @@ pub async fn download_product(
             .open(path.join(&detail.contents[index].file_name))
             .map_err(|err| Error::ProductFileCreationError { io_error: err })?;
         let mut writer = BufWriter::with_capacity(1 * 1024 * 1024, file);
-        let mut response = client.get(file_url).send().await?;
         let mut last_progress_time = Instant::now();
+        let mut process_per_file = 0;
 
-        while let Some(chunk) = response.chunk().await? {
-            writer
-                .write_all(&chunk)
-                .map_err(|err| Error::ProductFileWriteError { io_error: err })?;
-            progress += chunk.len();
+        'req: loop {
+            let mut response = match client
+                .get(&file_url)
+                .header("range", format!("bytes={}-", process_per_file))
+                .send()
+                .await
+            {
+                Ok(response) => response,
+                Err(_) => {
+                    continue;
+                }
+            };
 
-            let now = Instant::now();
+            while let Some(chunk) = match response.chunk().await {
+                Ok(chunk) => chunk,
+                Err(_) => {
+                    continue 'req;
+                }
+            } {
+                writer
+                    .write_all(&chunk)
+                    .map_err(|err| Error::ProductFileWriteError { io_error: err })?;
+                progress += chunk.len();
+                process_per_file += chunk.len();
 
-            if Duration::from_secs(1) <= now - last_progress_time {
-                last_progress_time = now;
-                on_progress(progress as u64, file_size)?;
+                let now = Instant::now();
+
+                if Duration::from_secs(1) <= now - last_progress_time {
+                    last_progress_time = now;
+                    on_progress(progress as u64, file_size)?;
+                }
             }
-        }
 
-        writer
-            .flush()
-            .map_err(|err| Error::ProductFileWriteError { io_error: err })?;
+            writer
+                .flush()
+                .map_err(|err| Error::ProductFileWriteError { io_error: err })?;
+            break;
+        }
     }
 
     on_progress(file_size, file_size)?;
