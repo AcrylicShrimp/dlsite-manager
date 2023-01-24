@@ -1,38 +1,34 @@
 # dlsite-manager
 
-This application manages your DLsite products.
+Easies way to enjoy the DLsite!
 
-![main-image](./docs/img-1.png)
+![main-image](./docs/img-list.png)
 
 ## Key Features
 
-- Manage multiple accounts at once.
 - List, search and download your products.
-
-## Account management
-
-You can register many accounts as you want. Products from each account are merged before being listed.
-
-![account-management-image-1](./docs/img-am-1.png)
-
-Don't forget to test your account!
-
-<p align="center">
-  <img src="./docs/img-am-2.png" alt="account-management-image-2" width="300">
-</p>
+- Manage multiple accounts at once.
 
 ## Product download
 
-You can download products by simply clicking the `Download` button. It will show you the progress. The downloading path can be configured via `Setting > Open Settings` menu.
+To start download, just press the `Download` button. You don't need to decompress or run extractors. The `dlsite-manager` will handle other tedious jobs for you!
 
-![product-download-image-1](./docs/img-dl-1.png)
-
-After it's done, you can open the saved directory.
-
-![product-download-image-2](./docs/img-dl-2.png)
-
-The saved products are automatically decompressed and cleaned-up if applicable.
+> **NOTE**: Download path can be configured via `Setting > Open Settings` menu.
 
 ### Platform-specific behavior of automatic extraction
 
-Large-sized products (over 1GiB) are shipped in [SFX(Self-extracting archive)](https://en.wikipedia.org/wiki/Self-extracting_archive) format. Since it's a [PE executable](https://en.wikipedia.org/wiki/Portable_Executable), decompression of this format is only can be happened in Windows.
+Large-sized products (over 1GiB) are shipped in [SFX(Self-extracting archive)](https://en.wikipedia.org/wiki/Self-extracting_archive) format. Since it's a [PE executable](https://en.wikipedia.org/wiki/Portable_Executable), decompression of this format is only can be happened in **_Windows_**.
+
+## Renew product list
+
+The products are cached on your machine, so newly purchased things will not be shown. To refresh it, click the menu `Product > Update Product`.
+
+> **NOTE**: If you want to drop caches and update products entirely, click the menu `Product > Refresh Product All` instead.
+
+![update-product-image](./docs/img-update-product.png)
+
+## Account management
+
+Do you have multiple accounts? Don't worry! The `dlsite-manager` will manage them, so you don't need to care. _Also, never forget to test your account!_
+
+![account-management-image](./docs/img-account-management.png)
