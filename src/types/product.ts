@@ -91,6 +91,7 @@ export enum DLsiteProductType {
   Utility = "Utility",
   Typing = "Typing",
   SexualNovel = "SexualNovel",
+  VoiceComic = "VoiceComic",
   Unknown = "Unknown",
 }
 

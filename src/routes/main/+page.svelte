@@ -266,6 +266,7 @@
       <option value="Utility">Utility</option>
       <option value="Typing">Typing</option>
       <option value="SexualNovel">SexualNovel</option>
+      <option value="VoiceComic">VoiceComic</option>
     </LabeledSelect>
     <span class="block h-2" />
     <LabeledSelect

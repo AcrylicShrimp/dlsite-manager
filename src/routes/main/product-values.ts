@@ -29,6 +29,7 @@ export const DisplayTypeString: Record<DLsiteProductType, string> = {
   Utility: "Utility",
   Typing: "Typing",
   SexualNovel: "Novel",
+  VoiceComic: "Voice Comic",
   Unknown: "Unknown",
 };
 
@@ -61,6 +62,7 @@ export const BgCssType: Record<DLsiteProductType, string> = {
   Utility: "bg-[#119147]",
   Typing: "bg-[#1e9463]",
   SexualNovel: "bg-[#1e9463]",
+  VoiceComic: "bg-[#525252]",
   Unknown: "bg-[#525252]",
 };
 

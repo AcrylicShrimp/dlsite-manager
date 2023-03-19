@@ -86,6 +86,7 @@ pub enum DLsiteProductType {
     Utility,
     Typing,
     SexualNovel,
+    VoiceComic,
     #[strum(default)]
     Unknown(String),
 }
@@ -127,6 +128,7 @@ impl Display for DLsiteProductType {
             DLsiteProductType::Utility => write!(f, "Utility"),
             DLsiteProductType::Typing => write!(f, "Typing"),
             DLsiteProductType::SexualNovel => write!(f, "SexualNovel"),
+            DLsiteProductType::VoiceComic => write!(f, "VoiceComic"),
             DLsiteProductType::Unknown(s) => write!(f, "{}", s),
         }
     }
@@ -166,6 +168,7 @@ impl Serialize for DLsiteProductType {
             DLsiteProductType::Utility => serializer.serialize_str("Utility"),
             DLsiteProductType::Typing => serializer.serialize_str("Typing"),
             DLsiteProductType::SexualNovel => serializer.serialize_str("SexualNovel"),
+            DLsiteProductType::VoiceComic => serializer.serialize_str("VoiceComic"),
             DLsiteProductType::Unknown(s) => serializer.serialize_str(s),
         }
     }
