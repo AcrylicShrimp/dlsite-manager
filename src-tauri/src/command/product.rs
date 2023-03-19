@@ -43,7 +43,7 @@ pub async fn product_download_product<R: Runtime>(
     let setting = Setting::get()?;
     let path = setting.download_root_dir.unwrap_or_else(|| {
         download_dir()
-            .unwrap_or_else(|| app_handle.path_resolver().app_dir().unwrap())
+            .unwrap_or_else(|| app_handle.path_resolver().app_local_data_dir().unwrap())
             .join("DLsite")
     });
 

@@ -31,7 +31,7 @@ pub struct Application {
 
 impl Application {
     pub fn new(app: &App) -> Result<Self> {
-        let app_dir = if let Some(app_dir) = app.path_resolver().app_dir() {
+        let app_dir = if let Some(app_dir) = app.path_resolver().app_config_dir() {
             app_dir
         } else {
             return Err(Error::AppDirNotExist);
