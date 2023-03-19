@@ -15,7 +15,7 @@
   import type { RefreshProgress } from "@app/types/refresh-event";
   import type { DisplayLanguageSetting } from "@app/types/setting";
 
-  import { throttle } from "lodash";
+  import throttle from "lodash/throttle";
 
   import { BgCssAge, BgCssType, DisplayTypeString } from "./product-values";
   import SmallButtonLink from "@app/lib/buttons/SmallButtonLink.svelte";
