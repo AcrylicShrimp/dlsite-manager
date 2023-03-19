@@ -127,16 +127,8 @@ INSERT INTO latest_product_query (
             )?
             .insert(params![
                 &query.query.query,
-                query
-                    .query
-                    .ty
-                    .as_ref()
-                    .map(|ty| <_ as Into<&'static str>>::into(ty)),
-                query
-                    .query
-                    .age
-                    .as_ref()
-                    .map(|age| <_ as Into<&'static str>>::into(age)),
+                query.query.ty.as_ref().map(|ty| ty.to_string()),
+                query.query.age.as_ref().map(|age| age.to_string()),
                 <_ as Into<&'static str>>::into(&query.query.order_by),
                 query
                     .download

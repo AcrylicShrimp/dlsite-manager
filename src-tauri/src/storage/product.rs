@@ -237,18 +237,18 @@ CREATE TABLE IF NOT EXISTS product_downloads (
             let query = query.trim();
             if query.len() != 0 {
                 where_clause.push_str(" AND indexed_products MATCH ?");
-                params.push(query);
+                params.push(query.to_owned());
             }
         }
 
-        if let Some(ty) = query.ty {
+        if let Some(ty) = &query.ty {
             where_clause.push_str(" AND product.product_type = ?");
-            params.push(<_ as Into<&'static str>>::into(ty));
+            params.push(ty.to_string());
         }
 
-        if let Some(age) = query.age {
+        if let Some(age) = &query.age {
             where_clause.push_str(" AND product.product_age = ?");
-            params.push(<_ as Into<&'static str>>::into(age));
+            params.push(age.to_string());
         }
 
         let order_by_clause = match query.order_by {
@@ -428,8 +428,8 @@ INSERT INTO indexed_products (
                 insert_stmt.execute(params![
                     product.account_id,
                     &product.product.id,
-                    <_ as Into<&'static str>>::into(product.product.ty),
-                    <_ as Into<&'static str>>::into(product.product.age),
+                    product.product.ty.to_string(),
+                    product.product.age.to_string(),
                     &product.product.title.japanese,
                     &product.product.title.english,
                     &product.product.title.korean,

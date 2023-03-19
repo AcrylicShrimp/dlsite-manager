@@ -2,9 +2,9 @@ use crate::application_error::{Error, Result};
 use chrono::{DateTime, Utc};
 use reqwest::ClientBuilder;
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
-use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc};
-use strum_macros::{EnumString, IntoStaticStr};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::{collections::HashMap, fmt::Display, sync::Arc};
+use strum_macros::EnumString;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DLsiteProductList {
@@ -56,90 +56,214 @@ pub struct DLsiteProductGroup {
     pub name: DLsiteProductLocalizedString,
 }
 
-#[derive(
-    EnumString, IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize,
-)]
+#[derive(EnumString, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DLsiteProductType {
-    Unknown,
-    #[serde(alias = "ADL")]
     Adult,
-    #[serde(alias = "DOH")]
     Doujinsji,
-    #[serde(alias = "SOF")]
     Software,
-    #[serde(alias = "GAM")]
     Game,
-    #[serde(alias = "ACN")]
     Action,
-    #[serde(alias = "ADV")]
     Adventure,
-    #[serde(alias = "AMT")]
     AudioMaterial,
-    #[serde(alias = "COM")]
     Comic,
-    #[serde(alias = "DNV")]
     DigitalNovel,
-    #[serde(alias = "ET3")]
     Other,
-    #[serde(alias = "ETC")]
     OtherGame,
-    #[serde(alias = "ICG")]
     Illust,
-    #[serde(alias = "IMT")]
     ImageMaterial,
-    #[serde(alias = "MNG")]
     Manga,
-    #[serde(alias = "MOV")]
     Anime,
-    #[serde(alias = "MUS")]
     Music,
-    #[serde(alias = "NRE")]
     Novel,
-    #[serde(alias = "PZL")]
     Puzzle,
-    #[serde(alias = "QIZ")]
     Quiz,
-    #[serde(alias = "RPG")]
     RolePlaying,
-    #[serde(alias = "SCM")]
     Gekiga, // See https://en.wikipedia.org/wiki/Gekiga
-    #[serde(alias = "SLN")]
     Simulation,
-    #[serde(alias = "SOU")]
     Voice,
-    #[serde(alias = "STG")]
     Shooter,
-    #[serde(alias = "TBL")]
     Tabletop,
-    #[serde(alias = "TOL")]
     Utility,
-    #[serde(alias = "TYP")]
     Typing,
-    #[serde(alias = "KSV")]
     SexualNovel,
+    #[strum(default)]
+    Unknown(String),
 }
 
 impl Default for DLsiteProductType {
     fn default() -> Self {
-        Self::Unknown
+        Self::Unknown("Unknown".to_owned())
     }
 }
 
-#[derive(
-    EnumString, IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize,
-)]
+impl Display for DLsiteProductType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DLsiteProductType::Adult => write!(f, "Adult"),
+            DLsiteProductType::Doujinsji => write!(f, "Doujinsji"),
+            DLsiteProductType::Software => write!(f, "Software"),
+            DLsiteProductType::Game => write!(f, "Game"),
+            DLsiteProductType::Action => write!(f, "Action"),
+            DLsiteProductType::Adventure => write!(f, "Adventure"),
+            DLsiteProductType::AudioMaterial => write!(f, "AudioMaterial"),
+            DLsiteProductType::Comic => write!(f, "Comic"),
+            DLsiteProductType::DigitalNovel => write!(f, "DigitalNovel"),
+            DLsiteProductType::Other => write!(f, "Other"),
+            DLsiteProductType::OtherGame => write!(f, "OtherGame"),
+            DLsiteProductType::Illust => write!(f, "Illust"),
+            DLsiteProductType::ImageMaterial => write!(f, "ImageMaterial"),
+            DLsiteProductType::Manga => write!(f, "Manga"),
+            DLsiteProductType::Anime => write!(f, "Anime"),
+            DLsiteProductType::Music => write!(f, "Music"),
+            DLsiteProductType::Novel => write!(f, "Novel"),
+            DLsiteProductType::Puzzle => write!(f, "Puzzle"),
+            DLsiteProductType::Quiz => write!(f, "Quiz"),
+            DLsiteProductType::RolePlaying => write!(f, "RolePlaying"),
+            DLsiteProductType::Gekiga => write!(f, "Gekiga"),
+            DLsiteProductType::Simulation => write!(f, "Simulation"),
+            DLsiteProductType::Voice => write!(f, "Voice"),
+            DLsiteProductType::Shooter => write!(f, "Shooter"),
+            DLsiteProductType::Tabletop => write!(f, "Tabletop"),
+            DLsiteProductType::Utility => write!(f, "Utility"),
+            DLsiteProductType::Typing => write!(f, "Typing"),
+            DLsiteProductType::SexualNovel => write!(f, "SexualNovel"),
+            DLsiteProductType::Unknown(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+impl Serialize for DLsiteProductType {
+    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            DLsiteProductType::Adult => serializer.serialize_str("Adult"),
+            DLsiteProductType::Doujinsji => serializer.serialize_str("Doujinsji"),
+            DLsiteProductType::Software => serializer.serialize_str("Software"),
+            DLsiteProductType::Game => serializer.serialize_str("Game"),
+            DLsiteProductType::Action => serializer.serialize_str("Action"),
+            DLsiteProductType::Adventure => serializer.serialize_str("Adventure"),
+            DLsiteProductType::AudioMaterial => serializer.serialize_str("AudioMaterial"),
+            DLsiteProductType::Comic => serializer.serialize_str("Comic"),
+            DLsiteProductType::DigitalNovel => serializer.serialize_str("DigitalNovel"),
+            DLsiteProductType::Other => serializer.serialize_str("Other"),
+            DLsiteProductType::OtherGame => serializer.serialize_str("OtherGame"),
+            DLsiteProductType::Illust => serializer.serialize_str("Illust"),
+            DLsiteProductType::ImageMaterial => serializer.serialize_str("ImageMaterial"),
+            DLsiteProductType::Manga => serializer.serialize_str("Manga"),
+            DLsiteProductType::Anime => serializer.serialize_str("Anime"),
+            DLsiteProductType::Music => serializer.serialize_str("Music"),
+            DLsiteProductType::Novel => serializer.serialize_str("Novel"),
+            DLsiteProductType::Puzzle => serializer.serialize_str("Puzzle"),
+            DLsiteProductType::Quiz => serializer.serialize_str("Quiz"),
+            DLsiteProductType::RolePlaying => serializer.serialize_str("RolePlaying"),
+            DLsiteProductType::Gekiga => serializer.serialize_str("Gekiga"),
+            DLsiteProductType::Simulation => serializer.serialize_str("Simulation"),
+            DLsiteProductType::Voice => serializer.serialize_str("Voice"),
+            DLsiteProductType::Shooter => serializer.serialize_str("Shooter"),
+            DLsiteProductType::Tabletop => serializer.serialize_str("Tabletop"),
+            DLsiteProductType::Utility => serializer.serialize_str("Utility"),
+            DLsiteProductType::Typing => serializer.serialize_str("Typing"),
+            DLsiteProductType::SexualNovel => serializer.serialize_str("SexualNovel"),
+            DLsiteProductType::Unknown(s) => serializer.serialize_str(s),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for DLsiteProductType {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let str = String::deserialize(deserializer)?;
+        Ok(match str.as_str() {
+            "ADL" => DLsiteProductType::Adult,
+            "DOH" => DLsiteProductType::Doujinsji,
+            "SOF" => DLsiteProductType::Software,
+            "GAM" => DLsiteProductType::Game,
+            "ACN" => DLsiteProductType::Action,
+            "ADV" => DLsiteProductType::Adventure,
+            "AMT" => DLsiteProductType::AudioMaterial,
+            "COM" => DLsiteProductType::Comic,
+            "DNV" => DLsiteProductType::DigitalNovel,
+            "ET3" => DLsiteProductType::Other,
+            "ETC" => DLsiteProductType::OtherGame,
+            "ICG" => DLsiteProductType::Illust,
+            "IMT" => DLsiteProductType::ImageMaterial,
+            "MNG" => DLsiteProductType::Manga,
+            "MOV" => DLsiteProductType::Anime,
+            "MUS" => DLsiteProductType::Music,
+            "NRE" => DLsiteProductType::Novel,
+            "PZL" => DLsiteProductType::Puzzle,
+            "QIZ" => DLsiteProductType::Quiz,
+            "RPG" => DLsiteProductType::RolePlaying,
+            "SCM" => DLsiteProductType::Gekiga,
+            "SLN" => DLsiteProductType::Simulation,
+            "SOU" => DLsiteProductType::Voice,
+            "STG" => DLsiteProductType::Shooter,
+            "TBL" => DLsiteProductType::Tabletop,
+            "TOL" => DLsiteProductType::Utility,
+            "TYP" => DLsiteProductType::Typing,
+            "KSV" => DLsiteProductType::SexualNovel,
+            "VCM" => DLsiteProductType::VoiceComic,
+            _ => DLsiteProductType::Unknown(str),
+        })
+    }
+}
+
+#[derive(EnumString, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DLsiteProductAgeCategory {
-    #[serde(alias = "all")]
     All,
-    #[serde(alias = "r15")]
     R15,
-    #[serde(alias = "r18")]
     R18,
+    #[strum(default, to_string = "{0}")]
+    Unknown(String),
 }
 
 impl Default for DLsiteProductAgeCategory {
     fn default() -> Self {
-        Self::All
+        Self::Unknown("Unknown".to_owned())
+    }
+}
+
+impl Display for DLsiteProductAgeCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            DLsiteProductAgeCategory::All => write!(f, "All"),
+            DLsiteProductAgeCategory::R15 => write!(f, "R15"),
+            DLsiteProductAgeCategory::R18 => write!(f, "R18"),
+            DLsiteProductAgeCategory::Unknown(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+impl Serialize for DLsiteProductAgeCategory {
+    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            DLsiteProductAgeCategory::All => serializer.serialize_str("All"),
+            DLsiteProductAgeCategory::R15 => serializer.serialize_str("R15"),
+            DLsiteProductAgeCategory::R18 => serializer.serialize_str("R18"),
+            DLsiteProductAgeCategory::Unknown(s) => serializer.serialize_str(s),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for DLsiteProductAgeCategory {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let str = String::deserialize(deserializer)?;
+        Ok(match str.as_str() {
+            "all" => DLsiteProductAgeCategory::All,
+            "r15" => DLsiteProductAgeCategory::R15,
+            "r18" => DLsiteProductAgeCategory::R18,
+            _ => DLsiteProductAgeCategory::Unknown(str),
+        })
     }
 }
 

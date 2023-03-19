@@ -341,14 +341,16 @@
             >
               <span
                 class={`text-sm w-8 h-[1.5em] flex flex-row items-center justify-center ${
-                  BgCssAge[product.product.age]
+                  BgCssAge[product.product.age] ?? BgCssAge.Unknown
                 } rounded`}>{product.product.age}</span
               >
               <span class="flex-none block w-1" />
               <span
                 class={`text-sm px-1 h-[1.5em] flex flex-row items-center justify-center ${
-                  BgCssType[product.product.ty]
-                } rounded`}>{DisplayTypeString[product.product.ty]}</span
+                  BgCssType[product.product.ty] ?? BgCssType.Unknown
+                } rounded`}
+                >{DisplayTypeString[product.product.ty] ??
+                  `Other(${product.product.ty})`}</span
               >
               <span class="flex-1" />
               <SmallButtonLink

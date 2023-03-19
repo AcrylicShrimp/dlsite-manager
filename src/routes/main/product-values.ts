@@ -1,7 +1,6 @@
 import type { DLsiteProductAge, DLsiteProductType } from "src/types/product";
 
 export const DisplayTypeString: Record<DLsiteProductType, string> = {
-  Unknown: "Unknown",
   Adult: "Adult",
   Doujinsji: "Doujinsji",
   Software: "Software",
@@ -30,10 +29,10 @@ export const DisplayTypeString: Record<DLsiteProductType, string> = {
   Utility: "Utility",
   Typing: "Typing",
   SexualNovel: "Novel",
+  Unknown: "Unknown",
 };
 
 export const BgCssType: Record<DLsiteProductType, string> = {
-  Unknown: "bg-[#525252]",
   Adult: "bg-[#bf2a13]",
   Doujinsji: "bg-[#98a11a]",
   Software: "bg-[#119147]",
@@ -62,10 +61,12 @@ export const BgCssType: Record<DLsiteProductType, string> = {
   Utility: "bg-[#119147]",
   Typing: "bg-[#1e9463]",
   SexualNovel: "bg-[#1e9463]",
+  Unknown: "bg-[#525252]",
 };
 
 export const BgCssAge: Record<DLsiteProductAge, string> = {
   All: "bg-[#22910c]",
   R15: "bg-[#b38510]",
   R18: "bg-[#bf2a13]",
+  Unknown: "bg-[#525252]",
 };

@@ -63,7 +63,6 @@ export interface DLsiteProductIcon {
 }
 
 export enum DLsiteProductType {
-  Unknown = "Unknown",
   Adult = "Adult",
   Doujinsji = "Doujinsji",
   Software = "Software",
@@ -92,12 +91,14 @@ export enum DLsiteProductType {
   Utility = "Utility",
   Typing = "Typing",
   SexualNovel = "SexualNovel",
+  Unknown = "Unknown",
 }
 
 export enum DLsiteProductAge {
   All = "All",
   R15 = "R15",
   R18 = "R18",
+  Unknown = "Unknown",
 }
 
 export enum DLsiteProductDownloadState {
