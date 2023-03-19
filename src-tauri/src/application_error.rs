@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 pub type Error = ApplicationError;
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -60,12 +62,18 @@ pub enum ApplicationError {
     ProductArchiveCleanupError { io_error: std::io::Error },
     #[error("cannot open product path due to: {tauri_error}")]
     ProductPathOpenError { tauri_error: tauri::api::Error },
-    #[cfg(target_family = "windows")]
-    #[error("cannot extract sfx product due to: {io_error}")]
-    ProductSfxExtractError { io_error: std::io::Error },
-    #[cfg(target_family = "windows")]
-    #[error("failed to extract sfx product due to: {std_err}")]
-    ProductSfxExtractFailed { std_err: String },
+    #[error("cannot rename product rar archive due to: {io_error}")]
+    ProductRarArchiveRenameError { io_error: std::io::Error },
+    #[error("cannot extract product archive due to: {extract_error}")]
+    ProductRarArchiveExtractOpenError {
+        extract_error: unrar::error::UnrarError<()>,
+    },
+    #[error("cannot extract product archive due to: {extract_error}")]
+    ProductRarArchiveExtractProcessError {
+        extract_error: unrar::error::UnrarError<()>,
+    },
+    #[error("the given path is not a valid UTF-8 string: {path}")]
+    NonUtf8PathError { path: PathBuf },
 }
 
 impl serde::Serialize for ApplicationError {

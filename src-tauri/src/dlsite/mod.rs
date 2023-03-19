@@ -12,11 +12,12 @@ use reqwest::ClientBuilder;
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use std::{
     fs::{create_dir_all, read_dir, remove_dir_all, remove_file, rename, OpenOptions},
-    io::{BufReader, BufWriter, Write},
+    io::{BufReader, BufWriter, Result as IOResult, Write},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
+use unrar::Archive;
 
 static PAGE_LIMIT: usize = 50;
 
@@ -376,25 +377,50 @@ pub async fn download_product(
             .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?;
     }
 
-    #[cfg(target_family = "windows")]
     if detail.contents.len() != 0 && detail.contents[0].file_name.ends_with(".exe") {
-        use std::{io::Result as IOResult, process::Command};
+        let rar_filename = path
+            .join(&detail.contents[0].file_name)
+            .with_extension("rar");
+
+        rename(path.join(&detail.contents[0].file_name), &rar_filename)
+            .map_err(|err| Error::ProductRarArchiveRenameError { io_error: err })?;
 
         let tmp_path = path.join("__tmp__");
-        let file_path = path.join(&detail.contents[0].file_name);
-        let sfx_output = Command::new(file_path)
-            .args(["-s2", "-d__tmp__"])
-            .current_dir(&path)
-            .spawn()
-            .map_err(|err| Error::ProductSfxExtractError { io_error: err })?
-            .wait_with_output()
-            .map_err(|err| Error::ProductSfxExtractError { io_error: err })?;
 
-        if !sfx_output.status.success() {
-            return Err(Error::ProductSfxExtractFailed {
-                std_err: String::from_utf8_lossy(&sfx_output.stderr).into_owned(),
-            });
-        }
+        Archive::new(
+            rar_filename
+                .to_str()
+                .ok_or_else(|| Error::NonUtf8PathError {
+                    path: rar_filename.clone(),
+                })?
+                .to_owned(),
+        )
+        .extract_to(
+            tmp_path
+                .to_str()
+                .ok_or_else(|| Error::NonUtf8PathError {
+                    path: tmp_path.clone(),
+                })?
+                .to_owned(),
+        )
+        .map_err(|err| Error::ProductRarArchiveExtractOpenError {
+            extract_error: unrar::error::UnrarError {
+                code: err.code,
+                when: err.when,
+                data: None,
+            },
+        })?
+        .process()
+        .map_err(|err| Error::ProductRarArchiveExtractProcessError {
+            extract_error: unrar::error::UnrarError {
+                code: err.code,
+                when: err.when,
+                data: None,
+            },
+        })?;
+
+        rename(&rar_filename, path.join(&detail.contents[0].file_name))
+            .map_err(|err| Error::ProductRarArchiveRenameError { io_error: err })?;
 
         for content in &detail.contents {
             remove_file(path.join(&content.file_name))
