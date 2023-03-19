@@ -1,5 +1,6 @@
 use self::{
-    account::Account, latest_product_query::LatestProductQuery, product::Product, setting::Setting,
+    account::Account, display_language_setting::DisplayLanguageSetting,
+    latest_product_query::LatestProductQuery, product::Product, setting::Setting,
 };
 use crate::application_error::Result;
 use parking_lot::{Mutex, MutexGuard};
@@ -7,6 +8,7 @@ use rusqlite::Connection;
 use std::path::Path;
 
 pub mod account;
+pub mod display_language_setting;
 pub mod latest_product_query;
 pub mod product;
 pub mod setting;
@@ -37,9 +39,11 @@ BEGIN;
 {}
 {}
 {}
+{}
 COMMIT;
 ",
             Setting::get_ddl(),
+            DisplayLanguageSetting::get_ddl(),
             Account::get_ddl(),
             Product::get_ddl(),
             LatestProductQuery::get_ddl(),

@@ -4,6 +4,7 @@
     DLsiteProductDownloadState,
     ProductQueryOrderBy,
     type DLsiteProductAge,
+    type DLsiteProductLocalizedString,
     type DLsiteProductType,
     type Product,
   } from "@app/types/product";
@@ -12,6 +13,7 @@
     DownloadProgress,
   } from "@app/types/download-event";
   import type { RefreshProgress } from "@app/types/refresh-event";
+  import type { DisplayLanguageSetting } from "@app/types/setting";
 
   import { throttle } from "lodash";
 
@@ -92,6 +94,13 @@
         products[index].download = undefined;
         filterProducts(products);
       }),
+      appWindow.listen<DisplayLanguageSetting>(
+        "display-language-changed",
+        (event) => {
+          data.display_language_setting = event.payload;
+          products = products;
+        }
+      ),
     ]);
 
     await queryProducts();
@@ -197,6 +206,15 @@
       productId: product.product.id,
     });
   }
+
+  function localize(text: DLsiteProductLocalizedString): string {
+    for (const language of data.display_language_setting.languages) {
+      const localized = text[language];
+      if (localized) return localized;
+    }
+
+    return text.japanese!;
+  }
 </script>
 
 <h1 class="text-center">DLsite Manager</h1>
@@ -296,26 +314,26 @@
             src={product.product.icon.small}
             width="64"
             height="64"
-            alt={product.product.title.japanese}
+            alt={localize(product.product.title)}
             class="rounded"
           />
           <span class="flex-none block w-4" />
           <div class="flex-1 min-w-0 flex flex-col items-start justify-start">
             <p
               class="text-4/5 text-lg min-w-0 max-w-full text-ellipsis overflow-hidden whitespace-nowrap"
-              title={product.product.title.japanese}
+              title={localize(product.product.title)}
             >
-              {product.product.title.japanese}
+              {localize(product.product.title)}
             </p>
             <span class="flex-none block h-1" />
             <a
               href={`https://www.dlsite.com/maniax/circle/profile/=/maker_id/${product.product.group.id}.html`}
               target="_blank"
               rel="noreferrer"
-              title={product.product.group.name.japanese}
+              title={localize(product.product.group.name)}
               class="text-3/5 text-sm min-w-0 max-w-full text-ellipsis overflow-hidden whitespace-nowrap hover:underline"
             >
-              {product.product.group.name.japanese}
+              {localize(product.product.group.name)}
             </a>
             <span class="flex-none block h-2" />
             <div

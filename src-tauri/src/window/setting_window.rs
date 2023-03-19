@@ -17,7 +17,7 @@ impl WindowInfoProvider for SettingWindow {
     }
 
     fn size(&self) -> (f64, f64) {
-        (600f64, 300f64)
+        (600f64, 650f64)
     }
 
     fn resizable(&self) -> bool {
