@@ -239,6 +239,7 @@ pub async fn refresh_product(
 }
 
 pub async fn download_product(
+    decompress: bool,
     account_id: i64,
     product_id: impl AsRef<str>,
     base_path: impl AsRef<Path>,
@@ -343,6 +344,10 @@ pub async fn download_product(
     }
 
     on_progress(file_size, file_size)?;
+
+    if !decompress {
+        return Ok(path);
+    }
 
     if detail.contents.len() == 1 && detail.contents[0].file_name.ends_with(".zip") {
         let tmp_path = path.join("__tmp__");

@@ -35,6 +35,7 @@ pub async fn product_download_product<R: Runtime>(
     app_handle: tauri::AppHandle<R>,
     account_id: i64,
     product_id: String,
+    decompress: Option<bool>,
 ) -> Result<()> {
     if let Some(window) = app_handle.get_window(&MainWindow.label()) {
         window.emit("download-begin", &product_id)?;
@@ -47,8 +48,12 @@ pub async fn product_download_product<R: Runtime>(
             .join("DLsite")
     });
 
-    let download =
-        match download_product(account_id, &product_id, path, |progress, total_progress| {
+    let download = match download_product(
+        decompress.unwrap_or(true),
+        account_id,
+        &product_id,
+        path,
+        |progress, total_progress| {
             if let Some(window) = app_handle.get_window(&MainWindow.label()) {
                 window.emit(
                     "download-progress",
@@ -61,15 +66,16 @@ pub async fn product_download_product<R: Runtime>(
             }
 
             Ok(())
-        })
-        .await
-        {
-            Ok(path) => Some(Product::insert_download(
-                &product_id,
-                path.to_str().unwrap(),
-            )?),
-            Err(..) => None,
-        };
+        },
+    )
+    .await
+    {
+        Ok(path) => Some(Product::insert_download(
+            &product_id,
+            path.to_str().unwrap(),
+        )?),
+        Err(..) => None,
+    };
 
     if let Some(window) = app_handle.get_window(&MainWindow.label()) {
         window.emit(

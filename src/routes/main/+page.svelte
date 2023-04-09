@@ -19,8 +19,10 @@
 
   import Input from "@app/lib/inputs/Input.svelte";
   import LabeledSelect from "@app/lib/selects/LabeledSelect.svelte";
+  import SmallButtonLink from "@app/lib/buttons/SmallButtonLink.svelte";
   import SmallFixedRedButton from "@app/lib/buttons/SmallFixedRedButton.svelte";
   import SmallFixedRedWithMenuButton from "@app/lib/buttons/SmallFixedRedWithMenuButton.svelte";
+  import SmallMenuButton from "@app/lib/buttons/SmallMenuButton.svelte";
 
   import { invoke } from "@tauri-apps/api/tauri";
   import { appWindow } from "@tauri-apps/api/window";
@@ -192,13 +194,17 @@
     }
   }
 
-  async function requestDownload(product: Product): Promise<void> {
+  async function requestDownload(
+    product: Product,
+    decompress: boolean
+  ): Promise<void> {
     if (productDownloads.has(product.product.id)) return;
 
     productDownloads.set(product.product.id, 0);
     await invoke("product_download_product", {
       accountId: product.account.id,
       productId: product.product.id,
+      decompress,
     });
   }
 
@@ -360,7 +366,6 @@
                 rel="noreferrer">Visit Product Page</SmallButtonLink
               >
               <span class="flex-none block w-1" />
-
               {#if product.download}
                 <SmallFixedRedButton
                   on:click={() => openDownloadedFolder(product)}
@@ -376,9 +381,25 @@
                   {/if}
                 </SmallFixedRedButton>
               {:else}
-                <SmallFixedRedButton on:click={() => requestDownload(product)}>
-                  Download
-                </SmallFixedRedButton>
+                <SmallFixedRedWithMenuButton
+                  on:click={() => requestDownload(product, true)}
+                >
+                  <slot>Download</slot>
+                  <span slot="right">...</span>
+                  <div
+                    slot="menu"
+                    class="flex flex-col items-stretch justify-start"
+                  >
+                    <SmallMenuButton
+                      on:click={() => requestDownload(product, true)}
+                      >Download</SmallMenuButton
+                    >
+                    <SmallMenuButton
+                      on:click={() => requestDownload(product, false)}
+                      >Download w/o Decompress</SmallMenuButton
+                    >
+                  </div>
+                </SmallFixedRedWithMenuButton>
               {/if}
             </div>
           </div>
