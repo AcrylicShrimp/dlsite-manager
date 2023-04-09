@@ -17,15 +17,16 @@
 
   import throttle from "lodash/throttle";
 
-  import { BgCssAge, BgCssType, DisplayTypeString } from "./product-values";
-  import SmallButtonLink from "@app/lib/buttons/SmallButtonLink.svelte";
-  import SmallFixedRedButton from "@app/lib/buttons/SmallFixedRedButton.svelte";
   import Input from "@app/lib/inputs/Input.svelte";
   import LabeledSelect from "@app/lib/selects/LabeledSelect.svelte";
+  import SmallFixedRedButton from "@app/lib/buttons/SmallFixedRedButton.svelte";
+  import SmallFixedRedWithMenuButton from "@app/lib/buttons/SmallFixedRedWithMenuButton.svelte";
 
   import { invoke } from "@tauri-apps/api/tauri";
   import { appWindow } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
+
+  import { BgCssAge, BgCssType, DisplayTypeString } from "./product-values";
 
   type Age = "" | DLsiteProductAge;
   type Type = "" | DLsiteProductType;
