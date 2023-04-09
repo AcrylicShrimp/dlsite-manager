@@ -4,7 +4,7 @@ version = "1.3.0"
 description = "manage your DLsite accounts and products at once"
 authors = ["AcrylicShrimp"]
 license = "MIT"
-repository = ""
+repository = "https://github.com/AcrylicShrimp/dlsite-manager"
 edition = "2021"
 rust-version = "1.57"
 
