@@ -15,10 +15,6 @@ To start download, just press the `Download` button. You don't need to decompres
 
 > **NOTE**: Download path can be configured via `Setting > Open Settings` menu.
 
-### Platform-specific behavior of automatic extraction
-
-Large-sized products (over 1GiB) are shipped in [SFX(Self-extracting archive)](https://en.wikipedia.org/wiki/Self-extracting_archive) format. Since it's a [PE executable](https://en.wikipedia.org/wiki/Portable_Executable), decompression of this format is only can be happened in **_Windows_**.
-
 ## Renew product list
 
 The products are cached on your machine, so newly purchased things will not be shown. To refresh it, click the menu `Product > Update Product`.
