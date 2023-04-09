@@ -384,7 +384,7 @@
                 <SmallFixedRedWithMenuButton
                   on:click={() => requestDownload(product, true)}
                 >
-                  <slot>Download</slot>
+                  Download
                   <span slot="right">...</span>
                   <div
                     slot="menu"
