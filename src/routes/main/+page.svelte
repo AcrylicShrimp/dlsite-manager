@@ -214,6 +214,12 @@
     });
   }
 
+  async function removeDownloadedFolder(product: Product): Promise<void> {
+    await invoke("product_remove_downloaded_product", {
+      productId: product.product.id,
+    });
+  }
+
   function localize(text: DLsiteProductLocalizedString): string {
     for (const language of data.display_language_setting.languages) {
       const localized = text[language];
@@ -367,11 +373,25 @@
               >
               <span class="flex-none block w-1" />
               {#if product.download}
-                <SmallFixedRedButton
+                <SmallFixedRedWithMenuButton
                   on:click={() => openDownloadedFolder(product)}
                 >
                   Open Folder
-                </SmallFixedRedButton>
+                  <span slot="right">...</span>
+                  <div
+                    slot="menu"
+                    class="flex flex-col items-stretch justify-start"
+                  >
+                    <SmallMenuButton
+                      on:click={() => openDownloadedFolder(product)}
+                      >Open Folder</SmallMenuButton
+                    >
+                    <SmallMenuButton
+                      on:click={() => removeDownloadedFolder(product)}
+                      >Remove Download</SmallMenuButton
+                    >
+                  </div>
+                </SmallFixedRedWithMenuButton>
               {:else if productDownloads.has(product.product.id)}
                 <SmallFixedRedButton disabled>
                   {#if productDownloads.get(product.product.id)}

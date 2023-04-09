@@ -469,3 +469,12 @@ pub async fn download_product(
 
     Ok(path)
 }
+
+pub fn remove_downloaded_product(
+    product_id: impl AsRef<str>,
+    base_path: impl AsRef<Path>,
+) -> Result<()> {
+    let path = base_path.as_ref().join(product_id.as_ref());
+    remove_dir_all(&path).map_err(|err| Error::ProductDirCreationError { io_error: err })?;
+    Ok(())
+}

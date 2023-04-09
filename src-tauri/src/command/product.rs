@@ -1,6 +1,6 @@
 use crate::{
     application_error::{Error, Result},
-    dlsite::download_product,
+    dlsite::{download_product, remove_downloaded_product},
     storage::{
         product::{Product, ProductDownload, ProductQuery},
         setting::Setting,
@@ -8,6 +8,7 @@ use crate::{
     window::{MainWindow, WindowInfoProvider},
 };
 use serde::Serialize;
+use std::path::PathBuf;
 use tauri::{
     api::{path::download_dir, shell},
     Manager, Runtime,
@@ -23,6 +24,15 @@ pub struct ProductDownloadProgressEvent<'s> {
 pub struct ProductDownloadEndEvent<'s> {
     pub product_id: &'s str,
     pub download: Option<ProductDownload>,
+}
+
+fn get_product_download_path<R: Runtime>(app_handle: &tauri::AppHandle<R>) -> Result<PathBuf> {
+    let setting = Setting::get()?;
+    Ok(setting.download_root_dir.unwrap_or_else(|| {
+        download_dir()
+            .unwrap_or_else(|| app_handle.path_resolver().app_local_data_dir().unwrap())
+            .join("DLsite")
+    }))
 }
 
 #[tauri::command]
@@ -41,18 +51,12 @@ pub async fn product_download_product<R: Runtime>(
         window.emit("download-begin", &product_id)?;
     }
 
-    let setting = Setting::get()?;
-    let path = setting.download_root_dir.unwrap_or_else(|| {
-        download_dir()
-            .unwrap_or_else(|| app_handle.path_resolver().app_local_data_dir().unwrap())
-            .join("DLsite")
-    });
-
+    let path = get_product_download_path(&app_handle)?;
     let download = match download_product(
         decompress.unwrap_or(true),
         account_id,
         &product_id,
-        path,
+        &path,
         |progress, total_progress| {
             if let Some(window) = app_handle.get_window(&MainWindow.label()) {
                 window.emit(
@@ -74,7 +78,10 @@ pub async fn product_download_product<R: Runtime>(
             &product_id,
             path.to_str().unwrap(),
         )?),
-        Err(..) => None,
+        Err(..) => {
+            remove_downloaded_product(&product_id, &path).ok();
+            None
+        }
     };
 
     if let Some(window) = app_handle.get_window(&MainWindow.label()) {
@@ -117,6 +124,23 @@ pub async fn product_open_downloaded_folder<R: Runtime>(
 
     shell::open(&app_handle.shell_scope(), path.to_str().unwrap(), None)
         .map_err(|err| Error::ProductPathOpenError { tauri_error: err })?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn product_remove_downloaded_product<R: Runtime>(
+    app_handle: tauri::AppHandle<R>,
+    product_id: String,
+) -> Result<()> {
+    let path = get_product_download_path(&app_handle)?;
+
+    remove_downloaded_product(&product_id, path).ok();
+    Product::remove_one_download(&product_id)?;
+
+    if let Some(window) = app_handle.get_window(&MainWindow.label()) {
+        window.emit("download-invalid", &product_id)?;
+    }
 
     Ok(())
 }

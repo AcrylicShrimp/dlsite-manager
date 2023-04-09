@@ -30,6 +30,7 @@ where
             product::product_list_products,
             product::product_download_product,
             product::product_open_downloaded_folder,
+            product::product_remove_downloaded_product,
             setting::setting_get,
             setting::display_language_setting_get,
             setting::setting_browse_default_root_directory,
