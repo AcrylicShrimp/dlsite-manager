@@ -391,38 +391,25 @@ pub async fn download_product(
             .map_err(|err| Error::ProductRarArchiveRenameError { io_error: err })?;
 
         let tmp_path = path.join("__tmp__");
-
-        Archive::new(
-            rar_filename
+        let mut archive = Archive::new(
+            &rar_filename
                 .to_str()
                 .ok_or_else(|| Error::NonUtf8PathError {
                     path: rar_filename.clone(),
                 })?
                 .to_owned(),
         )
-        .extract_to(
-            tmp_path
-                .to_str()
-                .ok_or_else(|| Error::NonUtf8PathError {
-                    path: tmp_path.clone(),
-                })?
-                .to_owned(),
-        )
-        .map_err(|err| Error::ProductRarArchiveExtractOpenError {
-            extract_error: unrar::error::UnrarError {
-                code: err.code,
-                when: err.when,
-                data: None,
-            },
-        })?
-        .process()
-        .map_err(|err| Error::ProductRarArchiveExtractProcessError {
-            extract_error: unrar::error::UnrarError {
-                code: err.code,
-                when: err.when,
-                data: None,
-            },
-        })?;
+        .open_for_processing()
+        .map_err(|err| Error::ProductRarArchiveExtractOpenError { extract_error: err })?;
+
+        while let Some(header) = archive
+            .read_header()
+            .map_err(|err| Error::ProductRarArchiveExtractProcessError { extract_error: err })?
+        {
+            archive = header.extract_with_base(&tmp_path).map_err(|err| {
+                Error::ProductRarArchiveExtractProcessError { extract_error: err }
+            })?;
+        }
 
         rename(&rar_filename, path.join(&detail.contents[0].file_name))
             .map_err(|err| Error::ProductRarArchiveRenameError { io_error: err })?;

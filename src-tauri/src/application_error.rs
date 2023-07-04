@@ -66,11 +66,11 @@ pub enum ApplicationError {
     ProductRarArchiveRenameError { io_error: std::io::Error },
     #[error("cannot extract product archive due to: {extract_error}")]
     ProductRarArchiveExtractOpenError {
-        extract_error: unrar::error::UnrarError<()>,
+        extract_error: unrar::error::UnrarError,
     },
     #[error("cannot extract product archive due to: {extract_error}")]
     ProductRarArchiveExtractProcessError {
-        extract_error: unrar::error::UnrarError<()>,
+        extract_error: unrar::error::UnrarError,
     },
     #[error("the given path is not a valid UTF-8 string: {path}")]
     NonUtf8PathError { path: PathBuf },
