@@ -230,8 +230,26 @@
   }
 </script>
 
-<h1 class="text-center">DLsite Manager</h1>
-<span class="block h-8" />
+<nav class="flex items-center justify-stretch">
+  <div class="flex-1" />
+  <h1 class="flex-none inline-block text-lg">DLsite Manager</h1>
+  <div class="flex-1 flex items-center justify-end">
+    <a
+      href="https://github.com/AcrylicShrimp/dlsite-manager"
+      target="_blank"
+      rel="noreferrer"
+      class="underline text-4/5">Visit Github</a
+    >
+    <span class="w-4" />
+    <a
+      href="https://www.dlsite.com/index.html"
+      target="_blank"
+      rel="noreferrer"
+      class="underline text-4/5">Visit DLsite</a
+    >
+  </div>
+</nav>
+<span class="block h-4" />
 <section>
   <div class="flex flex-row items-center justify-start">
     <Input
