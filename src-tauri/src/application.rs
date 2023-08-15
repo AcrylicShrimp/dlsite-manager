@@ -3,7 +3,8 @@ use crate::{
     storage::Storage,
     window::{BuildableWindow, MainWindow},
 };
-use parking_lot::{Mutex, MutexGuard};
+use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
+use rusqlite::Connection;
 use std::{fs::create_dir_all, mem::MaybeUninit, sync::Arc};
 use tauri::{App, AppHandle};
 
@@ -25,7 +26,7 @@ pub fn create_application(app: &App) -> Result<Arc<Application>> {
 
 pub struct Application {
     app_handle: AppHandle,
-    storage: Storage,
+    storage: Mutex<Option<Storage>>,
     is_updating_product: Mutex<bool>,
 }
 
@@ -41,7 +42,7 @@ impl Application {
 
         Ok(Self {
             app_handle: app.handle(),
-            storage: Storage::load(app_dir.join("database.db"))?,
+            storage: Mutex::new(Some(Storage::load(app_dir.join("database.db"))?)),
             is_updating_product: Mutex::new(false),
         })
     }
@@ -50,8 +51,10 @@ impl Application {
         &self.app_handle
     }
 
-    pub fn storage(&self) -> &Storage {
-        &self.storage
+    pub fn connection(&self) -> MappedMutexGuard<Connection> {
+        MutexGuard::map(self.storage.lock(), |storage| {
+            storage.as_mut().unwrap().connection_mut()
+        })
     }
 
     pub fn is_updating_product(&self) -> MutexGuard<bool> {
@@ -59,12 +62,19 @@ impl Application {
     }
 
     pub fn init(&self) -> Result<()> {
-        self.storage.prepare()?;
+        self.storage.lock().as_ref().unwrap().prepare()?;
         Ok(())
     }
 
     pub fn run(&self) -> Result<()> {
         MainWindow.build(&self.app_handle)?;
+        Ok(())
+    }
+
+    pub fn drop_storage(&self) -> Result<()> {
+        if let Some(storage) = self.storage.lock().take() {
+            storage.drop()?;
+        }
         Ok(())
     }
 }

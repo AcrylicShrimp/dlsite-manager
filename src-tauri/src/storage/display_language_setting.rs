@@ -18,7 +18,6 @@ CREATE TABLE IF NOT EXISTS display_language_settings (
 
     pub fn get() -> Result<Self> {
         let mut languages = use_application()
-            .storage()
             .connection()
             .prepare(
                 "
@@ -44,7 +43,7 @@ ORDER BY order_index ASC;",
     }
 
     pub fn set(setting: &Self) -> Result<()> {
-        let mut connection = use_application().storage().connection();
+        let mut connection = use_application().connection();
         let tx = connection.transaction()?;
         {
             tx.execute(

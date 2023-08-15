@@ -273,7 +273,6 @@ CREATE TABLE IF NOT EXISTS product_downloads (
         };
 
         Ok(use_application()
-            .storage()
             .connection()
             .prepare(&format!(
                 "
@@ -326,7 +325,6 @@ ORDER BY {}",
 
     pub fn get_one_download(product_id: impl AsRef<str>) -> Result<Option<ProductDownload>> {
         Ok(use_application()
-            .storage()
             .connection()
             .prepare(
                 "
@@ -344,7 +342,7 @@ WHERE product_id = ?1",
     }
 
     pub fn insert_all(mut products: impl Iterator<Item = InsertedProduct>) -> Result<()> {
-        let mut connection = use_application().storage().connection();
+        let mut connection = use_application().connection();
         let tx = connection.transaction()?;
         {
             let mut insert_stmt = tx.prepare(
@@ -472,7 +470,6 @@ INSERT INTO indexed_products (
         path: impl AsRef<str>,
     ) -> Result<ProductDownload> {
         use_application()
-            .storage()
             .connection()
             .prepare(
                 "
@@ -495,7 +492,7 @@ INSERT INTO product_downloads (
     }
 
     pub fn remove_all() -> Result<()> {
-        use_application().storage().connection().execute_batch(
+        use_application().connection().execute_batch(
             "
 DELETE FROM products;
 DELETE FROM indexed_products;
@@ -506,7 +503,6 @@ VACUUM;",
 
     pub fn remove_one_download(product_id: impl AsRef<str>) -> Result<()> {
         use_application()
-            .storage()
             .connection()
             .prepare(
                 "

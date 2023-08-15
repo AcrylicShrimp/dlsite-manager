@@ -3,7 +3,6 @@ use self::{
     latest_product_query::LatestProductQuery, product::Product, setting::Setting,
 };
 use crate::application_error::Result;
-use parking_lot::{Mutex, MutexGuard};
 use rusqlite::Connection;
 use std::path::Path;
 
@@ -14,7 +13,7 @@ pub mod product;
 pub mod setting;
 
 pub struct Storage {
-    connection: Mutex<Connection>,
+    connection: Connection,
 }
 
 impl Storage {
@@ -24,12 +23,12 @@ impl Storage {
         })
     }
 
-    pub fn connection(&self) -> MutexGuard<Connection> {
-        self.connection.lock()
+    pub fn connection_mut(&mut self) -> &mut Connection {
+        &mut self.connection
     }
 
     pub fn prepare(&self) -> Result<()> {
-        self.connection.lock().execute_batch(&format!(
+        self.connection.execute_batch(&format!(
             "
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
@@ -49,6 +48,11 @@ COMMIT;
             LatestProductQuery::get_ddl(),
         ))?;
 
+        Ok(())
+    }
+
+    pub fn drop(self) -> Result<()> {
+        self.connection.close().map_err(|(_, err)| err)?;
         Ok(())
     }
 }

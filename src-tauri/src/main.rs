@@ -11,12 +11,13 @@ mod menu;
 mod storage;
 mod window;
 
-use application::create_application;
+use application::{create_application, use_application};
 use command::CommandProvider;
 use menu::{ApplicationMenu, MenuProvider};
+use tauri::RunEvent;
 
 fn main() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .menu(ApplicationMenu::create_menu())
         .on_menu_event(|event| ApplicationMenu::handle_menu(event).unwrap())
         .setup(|app| {
@@ -26,6 +27,13 @@ fn main() {
             Ok(())
         })
         .attach_commands()
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("error while running application");
+
+    app.run(|_, event| match event {
+        RunEvent::Exit => {
+            use_application().drop_storage().ok();
+        }
+        _ => {}
+    });
 }

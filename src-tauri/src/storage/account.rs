@@ -74,7 +74,6 @@ END;
 
     pub fn list_all() -> Result<Vec<Self>> {
         Ok(use_application()
-            .storage()
             .connection()
             .prepare(
                 "
@@ -97,7 +96,6 @@ ORDER BY id ASC
 
     pub fn list_all_id() -> Result<Vec<i64>> {
         Ok(use_application()
-            .storage()
             .connection()
             .prepare(
                 "
@@ -113,7 +111,6 @@ ORDER BY id ASC
 
     pub fn get_one(id: i64) -> Result<Option<Account>> {
         Ok(use_application()
-            .storage()
             .connection()
             .prepare(
                 "
@@ -136,7 +133,6 @@ WHERE id = ?1
 
     pub fn get_one_username_and_password(id: i64) -> Result<Option<(String, String)>> {
         Ok(use_application()
-            .storage()
             .connection()
             .prepare(
                 "
@@ -155,7 +151,6 @@ WHERE id = ?1
 
     pub fn get_one_product_count(id: i64) -> Result<Option<i32>> {
         Ok(use_application()
-            .storage()
             .connection()
             .prepare(
                 "
@@ -171,7 +166,6 @@ WHERE id = ?1
 
     pub fn get_one_cookie_json(id: i64) -> Result<Option<String>> {
         Ok(use_application()
-            .storage()
             .connection()
             .prepare(
                 "
@@ -187,7 +181,6 @@ WHERE id = ?1
 
     pub fn create_one(account: CreatedAccount) -> Result<Account> {
         let id = use_application()
-            .storage()
             .connection()
             .prepare(
                 "
@@ -213,7 +206,6 @@ INSERT INTO accounts (
 
     pub fn update_one(account: UpdatedAccount) -> Result<Account> {
         use_application()
-            .storage()
             .connection()
             .prepare(
                 "
@@ -241,7 +233,6 @@ WHERE id = ?1
 
     pub fn update_one_product_count(id: i64, product_count: i32) -> Result<()> {
         use_application()
-            .storage()
             .connection()
             .prepare(
                 "
@@ -257,7 +248,6 @@ WHERE id = ?1
 
     pub fn update_one_cookie_json(id: i64, cookie_json: impl AsRef<str>) -> Result<()> {
         use_application()
-            .storage()
             .connection()
             .prepare(
                 "
@@ -273,7 +263,6 @@ WHERE id = ?1
 
     pub fn remove_one(id: i64) -> Result<()> {
         use_application()
-            .storage()
             .connection()
             .prepare(
                 "

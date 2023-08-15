@@ -30,7 +30,6 @@ CREATE TABLE IF NOT EXISTS settings (
 
     pub fn get() -> Result<Self> {
         Ok(use_application()
-            .storage()
             .connection()
             .prepare(
                 "
@@ -44,7 +43,7 @@ FROM settings;",
     }
 
     pub fn set(setting: Self) -> Result<()> {
-        let connection = use_application().storage().connection();
+        let connection = use_application().connection();
         connection.execute(
             "
 DELETE FROM settings",

@@ -84,7 +84,6 @@ CREATE TABLE IF NOT EXISTS latest_product_query (
 
     pub fn get() -> Result<Self> {
         Ok(use_application()
-            .storage()
             .connection()
             .prepare(
                 "
@@ -102,7 +101,7 @@ FROM latest_product_query;",
     }
 
     pub fn set(query: Self) -> Result<()> {
-        let connection = use_application().storage().connection();
+        let connection = use_application().connection();
         connection.execute(
             "
 DELETE FROM latest_product_query",
