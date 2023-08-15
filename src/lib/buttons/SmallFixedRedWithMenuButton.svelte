@@ -23,7 +23,7 @@
   >
   {#if menu}
     <div
-      class="absolute top-[calc(100%+0.25rem)] left-2 right-2 border border-2/5 bg-1/5 z-10 rounded"
+      class="absolute top-[calc(100%+0.25rem)] left-[-80%] right-2 border border-2/5 bg-1/5 z-10 rounded"
       on:mouseleave={onMouseLeave}
     >
       <slot name="menu" />
