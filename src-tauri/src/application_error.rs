@@ -74,6 +74,8 @@ pub enum ApplicationError {
     },
     #[error("the given path is not a valid UTF-8 string: {path}")]
     NonUtf8PathError { path: PathBuf },
+    #[error("cannot refresh product downloads due to: {io_error}")]
+    ProductDownloadRefreshError { io_error: std::io::Error },
 }
 
 impl serde::Serialize for ApplicationError {

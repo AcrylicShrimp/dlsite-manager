@@ -1,7 +1,11 @@
+mod refresh_product_download;
 mod refresh_product_list;
 mod update_product_list;
 
-use self::{refresh_product_list::refresh_product_list, update_product_list::update_product_list};
+use self::{
+    refresh_product_download::refresh_product_download, refresh_product_list::refresh_product_list,
+    update_product_list::update_product_list,
+};
 use crate::{
     application::use_application,
     application_error::Result,
@@ -51,9 +55,14 @@ impl MenuProvider for ApplicationMenu {
                         "product/update-product-list",
                         "Update Product",
                     ))
+                    .add_native_item(MenuItem::Separator)
                     .add_item(CustomMenuItem::new(
                         "product/refresh-product-list",
                         "Refresh Product All",
+                    ))
+                    .add_item(CustomMenuItem::new(
+                        "product/refresh-product-download",
+                        "Refresh Product Downloads",
                     )),
             ))
             .add_submenu(Submenu::new(
@@ -98,6 +107,31 @@ impl MenuProvider for ApplicationMenu {
                     }
 
                     let result = refresh_product_list().await;
+                    *use_application().is_updating_product() = false;
+
+                    result.unwrap();
+                })());
+            }
+            "product/refresh-product-download" => {
+                spawn((|| async {
+                    {
+                        let mut is_updating_product = use_application().is_updating_product();
+
+                        if *is_updating_product {
+                            return ();
+                        }
+
+                        *is_updating_product = true;
+                    }
+
+                    let result = refresh_product_list().await;
+
+                    if result.is_err() {
+                        *use_application().is_updating_product() = false;
+                        return result.unwrap();
+                    }
+
+                    let result = refresh_product_download().await;
                     *use_application().is_updating_product() = false;
 
                     result.unwrap();

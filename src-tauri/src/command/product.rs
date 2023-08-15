@@ -1,18 +1,12 @@
+use super::get_product_download_path;
 use crate::{
     application_error::{Error, Result},
     dlsite::{download_product, remove_downloaded_product},
-    storage::{
-        product::{Product, ProductDownload, ProductQuery},
-        setting::Setting,
-    },
+    storage::product::{Product, ProductDownload, ProductQuery},
     window::{MainWindow, WindowInfoProvider},
 };
 use serde::Serialize;
-use std::path::PathBuf;
-use tauri::{
-    api::{path::download_dir, shell},
-    Manager, Runtime,
-};
+use tauri::{api::shell, Manager, Runtime};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProductDownloadProgressEvent<'s> {
@@ -24,15 +18,6 @@ pub struct ProductDownloadProgressEvent<'s> {
 pub struct ProductDownloadEndEvent<'s> {
     pub product_id: &'s str,
     pub download: Option<ProductDownload>,
-}
-
-fn get_product_download_path<R: Runtime>(app_handle: &tauri::AppHandle<R>) -> Result<PathBuf> {
-    let setting = Setting::get()?;
-    Ok(setting.download_root_dir.unwrap_or_else(|| {
-        download_dir()
-            .unwrap_or_else(|| app_handle.path_resolver().app_local_data_dir().unwrap())
-            .join("DLsite")
-    }))
 }
 
 #[tauri::command]

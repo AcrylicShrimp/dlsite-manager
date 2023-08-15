@@ -512,4 +512,13 @@ WHERE product_id = ?1",
             .execute(params![product_id.as_ref()])?;
         Ok(())
     }
+
+    pub fn remove_all_download() -> Result<()> {
+        use_application().connection().execute_batch(
+            "
+DELETE FROM product_downloads;
+VACUUM;",
+        )?;
+        Ok(())
+    }
 }

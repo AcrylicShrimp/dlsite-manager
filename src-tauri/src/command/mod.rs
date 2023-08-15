@@ -1,4 +1,6 @@
-use tauri::{generate_handler, Builder, Runtime};
+use crate::{application_error::Result, storage::setting::Setting};
+use std::path::PathBuf;
+use tauri::{api::path::download_dir, generate_handler, Builder, Runtime};
 
 mod account_management;
 mod latest_product_query;
@@ -41,4 +43,13 @@ where
             window::spawn_window_account_edit,
         ])
     }
+}
+
+pub fn get_product_download_path<R: Runtime>(app_handle: &tauri::AppHandle<R>) -> Result<PathBuf> {
+    let setting = Setting::get()?;
+    Ok(setting.download_root_dir.unwrap_or_else(|| {
+        download_dir()
+            .unwrap_or_else(|| app_handle.path_resolver().app_local_data_dir().unwrap())
+            .join("DLsite")
+    }))
 }
