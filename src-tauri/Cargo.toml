@@ -11,7 +11,7 @@ rust-version = "1.57"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [build-dependencies]
-tauri-build = { version = "1.4", features = [] }
+tauri-build = { version = "1.5", features = [] }
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
@@ -23,17 +23,14 @@ serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 strum = { version = "0.25" }
 strum_macros = { version = "0.25" }
-tauri = { version = "1.4", features = ["dialog", "shell-open"] }
+tauri = { version = "1.5", features = ["dialog", "shell-open"] }
 thiserror = { version = "1" }
-zip-extract = { git = "https://github.com/AcrylicShrimp/zip-extract", tag="v1.0.1", features = ["deflate"] }
+zip-extract = { git = "https://github.com/AcrylicShrimp/zip-extract", tag="v1.1.1" }
 unrar = { version = "0.5" }
 
 [features]
-# by default Tauri runs in production mode
-# when `tauri dev` runs it is executed with `cargo run --no-default-features` if `devPath` is an URL
-default = ["custom-protocol"]
-# this feature is used used for production builds where `devPath` points to the filesystem
-# DO NOT remove this
+# this feature is used for production builds or when `devPath` points to the filesystem
+# DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
 
 [profile.release]

@@ -18,30 +18,10 @@
     },
     "bundle": {
       "active": true,
-      "category": "Utility",
-      "copyright": "",
-      "deb": {
-        "depends": []
-      },
-      "externalBin": [],
-      "icon": ["icons/icon.ico"],
-      "identifier": "dev.ashrimp.dlsite-manager",
-      "longDescription": "",
-      "macOS": {
-        "entitlements": null,
-        "exceptionDomain": "",
-        "frameworks": [],
-        "providerShortName": null,
-        "signingIdentity": null
-      },
-      "resources": [],
-      "shortDescription": "",
       "targets": "all",
-      "windows": {
-        "certificateThumbprint": null,
-        "digestAlgorithm": "sha256",
-        "timestampUrl": ""
-      }
+      "category": "Utility",
+      "identifier": "dev.ashrimp.dlsite-manager",
+      "icon": ["icons/icon.ico"]
     },
     "security": {
       "csp": null
