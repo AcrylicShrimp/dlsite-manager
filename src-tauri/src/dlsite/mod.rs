@@ -158,8 +158,10 @@ pub async fn update_product(mut on_progress: impl FnMut(usize, usize) -> Result<
                     _ => return Err(err),
                 },
             };
-            prev_product_count += products.len();
-            progress += products.len();
+
+            let updated_prev_product_count = (page - 1) * PAGE_LIMIT + products.len();
+            progress += updated_prev_product_count - prev_product_count;
+            prev_product_count = updated_prev_product_count;
 
             on_progress(progress, total_progress)?;
 
