@@ -1,4 +1,5 @@
 pub mod api;
+pub mod v2;
 
 use crate::{
     application_error::{Error, Result},
