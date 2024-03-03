@@ -1,6 +1,9 @@
-use super::dto::{
-    DLsiteProduct, DLsiteProductFromNonOwnerApi, DLsiteProductI18nString,
-    DLsiteProductListFromOwnerApi,
+use super::{
+    dto::{
+        DLsiteProduct, DLsiteProductFromNonOwnerApi, DLsiteProductI18nString,
+        DLsiteProductListFromOwnerApi,
+    },
+    DLsiteProductFiles,
 };
 use anyhow::{anyhow, Context, Error};
 use chrono::{FixedOffset, NaiveDateTime, TimeZone};
@@ -204,4 +207,27 @@ pub async fn get_product_from_non_owner_api(id: &str) -> Result<DLsiteProduct, E
         group_name: product.group_name,
         registered_at: utc_registered_at,
     })
+}
+
+pub async fn get_product_files(id: &str) -> Result<DLsiteProductFiles, Error> {
+    let url = format!(
+        "https://www.dlsite.com/maniax/api/=/product.json?workno={}",
+        id
+    );
+    let res = reqwest::get(&url)
+        .await
+        .with_context(|| format!("[get_product_files]"))
+        .with_context(|| format!("request failed for product id `{}` with url: `{}`", id, url))?;
+
+    let product_details_list = res
+        .json::<Vec<DLsiteProductFiles>>()
+        .await
+        .with_context(|| format!("[get_product_files]"))
+        .with_context(|| format!("parse failed for product id `{}`", id))?;
+
+    if product_details_list.is_empty() {
+        return Err(anyhow!("product details list is empty"));
+    }
+
+    Ok(product_details_list.into_iter().next().unwrap())
 }

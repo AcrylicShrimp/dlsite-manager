@@ -320,3 +320,15 @@ impl<'de> Deserialize<'de> for DLsiteProductAgeCategory {
         deserializer.deserialize_any(Visitor)
     }
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DLsiteProductFiles {
+    #[serde(rename = "contents")]
+    pub files: Vec<DLsiteProductFile>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DLsiteProductFile {
+    pub file_name: String,
+    pub file_size: String,
+}
