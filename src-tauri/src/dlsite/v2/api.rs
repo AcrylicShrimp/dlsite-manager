@@ -11,9 +11,10 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::try_join;
 
 lazy_static! {
+    static ref GROUP_NAME_SELECTOR_STR: &'static str = "#work_maker>tbody>tr>td>span>a";
     // SAFETY: below selector is valid, so unwrap here is safe
     static ref GROUP_NAME_SELECTOR: scraper::Selector =
-        scraper::Selector::parse("#work_maker>tbody>tr>td>span>a").unwrap();
+        scraper::Selector::parse(*GROUP_NAME_SELECTOR_STR).unwrap();
 }
 
 pub async fn login(
@@ -24,13 +25,22 @@ pub async fn login(
     let client = ClientBuilder::new()
         .cookie_store(true)
         .cookie_provider(cookie_store.clone())
-        .build()?;
+        .build()
+        .with_context(|| "[login]")
+        .with_context(|| "failed to create HTTP client")?;
 
     client
         .get("https://www.dlsite.com/maniax/login/=/skip_register/1")
         .send()
-        .await?;
-    client.get("https://login.dlsite.com/login").send().await?;
+        .await
+        .with_context(|| "[login]")
+        .with_context(|| "request failed for `skip_register`")?;
+    client
+        .get("https://login.dlsite.com/login")
+        .send()
+        .await
+        .with_context(|| "[login]")
+        .with_context(|| "request failed for `fetch_initial_cookies`")?;
 
     let res = client
         .post("https://login.dlsite.com/login")
@@ -49,11 +59,17 @@ pub async fn login(
             }),
         ])
         .send()
-        .await?;
-    let text = res.text().await?;
+        .await
+        .with_context(|| "[login]")
+        .with_context(|| "request failed for `authenticate`")?;
+    let text = res
+        .text()
+        .await
+        .with_context(|| "[login]")
+        .with_context(|| "parse failed for `authenticate`")?;
 
     if text.contains("ログインIDかパスワードが間違っています。") {
-        return Err(anyhow!("login failed"));
+        return Err(anyhow!("login failed; username or password is incorrect"));
     }
 
     Ok(cookie_store)
@@ -63,19 +79,27 @@ pub async fn get_product_count(cookie_store: Arc<CookieStoreMutex>) -> Result<u3
     let client = ClientBuilder::new()
         .cookie_store(true)
         .cookie_provider(cookie_store)
-        .build()?;
+        .build()
+        .with_context(|| "[get_product_count]")
+        .with_context(|| "failed to create HTTP client")?;
     let res = client
         .get("https://play.dlsite.com/api/product_count")
         .send()
-        .await?;
+        .await
+        .with_context(|| "[get_product_count]")
+        .with_context(|| "request failed")?;
 
-    match res.json::<HashMap<String, u32>>().await {
-        Ok(product_count) => Ok(product_count.get("user").cloned().unwrap_or(0)),
-        Err(err) => Err(anyhow!(
-            "unable to get product count; parse failed: {}",
-            err
-        )),
-    }
+    let product_count_map = res
+        .json::<HashMap<String, u32>>()
+        .await
+        .with_context(|| "[get_product_count]")
+        .with_context(|| "parse failed")?;
+
+    product_count_map
+        .get("user")
+        .cloned()
+        .ok_or_else(|| anyhow!("unable to get product count; `user` key not found in response"))
+        .with_context(|| "[get_product_count]")
 }
 
 pub async fn get_products(
@@ -85,10 +109,21 @@ pub async fn get_products(
     let client = ClientBuilder::new()
         .cookie_store(true)
         .cookie_provider(cookie_store)
-        .build()?;
+        .build()
+        .with_context(|| format!("[get_products]"))
+        .with_context(|| format!("failed to create HTTP client for page `{}`", page))?;
     let url = format!("https://play.dlsite.com/api/purchases?page={}", page);
-    let res = client.get(&url).send().await?;
-    let product_list = res.json::<DLsiteProductListFromOwnerApi>().await?;
+    let res = client
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| format!("[get_products]"))
+        .with_context(|| format!("request failed for page `{}` with url: `{}`", page, url))?;
+    let product_list = res
+        .json::<DLsiteProductListFromOwnerApi>()
+        .await
+        .with_context(|| format!("[get_products]"))
+        .with_context(|| format!("parse failed for page `{}`", page))?;
 
     fn get_localized_string(i18n: &DLsiteProductI18nString) -> Result<String, Error> {
         i18n.japanese
@@ -98,7 +133,7 @@ pub async fn get_products(
             .or_else(|| i18n.taiwanese.as_ref())
             .or_else(|| i18n.chinese.as_ref())
             .cloned()
-            .ok_or_else(|| anyhow!("localized string not found"))
+            .ok_or_else(|| anyhow!("localized string is empty"))
     }
 
     let product_list = product_list
@@ -106,17 +141,22 @@ pub async fn get_products(
         .into_iter()
         .map(|product| -> Result<_, Error> {
             Ok(DLsiteProduct {
-                id: product.id,
+                id: product.id.clone(),
                 ty: product.ty,
                 age: product.age,
-                title: get_localized_string(&product.title)?,
+                title: get_localized_string(&product.title)
+                    .with_context(|| format!("mapping `title` of product id `{}`", product.id))?,
                 thumbnail: product.icon.main,
                 group_id: product.group.id,
-                group_name: get_localized_string(&product.group.name)?,
+                group_name: get_localized_string(&product.group.name).with_context(|| {
+                    format!("mapping `group_name` of product id `{}`", product.id)
+                })?,
                 registered_at: product.registered_at,
             })
         })
-        .collect::<Result<Vec<_>, Error>>()?;
+        .collect::<Result<Vec<_>, Error>>()
+        .with_context(|| format!("[get_products]"))
+        .with_context(|| format!("mapping failed for page `{}`", page))?;
 
     Ok(product_list)
 }
@@ -164,15 +204,23 @@ pub async fn get_product_without_group_name(
     );
     let res = reqwest::get(&url)
         .await
+        .with_context(|| format!("[get_product_without_group_name]"))
         .with_context(|| format!("request failed for product id `{}` with url: `{}`", id, url))?;
     let map = res
         .json::<HashMap<String, DLsiteProductFromNonOwnerApi>>()
         .await
+        .with_context(|| format!("[get_product_without_group_name]"))
         .with_context(|| format!("parse failed for product id `{}`", id))?;
 
     map.get(id)
         .cloned()
-        .ok_or_else(|| anyhow::anyhow!("product not found"))
+        .ok_or_else(|| {
+            anyhow!(
+                "unable to get product without group name; `{}` key not found in response",
+                id
+            )
+        })
+        .with_context(|| format!("[get_product_without_group_name]"))
 }
 
 pub async fn get_product_group_name(id: &str) -> Result<String, Error> {
@@ -180,15 +228,28 @@ pub async fn get_product_group_name(id: &str) -> Result<String, Error> {
         "https://www.dlsite.com/maniax/work/=/product_id/{}.html",
         id
     );
-    let content = reqwest::get(&url).await?.text().await?;
+    let res = reqwest::get(&url)
+        .await
+        .with_context(|| format!("[get_product_group_name]"))
+        .with_context(|| format!("request failed for product id `{}` with url: `{}`", id, url))?;
+    let content = res
+        .text()
+        .await
+        .with_context(|| format!("[get_product_group_name]"))
+        .with_context(|| format!("parse failed for product id `{}`", id))?;
     let html = scraper::Html::parse_document(&content);
 
-    let group_name = html
+    let group_name_element = html
         .select(&GROUP_NAME_SELECTOR)
         .next()
-        .ok_or_else(|| anyhow::anyhow!("group name not found"))?
-        .text()
-        .collect::<String>();
+        .ok_or_else(|| {
+            anyhow!(
+            "unable to find DOM that contains group name; no matching DOM with the selector: `{}`",
+            *GROUP_NAME_SELECTOR_STR
+        )
+        })
+        .with_context(|| format!("[get_product_group_name]"))?;
+    let group_name = group_name_element.text().collect::<String>();
 
     Ok(group_name)
 }
