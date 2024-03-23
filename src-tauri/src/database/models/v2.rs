@@ -33,3 +33,16 @@ pub struct Product {
     pub group_name: String,
     pub registered_at: DateTime<Utc>,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CreatingProduct<'a> {
+    pub id: &'a str,
+    pub account_id: i64,
+    pub ty: DLsiteProductType,
+    pub age: DLsiteProductAgeCategory,
+    pub title: &'a str,
+    pub thumbnail: &'a str,
+    pub group_id: &'a str,
+    pub group_name: &'a str,
+    pub registered_at: DateTime<Utc>,
+}

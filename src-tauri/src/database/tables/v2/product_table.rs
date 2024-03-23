@@ -1,6 +1,9 @@
 use crate::{
-    application_error::{Error, Result},
-    database::{models::v2::Product, Table},
+    application_error::Result,
+    database::{
+        models::v2::{CreatingProduct, Product},
+        Table,
+    },
     dlsite::v2::{DLsiteProductAgeCategory, DLsiteProductType},
     use_application,
 };
@@ -46,7 +49,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS v2_indexed_products USING fts5 (
 
 impl ProductTable {
     /// Inserts many products into the database.
-    pub fn insert_many(products: impl Iterator<Item = Product>) -> Result<()> {
+    pub fn insert_many<'a>(products: impl Iterator<Item = CreatingProduct<'a>>) -> Result<()> {
         let mut connection = use_application().connection();
         let tx = connection.transaction()?;
         {
