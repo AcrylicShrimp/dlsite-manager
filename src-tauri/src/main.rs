@@ -6,6 +6,7 @@
 mod application;
 mod application_error;
 mod command;
+mod database;
 mod dlsite;
 mod menu;
 mod storage;

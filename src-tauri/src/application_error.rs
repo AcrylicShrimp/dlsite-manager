@@ -14,6 +14,11 @@ pub enum ApplicationError {
         #[from]
         rusqlite_error: rusqlite::Error,
     },
+    #[error("database conversion error: {serde_rusqlite_error}")]
+    DatabaseConversionError {
+        #[from]
+        serde_rusqlite_error: serde_rusqlite::Error,
+    },
     #[error("created item is not accessible")]
     DatabaseCreatedItemNotAccessible,
     #[error("updated item is not accessible")]
