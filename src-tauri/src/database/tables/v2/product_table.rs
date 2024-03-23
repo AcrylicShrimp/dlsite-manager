@@ -118,7 +118,7 @@ INSERT INTO v2_indexed_products (
         Ok(())
     }
 
-    pub fn list_many(
+    pub fn get_many(
         query: Option<&str>,
         ty: Option<DLsiteProductType>,
         age: Option<DLsiteProductAgeCategory>,
