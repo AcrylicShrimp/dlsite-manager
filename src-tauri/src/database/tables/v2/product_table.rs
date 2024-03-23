@@ -45,6 +45,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS v2_indexed_products USING fts5 (
 }
 
 impl ProductTable {
+    /// Inserts many products into the database.
     pub fn insert_many(products: impl Iterator<Item = Product>) -> Result<()> {
         let mut connection = use_application().connection();
         let tx = connection.transaction()?;
@@ -118,6 +119,7 @@ INSERT INTO v2_indexed_products (
         Ok(())
     }
 
+    /// Retrieves products from the database with optional filters.
     pub fn get_many(
         query: Option<&str>,
         ty: Option<DLsiteProductType>,
