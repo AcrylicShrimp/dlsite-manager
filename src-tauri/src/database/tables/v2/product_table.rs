@@ -183,8 +183,11 @@ ORDER BY {}
             .as_str(),
         )?;
 
+        let columns = columns_from_statement(&stmt);
         let products = stmt
-            .query_and_then(params.as_slice(), from_row::<Product>)?
+            .query_and_then(params.as_slice(), |row| {
+                from_row_with_columns::<Product>(row, &columns)
+            })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(products)
     }
