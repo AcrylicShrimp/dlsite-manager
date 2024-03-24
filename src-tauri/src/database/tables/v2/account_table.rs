@@ -57,6 +57,7 @@ INSERT INTO v2_accounts (
         Ok(id)
     }
 
+    /// Retrieves all accounts from the database.
     pub fn get_all() -> Result<Vec<Account>> {
         let connection = use_application().connection();
         let mut stmt = connection.prepare(
