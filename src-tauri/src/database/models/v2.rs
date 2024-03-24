@@ -1,6 +1,7 @@
 use crate::dlsite::v2::{DLsiteProductAgeCategory, DLsiteProductType};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Account {
@@ -45,4 +46,17 @@ pub struct CreatingProduct<'a> {
     pub group_id: &'a str,
     pub group_name: &'a str,
     pub registered_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Setting {
+    pub download_root_dir: Option<PathBuf>,
+}
+
+impl Default for Setting {
+    fn default() -> Self {
+        Self {
+            download_root_dir: None,
+        }
+    }
 }
