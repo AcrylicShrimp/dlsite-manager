@@ -25,6 +25,20 @@ pub struct CreatingAccount<'a> {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Product {
     pub id: String,
+    pub order: i64,
+    pub account_id: i64,
+    pub ty: DLsiteProductType,
+    pub age: DLsiteProductAgeCategory,
+    pub title: String,
+    pub thumbnail: String,
+    pub group_id: String,
+    pub group_name: String,
+    pub registered_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CreatingProduct {
+    pub id: String,
     pub account_id: i64,
     pub ty: DLsiteProductType,
     pub age: DLsiteProductAgeCategory,

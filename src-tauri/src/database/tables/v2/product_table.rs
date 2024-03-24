@@ -1,6 +1,9 @@
 use crate::{
     application_error::Result,
-    database::{models::v2::Product, Table},
+    database::{
+        models::v2::{CreatingProduct, Product},
+        Table,
+    },
     dlsite::v2::{DLsiteProductAgeCategory, DLsiteProductType},
     use_application,
 };
@@ -13,6 +16,7 @@ impl Table for ProductTable {
         r#"
 CREATE TABLE IF NOT EXISTS v2_products (
     id TEXT NOT NULL PRIMARY KEY,
+    order INTEGER UNIQUE,
     account_id INTEGER NOT NULL,
     ty TEXT NOT NULL,
     age TEXT NOT NULL,
@@ -21,16 +25,14 @@ CREATE TABLE IF NOT EXISTS v2_products (
     group_id TEXT NOT NULL,
     group_name TEXT NOT NULL,
     registered_at INTEGER NOT NULL,
-    created_at INTEGER NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at INTEGER NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     FOREIGN KEY(account_id) REFERENCES v2_accounts(id) ON UPDATE CASCADE ON DELETE CASCADE
 );
 
-CREATE TRIGGER IF NOT EXISTS v2_products_updated_at AFTER UPDATE ON v2_products
-WHEN NEW.updated_at = OLD.updated_at
+CREATE TRIGGER IF NOT EXISTS v2_products_order AFTER INSERT ON v2_products
+WHEN NEW.order IS NULL
 BEGIN
-    UPDATE products SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+    UPDATE v2_products SET order = (SELECT IFNULL(MAX(order), 0) + 1 FROM v2_products) WHERE id = NEW.id;
 END;
 
 CREATE VIRTUAL TABLE IF NOT EXISTS v2_indexed_products USING fts5 (
@@ -46,7 +48,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS v2_indexed_products USING fts5 (
 
 impl ProductTable {
     /// Inserts many products into the database.
-    pub fn insert_many<'a>(products: impl Iterator<Item = &'a Product>) -> Result<()> {
+    pub fn insert_many<'a>(products: impl Iterator<Item = &'a CreatingProduct>) -> Result<()> {
         let mut connection = use_application().connection();
         let tx = connection.transaction()?;
         {
@@ -104,10 +106,10 @@ INSERT INTO v2_indexed_products (
             )?;
 
             for product in products {
-                insert_stmt.execute(to_params_named(product)?.to_slice().as_slice())?;
+                insert_stmt.execute(to_params_named(&product)?.to_slice().as_slice())?;
                 index_stmt.execute(
                     to_params_named_with_fields(
-                        product,
+                        &product,
                         &["id", "title", "group_id", "group_name"],
                     )?
                     .to_slice()
