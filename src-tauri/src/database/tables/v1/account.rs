@@ -1,56 +1,13 @@
 use crate::{
     application::use_application,
     application_error::{Error, Result},
+    database::models::v1::{Account, CreatedAccount, UpdatedAccount},
 };
-use chrono::{DateTime, Utc};
-use rusqlite::{params, OptionalExtension, Row};
-use serde::{Deserialize, Serialize};
+use rusqlite::{params, OptionalExtension};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Account {
-    pub id: i64,
-    pub username: String,
-    pub password: String,
-    pub memo: Option<String>,
-    pub product_count: i32,
-    pub cookie_json: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
+pub struct AccountTable;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreatedAccount {
-    pub username: String,
-    pub password: String,
-    pub memo: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdatedAccount {
-    pub id: i64,
-    pub username: String,
-    pub password: String,
-    pub memo: Option<String>,
-}
-
-impl<'stmt> TryFrom<&'stmt Row<'stmt>> for Account {
-    type Error = rusqlite::Error;
-
-    fn try_from(row: &'stmt Row<'stmt>) -> std::result::Result<Self, Self::Error> {
-        Ok(Self {
-            id: row.get("id")?,
-            username: row.get("username")?,
-            password: row.get("password")?,
-            memo: row.get("memo")?,
-            product_count: row.get("product_count")?,
-            cookie_json: row.get("cookie_json")?,
-            created_at: row.get("created_at")?,
-            updated_at: row.get("updated_at")?,
-        })
-    }
-}
-
-impl Account {
+impl AccountTable {
     pub fn get_ddl() -> &'static str {
         "
 CREATE TABLE IF NOT EXISTS accounts (
@@ -72,7 +29,7 @@ END;
         "
     }
 
-    pub fn list_all() -> Result<Vec<Self>> {
+    pub fn list_all() -> Result<Vec<Account>> {
         Ok(use_application()
             .connection()
             .prepare(
@@ -90,7 +47,7 @@ FROM accounts
 ORDER BY id ASC
         ",
             )?
-            .query_map((), |row| Self::try_from(row))?
+            .query_map((), |row| Account::try_from(row))?
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
@@ -127,7 +84,7 @@ FROM accounts
 WHERE id = ?1
         ",
             )?
-            .query_row(params![id], |row| Self::try_from(row))
+            .query_row(params![id], |row| Account::try_from(row))
             .optional()?)
     }
 

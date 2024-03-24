@@ -1,26 +1,11 @@
-use crate::{application::use_application, application_error::Result};
-use rusqlite::{params, OptionalExtension, Row};
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use crate::{
+    application::use_application, application_error::Result, database::models::v1::Setting,
+};
+use rusqlite::{params, OptionalExtension};
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
-pub struct Setting {
-    pub download_root_dir: Option<PathBuf>,
-}
+pub struct SettingTable;
 
-impl<'stmt> TryFrom<&'stmt Row<'stmt>> for Setting {
-    type Error = rusqlite::Error;
-
-    fn try_from(row: &'stmt Row<'stmt>) -> std::result::Result<Self, Self::Error> {
-        Ok(Self {
-            download_root_dir: row
-                .get::<_, Option<String>>("download_root_dir")?
-                .map(|path| PathBuf::from(path)),
-        })
-    }
-}
-
-impl Setting {
+impl SettingTable {
     pub fn get_ddl() -> &'static str {
         "
 CREATE TABLE IF NOT EXISTS settings (
@@ -28,7 +13,7 @@ CREATE TABLE IF NOT EXISTS settings (
 );"
     }
 
-    pub fn get() -> Result<Self> {
+    pub fn get() -> Result<Setting> {
         Ok(use_application()
             .connection()
             .prepare(
@@ -37,12 +22,12 @@ SELECT
     download_root_dir
 FROM settings;",
             )?
-            .query_row((), |row| Self::try_from(row))
+            .query_row((), |row| Setting::try_from(row))
             .optional()?
             .unwrap_or_default())
     }
 
-    pub fn set(setting: Self) -> Result<()> {
+    pub fn set(setting: Setting) -> Result<()> {
         let connection = use_application().connection();
         connection.execute(
             "

@@ -1,13 +1,12 @@
-use crate::{application::use_application, application_error::Result};
+use crate::{
+    application::use_application, application_error::Result,
+    database::models::v1::DisplayLanguageSetting,
+};
 use rusqlite::params;
-use serde::{Deserialize, Serialize};
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
-pub struct DisplayLanguageSetting {
-    pub languages: Vec<String>,
-}
+pub struct DisplayLanguageSettingTable;
 
-impl DisplayLanguageSetting {
+impl DisplayLanguageSettingTable {
     pub fn get_ddl() -> &'static str {
         "
 CREATE TABLE IF NOT EXISTS display_language_settings (
@@ -16,7 +15,7 @@ CREATE TABLE IF NOT EXISTS display_language_settings (
 );"
     }
 
-    pub fn get() -> Result<Self> {
+    pub fn get() -> Result<DisplayLanguageSetting> {
         let mut languages = use_application()
             .connection()
             .prepare(
@@ -39,10 +38,10 @@ ORDER BY order_index ASC;",
             ];
         }
 
-        Ok(Self { languages })
+        Ok(DisplayLanguageSetting { languages })
     }
 
-    pub fn set(setting: &Self) -> Result<()> {
+    pub fn set(setting: &DisplayLanguageSetting) -> Result<()> {
         let mut connection = use_application().connection();
         let tx = connection.transaction()?;
         {

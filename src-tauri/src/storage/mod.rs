@@ -1,16 +1,12 @@
-use self::{
-    account::Account, display_language_setting::DisplayLanguageSetting,
-    latest_product_query::LatestProductQuery, product::Product, setting::Setting,
+use crate::{
+    application_error::Result,
+    database::tables::v1::{
+        AccountTable, DisplayLanguageSettingTable, LatestProductQueryTable, ProductTable,
+        SettingTable,
+    },
 };
-use crate::application_error::Result;
 use rusqlite::Connection;
 use std::path::Path;
-
-pub mod account;
-pub mod display_language_setting;
-pub mod latest_product_query;
-pub mod product;
-pub mod setting;
 
 pub struct Storage {
     connection: Connection,
@@ -41,11 +37,11 @@ BEGIN;
 {}
 COMMIT;
 ",
-            Setting::get_ddl(),
-            DisplayLanguageSetting::get_ddl(),
-            Account::get_ddl(),
-            Product::get_ddl(),
-            LatestProductQuery::get_ddl(),
+            SettingTable::get_ddl(),
+            DisplayLanguageSettingTable::get_ddl(),
+            AccountTable::get_ddl(),
+            ProductTable::get_ddl(),
+            LatestProductQueryTable::get_ddl(),
         ))?;
 
         Ok(())

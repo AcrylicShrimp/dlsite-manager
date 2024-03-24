@@ -1,8 +1,11 @@
 use super::get_product_download_path;
 use crate::{
     application_error::{Error, Result},
+    database::{
+        models::v1::{Product, ProductDownload, ProductQuery},
+        tables::v1::ProductTable,
+    },
     dlsite::{download_product, remove_downloaded_product},
-    storage::product::{Product, ProductDownload, ProductQuery},
     window::{MainWindow, WindowInfoProvider},
 };
 use serde::Serialize;
@@ -22,7 +25,7 @@ pub struct ProductDownloadEndEvent<'s> {
 
 #[tauri::command]
 pub async fn product_list_products(query: Option<ProductQuery>) -> Result<Vec<Product>> {
-    Ok(Product::list_all(&query.unwrap_or_default()).unwrap())
+    Ok(ProductTable::list_all(&query.unwrap_or_default()).unwrap())
 }
 
 #[tauri::command]
@@ -59,7 +62,7 @@ pub async fn product_download_product<R: Runtime>(
     )
     .await
     {
-        Ok(path) => Some(Product::insert_download(
+        Ok(path) => Some(ProductTable::insert_download(
             &product_id,
             path.to_str().unwrap(),
         )?),
@@ -87,7 +90,7 @@ pub async fn product_open_downloaded_folder<R: Runtime>(
     app_handle: tauri::AppHandle<R>,
     product_id: String,
 ) -> Result<()> {
-    let path = if let Some(download) = Product::get_one_download(&product_id)? {
+    let path = if let Some(download) = ProductTable::get_one_download(&product_id)? {
         download.path
     } else {
         if let Some(window) = app_handle.get_window(&MainWindow.label()) {
@@ -98,7 +101,7 @@ pub async fn product_open_downloaded_folder<R: Runtime>(
     };
 
     if !path.is_dir() {
-        Product::remove_one_download(&product_id)?;
+        ProductTable::remove_one_download(&product_id)?;
 
         if let Some(window) = app_handle.get_window(&MainWindow.label()) {
             window.emit("download-invalid", &product_id)?;
@@ -121,7 +124,7 @@ pub async fn product_remove_downloaded_product<R: Runtime>(
     let path = get_product_download_path(&app_handle)?;
 
     remove_downloaded_product(&product_id, path).ok();
-    Product::remove_one_download(&product_id)?;
+    ProductTable::remove_one_download(&product_id)?;
 
     if let Some(window) = app_handle.get_window(&MainWindow.label()) {
         window.emit("download-invalid", &product_id)?;

@@ -1,4 +1,4 @@
-use crate::{application_error::Result, storage::setting::Setting};
+use crate::{application_error::Result, database::tables::v1::SettingTable};
 use std::path::PathBuf;
 use tauri::{api::path::download_dir, generate_handler, Builder, Runtime};
 
@@ -46,7 +46,7 @@ where
 }
 
 pub fn get_product_download_path<R: Runtime>(app_handle: &tauri::AppHandle<R>) -> Result<PathBuf> {
-    let setting = Setting::get()?;
+    let setting = SettingTable::get()?;
     Ok(setting.download_root_dir.unwrap_or_else(|| {
         download_dir()
             .unwrap_or_else(|| app_handle.path_resolver().app_local_data_dir().unwrap())

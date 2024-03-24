@@ -3,11 +3,11 @@ pub mod v2;
 
 use crate::{
     application_error::{Error, Result},
-    dlsite::api::DLsiteProductDetail,
-    storage::{
-        account::Account,
-        product::{InsertedProduct, Product},
+    database::{
+        models::v1::InsertedProduct,
+        tables::v1::{AccountTable, ProductTable},
     },
+    dlsite::api::DLsiteProductDetail,
 };
 use reqwest::ClientBuilder;
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
@@ -24,7 +24,8 @@ static PAGE_LIMIT: usize = 50;
 
 macro_rules! with_cookie_store {
     ($account_id:ident, $f:ident) => {
-        let cookie_json = if let Some(cookie_json) = Account::get_one_cookie_json($account_id)? {
+        let cookie_json = if let Some(cookie_json) = AccountTable::get_one_cookie_json($account_id)?
+        {
             cookie_json
         } else {
             return Err(Error::AccountNotExists { $account_id });
@@ -33,7 +34,7 @@ macro_rules! with_cookie_store {
         if let Ok(cookie_store) = CookieStore::load_json(cookie_json.as_bytes()) {
             match $f(Arc::new(CookieStoreMutex::new(cookie_store))).await {
                 Ok(result) => {
-                    Account::update_one_cookie_json($account_id, cookie_json)?;
+                    AccountTable::update_one_cookie_json($account_id, cookie_json)?;
                     return Ok(result);
                 }
                 Err(err) => match err {
@@ -44,7 +45,7 @@ macro_rules! with_cookie_store {
         }
 
         let (username, password) = if let Some(username_and_password) =
-            Account::get_one_username_and_password($account_id)?
+            AccountTable::get_one_username_and_password($account_id)?
         {
             username_and_password
         } else {
@@ -54,7 +55,7 @@ macro_rules! with_cookie_store {
 
         match $f(cookie_store.clone()).await {
             Ok(result) => {
-                Account::update_one_cookie_json($account_id, {
+                AccountTable::update_one_cookie_json($account_id, {
                     let mut writer = BufWriter::new(Vec::new());
                     cookie_store
                         .lock()
@@ -80,7 +81,7 @@ async fn get_product_count_and_cookie_store(
         cookie_store: Arc<CookieStoreMutex>,
     ) -> Result<(usize, Arc<CookieStoreMutex>)> {
         let product_count = api::get_product_count(cookie_store.clone()).await?;
-        Account::update_one_product_count(account_id, product_count as i32)?;
+        AccountTable::update_one_product_count(account_id, product_count as i32)?;
         Ok((product_count, cookie_store))
     }
 
@@ -109,14 +110,14 @@ async fn get_product_details_and_cookie_store(
 }
 
 pub async fn update_product(mut on_progress: impl FnMut(usize, usize) -> Result<()>) -> Result<()> {
-    let account_ids = Account::list_all_id()?;
+    let account_ids = AccountTable::list_all_id()?;
     let mut progress = 0;
     let mut total_progress = 0;
     let mut details = Vec::with_capacity(account_ids.len());
 
     for account_id in account_ids {
         let prev_product_count =
-            Account::get_one_product_count(account_id)?.unwrap_or_else(|| 0) as usize;
+            AccountTable::get_one_product_count(account_id)?.unwrap_or_else(|| 0) as usize;
         let (new_product_count, cookie_store) =
             match get_product_count_and_cookie_store(account_id).await {
                 Ok(product_count_and_cookie_store) => product_count_and_cookie_store,
@@ -166,7 +167,7 @@ pub async fn update_product(mut on_progress: impl FnMut(usize, usize) -> Result<
 
             on_progress(progress, total_progress)?;
 
-            Product::insert_all(products.into_iter().map(|product| InsertedProduct {
+            ProductTable::insert_all(products.into_iter().map(|product| InsertedProduct {
                 account_id,
                 product,
             }))?;
@@ -179,9 +180,9 @@ pub async fn update_product(mut on_progress: impl FnMut(usize, usize) -> Result<
 pub async fn refresh_product(
     mut on_progress: impl FnMut(usize, usize) -> Result<()>,
 ) -> Result<()> {
-    Product::remove_all()?;
+    ProductTable::remove_all()?;
 
-    let account_ids = Account::list_all_id()?;
+    let account_ids = AccountTable::list_all_id()?;
     let mut progress = 0;
     let mut total_progress = 0;
     let mut details = Vec::with_capacity(account_ids.len());
@@ -231,7 +232,7 @@ pub async fn refresh_product(
 
             on_progress(progress, total_progress)?;
 
-            Product::insert_all(products.into_iter().map(|product| InsertedProduct {
+            ProductTable::insert_all(products.into_iter().map(|product| InsertedProduct {
                 account_id,
                 product,
             }))?;
