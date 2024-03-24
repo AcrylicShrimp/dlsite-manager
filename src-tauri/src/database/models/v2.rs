@@ -11,8 +11,6 @@ pub struct Account {
     pub memo: Option<String>,
     pub product_count: i32,
     pub cookie_json: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

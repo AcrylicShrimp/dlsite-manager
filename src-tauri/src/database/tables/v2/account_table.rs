@@ -20,16 +20,8 @@ CREATE TABLE IF NOT EXISTS v2_accounts (
     password TEXT NOT NULL,
     memo TEXT,
     product_count INTEGER NOT NULL DEFAULT 0,
-    cookie_json TEXT NOT NULL DEFAULT '{}',
-    created_at INTEGER NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at INTEGER NOT NULL DEFAULT CURRENT_TIMESTAMP
+    cookie_json TEXT NOT NULL DEFAULT '{}'
 );
-
-CREATE TRIGGER IF NOT EXISTS v2_accounts_updated_at AFTER UPDATE ON v2_accounts
-WHEN NEW.updated_at = OLD.updated_at
-BEGIN
-    UPDATE v2_accounts SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
-END;
 "#
     }
 }
@@ -68,9 +60,7 @@ SELECT
     password,
     memo,
     product_count,
-    cookie_json,
-    created_at,
-    updated_at
+    cookie_json
 FROM v2_accounts
 ORDER BY id ASC
 "#,

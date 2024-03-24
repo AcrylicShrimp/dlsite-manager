@@ -82,8 +82,7 @@ INSERT INTO v2_products (
     thumbnail = excluded.thumbnail,
     group_id = excluded.group_id,
     group_name = excluded.group_name,
-    registered_at = excluded.registered_at,
-    updated_at = CURRENT_TIMESTAMP;
+    registered_at = excluded.registered_at
 "#,
             )?;
             let mut index_stmt = tx.prepare(
