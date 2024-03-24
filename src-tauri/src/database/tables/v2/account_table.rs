@@ -49,7 +49,8 @@ INSERT INTO v2_accounts (
     :username,
     :password,
     :memo
-)"#,
+)
+"#,
         )?;
 
         let id = stmt.insert(to_params_named(&account)?.to_slice().as_slice())?;
