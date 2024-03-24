@@ -1,6 +1,6 @@
 use crate::{
     application_error::{Error, Result},
-    storage::Storage,
+    database::Database,
     window::{BuildableWindow, MainWindow},
 };
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
@@ -26,7 +26,7 @@ pub fn create_application(app: &App) -> Result<Arc<Application>> {
 
 pub struct Application {
     app_handle: AppHandle,
-    storage: Mutex<Option<Storage>>,
+    database: Mutex<Option<Database>>,
     is_updating_product: Mutex<bool>,
 }
 
@@ -42,7 +42,7 @@ impl Application {
 
         Ok(Self {
             app_handle: app.handle(),
-            storage: Mutex::new(Some(Storage::load(app_dir.join("database.db"))?)),
+            database: Mutex::new(Some(Database::load(app_dir.join("database.db"))?)),
             is_updating_product: Mutex::new(false),
         })
     }
@@ -52,7 +52,7 @@ impl Application {
     }
 
     pub fn connection(&self) -> MappedMutexGuard<Connection> {
-        MutexGuard::map(self.storage.lock(), |storage| {
+        MutexGuard::map(self.database.lock(), |storage| {
             storage.as_mut().unwrap().connection_mut()
         })
     }
@@ -62,7 +62,7 @@ impl Application {
     }
 
     pub fn init(&self) -> Result<()> {
-        self.storage.lock().as_ref().unwrap().prepare()?;
+        self.database.lock().as_ref().unwrap().prepare()?;
         Ok(())
     }
 
@@ -72,7 +72,7 @@ impl Application {
     }
 
     pub fn drop_storage(&self) -> Result<()> {
-        if let Some(storage) = self.storage.lock().take() {
+        if let Some(storage) = self.database.lock().take() {
             storage.drop()?;
         }
         Ok(())
