@@ -16,7 +16,7 @@ impl Table for ProductTable {
         r#"
 CREATE TABLE IF NOT EXISTS v2_products (
     id TEXT NOT NULL PRIMARY KEY,
-    order INTEGER UNIQUE,
+    order_index INTEGER UNIQUE,
     account_id INTEGER,
     ty TEXT NOT NULL,
     age TEXT NOT NULL,
@@ -29,10 +29,10 @@ CREATE TABLE IF NOT EXISTS v2_products (
     FOREIGN KEY(account_id) REFERENCES v2_accounts(id) ON UPDATE CASCADE ON DELETE CASCADE
 );
 
-CREATE TRIGGER IF NOT EXISTS v2_products_order AFTER INSERT ON v2_products
-WHEN NEW.order IS NULL
+CREATE TRIGGER IF NOT EXISTS v2_products_order_index AFTER INSERT ON v2_products
+WHEN NEW.order_index IS NULL
 BEGIN
-    UPDATE v2_products SET order = (SELECT IFNULL(MAX(order), 0) + 1 FROM v2_products) WHERE id = NEW.id;
+    UPDATE v2_products SET order_index = (SELECT IFNULL(MAX(order_index), 0) + 1 FROM v2_products) WHERE id = NEW.id;
 END;
 
 CREATE VIRTUAL TABLE IF NOT EXISTS v2_indexed_products USING fts5 (

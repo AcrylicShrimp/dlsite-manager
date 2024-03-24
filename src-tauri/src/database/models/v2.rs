@@ -23,7 +23,7 @@ pub struct CreatingAccount<'a> {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Product {
     pub id: String,
-    pub order: i64,
+    pub order_index: i64,
     /// it can be `NULL` if the product is not owned by any account (found in local)
     pub account_id: Option<i64>,
     pub ty: DLsiteProductType,
