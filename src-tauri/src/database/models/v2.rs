@@ -50,6 +50,12 @@ pub struct CreatingProduct {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ProductDownload {
+    pub product_id: String,
+    pub path: PathBuf,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Setting {
     pub download_root_dir: Option<PathBuf>,
 }
