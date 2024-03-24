@@ -3,7 +3,7 @@ use crate::{
     application_error::Result,
     database::{
         models::v2::{Account, CreatingAccount},
-        Table,
+        tables::Table,
     },
 };
 use rusqlite::{named_params, OptionalExtension};

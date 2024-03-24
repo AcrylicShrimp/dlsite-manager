@@ -2,7 +2,7 @@ use crate::{
     application_error::Result,
     database::{
         models::v2::{CreatingProduct, Product},
-        Table,
+        tables::Table,
     },
     dlsite::v2::{DLsiteProductAgeCategory, DLsiteProductType},
     use_application,

@@ -1,7 +1,7 @@
 use crate::{
     application::use_application,
     application_error::Result,
-    database::{models::v2::ProductDownload, Table},
+    database::{models::v2::ProductDownload, tables::Table},
 };
 use rusqlite::types::Value;
 use serde_rusqlite::*;
