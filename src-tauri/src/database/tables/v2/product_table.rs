@@ -17,7 +17,7 @@ impl Table for ProductTable {
 CREATE TABLE IF NOT EXISTS v2_products (
     id TEXT NOT NULL PRIMARY KEY,
     order INTEGER UNIQUE,
-    account_id INTEGER NOT NULL,
+    account_id INTEGER,
     ty TEXT NOT NULL,
     age TEXT NOT NULL,
     title TEXT NOT NULL,
