@@ -3,10 +3,7 @@ pub mod v2;
 
 use crate::{
     application_error::{Error, Result},
-    database::{
-        models::v1::InsertedProduct,
-        tables::v1::{AccountTable, ProductTable},
-    },
+    database::tables::v2::{AccountTable, ProductTable},
     dlsite::api::DLsiteProductDetail,
 };
 use reqwest::ClientBuilder;
@@ -24,17 +21,16 @@ static PAGE_LIMIT: usize = 50;
 
 macro_rules! with_cookie_store {
     ($account_id:ident, $f:ident) => {
-        let cookie_json = if let Some(cookie_json) = AccountTable::get_one_cookie_json($account_id)?
-        {
-            cookie_json
-        } else {
-            return Err(Error::AccountNotExists { $account_id });
+        let account = AccountTable::get_one($account_id)?;
+        let account = match account {
+            Some(account) => account,
+            None => return Err(Error::AccountNotExists { $account_id }),
         };
 
-        if let Ok(cookie_store) = CookieStore::load_json(cookie_json.as_bytes()) {
+        if let Ok(cookie_store) = CookieStore::load_json(account.cookie_json.as_bytes()) {
             match $f(Arc::new(CookieStoreMutex::new(cookie_store))).await {
                 Ok(result) => {
-                    AccountTable::update_one_cookie_json($account_id, cookie_json)?;
+                    AccountTable::update_one_cookie_json($account_id, &account.cookie_json)?;
                     return Ok(result);
                 }
                 Err(err) => match err {
@@ -44,14 +40,7 @@ macro_rules! with_cookie_store {
             }
         }
 
-        let (username, password) = if let Some(username_and_password) =
-            AccountTable::get_one_username_and_password($account_id)?
-        {
-            username_and_password
-        } else {
-            return Err(Error::AccountNotExists { $account_id });
-        };
-        let cookie_store = api::login(username, password).await?;
+        let cookie_store = api::login(&account.username, &account.password).await?;
 
         match $f(cookie_store.clone()).await {
             Ok(result) => {
@@ -64,7 +53,7 @@ macro_rules! with_cookie_store {
                         .map_err(|err| Error::ReqwestCookieStoreError {
                             reqwest_cookie_store_error: err,
                         })?;
-                    String::from_utf8(writer.into_inner().unwrap()).unwrap()
+                    std::str::from_utf8(&writer.into_inner().unwrap()).unwrap()
                 })?;
                 return Ok(result);
             }
@@ -110,16 +99,15 @@ async fn get_product_details_and_cookie_store(
 }
 
 pub async fn update_product(mut on_progress: impl FnMut(usize, usize) -> Result<()>) -> Result<()> {
-    let account_ids = AccountTable::list_all_id()?;
+    let accounts = AccountTable::get_all()?;
     let mut progress = 0;
     let mut total_progress = 0;
-    let mut details = Vec::with_capacity(account_ids.len());
+    let mut details = Vec::with_capacity(accounts.len());
 
-    for account_id in account_ids {
-        let prev_product_count =
-            AccountTable::get_one_product_count(account_id)?.unwrap_or_else(|| 0) as usize;
+    for account in &accounts {
+        let prev_product_count = account.product_count as usize;
         let (new_product_count, cookie_store) =
-            match get_product_count_and_cookie_store(account_id).await {
+            match get_product_count_and_cookie_store(account.id).await {
                 Ok(product_count_and_cookie_store) => product_count_and_cookie_store,
                 Err(err) => match err {
                     Error::DLsiteNotAuthenticated => continue,
@@ -133,7 +121,7 @@ pub async fn update_product(mut on_progress: impl FnMut(usize, usize) -> Result<
 
         total_progress += new_product_count - prev_product_count;
         details.push((
-            account_id,
+            account.id,
             prev_product_count,
             new_product_count,
             cookie_store,
@@ -167,10 +155,13 @@ pub async fn update_product(mut on_progress: impl FnMut(usize, usize) -> Result<
 
             on_progress(progress, total_progress)?;
 
-            ProductTable::insert_all(products.into_iter().map(|product| InsertedProduct {
-                account_id,
-                product,
-            }))?;
+            // TODO: use v2 api.
+            // TODO: insert all products into the database.
+
+            // ProductTable::insert_all(products.into_iter().map(|product| InsertedProduct {
+            //     account_id,
+            //     product,
+            // }))?;
         }
     }
 
@@ -180,16 +171,16 @@ pub async fn update_product(mut on_progress: impl FnMut(usize, usize) -> Result<
 pub async fn refresh_product(
     mut on_progress: impl FnMut(usize, usize) -> Result<()>,
 ) -> Result<()> {
-    ProductTable::remove_all()?;
+    ProductTable::remove_many_owned()?;
 
-    let account_ids = AccountTable::list_all_id()?;
+    let accounts = AccountTable::get_all()?;
     let mut progress = 0;
     let mut total_progress = 0;
-    let mut details = Vec::with_capacity(account_ids.len());
+    let mut details = Vec::with_capacity(accounts.len());
 
-    for account_id in account_ids {
+    for account in accounts {
         let (new_product_count, cookie_store) =
-            match get_product_count_and_cookie_store(account_id).await {
+            match get_product_count_and_cookie_store(account.id).await {
                 Ok(product_count_and_cookie_store) => product_count_and_cookie_store,
                 Err(err) => match err {
                     Error::DLsiteNotAuthenticated => continue,
@@ -202,7 +193,7 @@ pub async fn refresh_product(
         }
 
         total_progress += new_product_count;
-        details.push((account_id, new_product_count, cookie_store));
+        details.push((account, new_product_count, cookie_store));
     }
 
     if total_progress == 0 {
@@ -232,10 +223,13 @@ pub async fn refresh_product(
 
             on_progress(progress, total_progress)?;
 
-            ProductTable::insert_all(products.into_iter().map(|product| InsertedProduct {
-                account_id,
-                product,
-            }))?;
+            // TODO: use v2 api.
+            // TODO: insert all products into the database.
+
+            // ProductTable::insert_all(products.into_iter().map(|product| InsertedProduct {
+            //     account_id,
+            //     product,
+            // }))?;
         }
     }
 

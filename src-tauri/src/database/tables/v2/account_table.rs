@@ -2,7 +2,7 @@ use crate::{
     application::use_application,
     application_error::Result,
     database::{
-        models::v2::{Account, CreatingAccount},
+        models::v2::{Account, CreatingAccount, UpdatingAccount},
         tables::Table,
     },
 };
@@ -100,7 +100,7 @@ WHERE id = :id
     }
 
     /// Updates a single account in the database.
-    pub fn update_one(id: i64, username: &str, password: &str, memo: Option<&str>) -> Result<()> {
+    pub fn update_one(account: UpdatingAccount) -> Result<()> {
         let connection = use_application().connection();
         let mut stmt = connection.prepare(
             r#"
@@ -114,10 +114,10 @@ WHERE id = :id
         )?;
 
         stmt.execute(named_params! {
-            ":id": id,
-            ":username": username,
-            ":password": password,
-            ":memo": memo
+            ":id": account.id,
+            ":username": account.username,
+            ":password": account.password,
+            ":memo": account.memo
         })?;
         Ok(())
     }

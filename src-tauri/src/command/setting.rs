@@ -1,21 +1,12 @@
 use crate::{
     application_error::Result,
-    database::{
-        models::v1::{DisplayLanguageSetting, Setting},
-        tables::v1::{DisplayLanguageSettingTable, SettingTable},
-    },
-    window::{MainWindow, WindowInfoProvider},
+    database::{models::v2::Setting, tables::v2::SettingTable},
 };
-use tauri::{api::dialog::blocking::FileDialogBuilder, Manager, Runtime, Window};
+use tauri::{api::dialog::blocking::FileDialogBuilder, Runtime, Window};
 
 #[tauri::command]
 pub async fn setting_get() -> Result<Setting> {
-    SettingTable::get()
-}
-
-#[tauri::command]
-pub async fn display_language_setting_get() -> Result<DisplayLanguageSetting> {
-    DisplayLanguageSettingTable::get()
+    Ok(SettingTable::get()?.unwrap_or_default())
 }
 
 #[tauri::command]
@@ -37,15 +28,8 @@ pub async fn setting_save_and_close<R: Runtime>(
     app_handle: tauri::AppHandle<R>,
     window: Window<R>,
     setting: Setting,
-    display_language_setting: DisplayLanguageSetting,
 ) -> Result<()> {
-    SettingTable::set(setting)?;
-    DisplayLanguageSettingTable::set(&display_language_setting)?;
+    SettingTable::insert(&setting)?;
     window.close()?;
-
-    if let Some(window) = app_handle.get_window(&MainWindow.label()) {
-        window.emit("display-language-changed", display_language_setting)?;
-    }
-
     Ok(())
 }

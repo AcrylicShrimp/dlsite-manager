@@ -21,6 +21,14 @@ pub struct CreatingAccount<'a> {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct UpdatingAccount<'a> {
+    pub id: i64,
+    pub username: &'a str,
+    pub password: &'a str,
+    pub memo: Option<&'a str>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Product {
     pub id: String,
     pub order_index: i64,

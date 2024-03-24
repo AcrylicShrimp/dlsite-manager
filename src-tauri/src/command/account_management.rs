@@ -1,8 +1,8 @@
 use crate::{
     application_error::{Error, Result},
     database::{
-        models::v1::{Account, CreatedAccount, UpdatedAccount},
-        tables::v1::AccountTable,
+        models::v2::{Account, CreatingAccount, UpdatingAccount},
+        tables::v2::AccountTable,
     },
     dlsite::api::{get_product_count, login},
     window::{AccountEditWindow, AccountManagementWindow, WindowInfoProvider},
@@ -11,7 +11,7 @@ use tauri::{Manager, Runtime, Window};
 
 #[tauri::command]
 pub fn account_management_list_accounts() -> Result<Vec<Account>> {
-    AccountTable::list_all()
+    AccountTable::get_all()
 }
 
 #[tauri::command]
@@ -23,9 +23,9 @@ pub fn account_management_get_account(account_id: i64) -> Result<Option<Account>
 pub fn account_management_add_account<R: Runtime>(
     app_handle: tauri::AppHandle<R>,
     window: Window<R>,
-    account: CreatedAccount,
+    account: CreatingAccount,
 ) -> Result<()> {
-    let account = AccountTable::create_one(account)?;
+    let account = AccountTable::insert_one(account)?;
 
     if let Some(window) = app_handle.get_window(&AccountManagementWindow.label()) {
         window.emit("add-account", account)?;
@@ -39,7 +39,7 @@ pub fn account_management_add_account<R: Runtime>(
 pub fn account_management_update_account<R: Runtime>(
     app_handle: tauri::AppHandle<R>,
     window: Window<R>,
-    account: UpdatedAccount,
+    account: UpdatingAccount,
 ) -> Result<()> {
     let account = AccountTable::update_one(account)?;
 

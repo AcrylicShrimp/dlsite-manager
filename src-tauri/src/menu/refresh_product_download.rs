@@ -2,7 +2,7 @@ use crate::{
     application::use_application,
     application_error::{ApplicationError, Result},
     command::get_product_download_path,
-    database::tables::v1::ProductTable,
+    database::tables::v2::ProductTable,
 };
 use std::fs::read_dir;
 
@@ -11,7 +11,7 @@ pub async fn refresh_product_download() -> Result<()> {
     let contents = read_dir(download_path)
         .map_err(|err| ApplicationError::ProductDownloadRefreshError { io_error: err })?;
 
-    ProductTable::remove_all_download()?;
+    ProductTable::remove_many_owned()?;
 
     for entry in contents {
         let entry =
@@ -39,7 +39,9 @@ pub async fn refresh_product_download() -> Result<()> {
             }
         };
 
-        ProductTable::insert_download(file_name, path)?;
+        // TODO: lookup the product from the API and insert it into the database if any.
+
+        // ProductTable::insert_download(file_name, path)?;
     }
 
     Ok(())

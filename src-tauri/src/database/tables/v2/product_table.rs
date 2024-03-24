@@ -194,4 +194,19 @@ ORDER BY {}
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(products)
     }
+
+    /// Removes many products from the database.
+    /// It does not remove the product which is not owned by any account.
+    pub fn remove_many_owned() -> Result<()> {
+        let connection = use_application().connection();
+        let mut stmt = connection.prepare(
+            r#"
+DELETE FROM v2_products
+WHERE account_id IS NOT NULL
+"#,
+        )?;
+
+        stmt.execute([])?;
+        Ok(())
+    }
 }

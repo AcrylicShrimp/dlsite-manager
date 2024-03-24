@@ -65,4 +65,38 @@ FROM v2_product_downloads WHERE product_id IN (
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(product_downloads)
     }
+
+    /// Retrieves a single product download from the database.
+    pub fn get_one(product_id: &str) -> Result<Option<ProductDownload>> {
+        let connection = use_application().connection();
+        let mut stmt = connection.prepare(
+            r#"
+SELECT
+    product_id,
+    path
+FROM v2_product_downloads
+WHERE product_id = :product_id
+"#,
+        )?;
+
+        let mut rows = stmt.query_and_then(&[(":product_id", &product_id)], |row| {
+            from_row::<ProductDownload>(row)
+        })?;
+        let product_download = rows.next().transpose()?;
+        Ok(product_download)
+    }
+
+    /// Removes a single product download from the database.
+    pub fn remove_one(product_id: &str) -> Result<()> {
+        let connection = use_application().connection();
+        let mut stmt = connection.prepare(
+            r#"
+DELETE FROM v2_product_downloads
+WHERE product_id = :product_id
+"#,
+        )?;
+
+        stmt.execute(&[(":product_id", &product_id)])?;
+        Ok(())
+    }
 }
