@@ -1,8 +1,9 @@
 pub mod models;
 pub mod tables;
 
-use self::tables::v1::{
-    AccountTable, DisplayLanguageSettingTable, LatestProductQueryTable, ProductTable, SettingTable,
+use self::tables::{
+    v2::{AccountTable, ProductDownloadTable, ProductTable, SettingTable},
+    Table,
 };
 use crate::application_error::Result;
 use rusqlite::Connection;
@@ -34,14 +35,12 @@ BEGIN;
 {}
 {}
 {}
-{}
 COMMIT;
 ",
             SettingTable::get_ddl(),
-            DisplayLanguageSettingTable::get_ddl(),
             AccountTable::get_ddl(),
             ProductTable::get_ddl(),
-            LatestProductQueryTable::get_ddl(),
+            ProductDownloadTable::get_ddl(),
         ))?;
 
         Ok(())
