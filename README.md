@@ -4,7 +4,7 @@ Easies way to enjoy the DLsite!
 
 ![main-image](./docs/img-list.png)
 
-## Major changes on `main` branch
+## 🚧 Major changes on `main` branch
 
 This project is preparing a **major update** on 'main' branch. So it may **not compile**.
 
