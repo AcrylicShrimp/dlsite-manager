@@ -32,6 +32,7 @@ thiserror = { version = "1" }
 zip-extract = { git = "https://github.com/AcrylicShrimp/zip-extract", tag="v1.2.0" }
 unrar = { version = "0.5" }
 tokio = { version = "1", features = ["full"] }
+futures = { version = "0.3" }
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

@@ -8,9 +8,21 @@ use super::{
 use anyhow::{anyhow, Context, Error};
 use chrono::{FixedOffset, NaiveDateTime, TimeZone};
 use lazy_static::lazy_static;
-use reqwest::ClientBuilder;
+use reqwest::{Client, ClientBuilder};
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+use tokio::{
+    fs::{create_dir_all, remove_dir_all, OpenOptions},
+    io::{AsyncWriteExt, BufWriter},
+};
 
 lazy_static! {
     static ref GROUP_NAME_SELECTOR_STR: &'static str = "#work_maker>tbody>tr>td>span>a";
@@ -230,4 +242,171 @@ pub async fn get_product_files(id: &str) -> Result<DLsiteProductFiles, Error> {
     }
 
     Ok(product_details_list.into_iter().next().unwrap())
+}
+
+pub async fn download_product_files(
+    cookie_store: Arc<CookieStoreMutex>,
+    id: &str,
+    product_files: &DLsiteProductFiles,
+    base_path: impl AsRef<Path>,
+    on_progress: impl Fn(u64, u64),
+) -> Result<(), Error> {
+    let total_file_size = product_files.files.iter().fold(0, |acc, detail| {
+        acc + detail.file_size.parse::<u64>().unwrap()
+    });
+    let file_urls = resolve_file_urls(id, product_files);
+    let target_path = prepare_target_path(id, base_path).await?;
+
+    let progress = AtomicU64::new(0);
+    let client = ClientBuilder::new()
+        .cookie_store(true)
+        .cookie_provider(cookie_store)
+        .build()?;
+
+    let on_chunk_received = |chunk_received| {
+        progress.fetch_add(chunk_received, Ordering::SeqCst);
+        on_progress(progress.load(Ordering::SeqCst), total_file_size);
+    };
+
+    let results =
+        futures::future::try_join_all(file_urls.iter().enumerate().map(|(index, file_url)| {
+            download_single_file(
+                &client,
+                file_url,
+                &target_path,
+                &product_files.files[index].file_name,
+                on_chunk_received,
+            )
+        }))
+        .await;
+
+    if let Err(err) = results {
+        // ignore errors occurred during cleanup
+        remove_dir_all(&target_path).await.ok();
+
+        return Err(err)
+            .with_context(|| format!("[download_product_files]"))
+            .with_context(|| {
+                format!("failed to download product files for product id `{}`", id)
+            })?;
+    }
+
+    Ok(())
+}
+
+fn resolve_file_urls(id: &str, product_files: &DLsiteProductFiles) -> Vec<String> {
+    match product_files.files.len() {
+        0 => vec![],
+        1 => vec![format!(
+            "https://www.dlsite.com/maniax/download/=/product_id/{}.html",
+            id
+        )],
+        len => (1..=len)
+            .map(|index| {
+                format!(
+                    "https://www.dlsite.com/maniax/download/=/number/{}/product_id/{}.html",
+                    index, id
+                )
+            })
+            .collect(),
+    }
+}
+
+async fn prepare_target_path(id: &str, base_path: impl AsRef<Path>) -> Result<PathBuf, Error> {
+    let target_path = base_path.as_ref().join(id);
+
+    if target_path.exists() {
+        remove_dir_all(&target_path)
+            .await
+            .with_context(|| format!("[prepare_target_path]"))
+            .with_context(|| {
+                format!(
+                    "failed to cleanup existing target path `{}`",
+                    target_path.display()
+                )
+            })?;
+    }
+
+    create_dir_all(&target_path)
+        .await
+        .with_context(|| format!("[prepare_target_path]"))
+        .with_context(|| format!("failed to create target path `{}`", target_path.display()))?;
+
+    Ok(target_path)
+}
+
+async fn download_single_file(
+    client: &Client,
+    url: &str,
+    target_path: impl AsRef<Path>,
+    file_name: &str,
+    mut on_chunk_received: impl FnMut(u64),
+) -> Result<(), Error> {
+    let file_path = target_path.as_ref().join(file_name);
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&file_path)
+        .await
+        .with_context(|| format!("[download_single_file]"))
+        .with_context(|| format!("failed to open file `{}`", file_path.display()))?;
+
+    let mut writer = BufWriter::with_capacity(1 * 1024 * 1024, file);
+    let mut total_chunk_received: u64 = 0;
+    let mut retry_count = 0;
+    const MAX_RETRY_COUNT: u32 = 3;
+
+    'req: loop {
+        let mut res = match client
+            .get(url)
+            .header("range", format!("bytes={}-", total_chunk_received))
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                retry_count += 1;
+
+                if MAX_RETRY_COUNT < retry_count {
+                    return Err(anyhow!("max retry count reached").context(err))
+                        .with_context(|| format!("[download_single_file]"))
+                        .with_context(|| {
+                            format!("failed to download file `{}`", file_path.display())
+                        })?;
+                }
+
+                // wait for 5 seconds
+                tokio::time::sleep(Duration::from_secs(5)).await;
+
+                continue;
+            }
+        };
+
+        while let Some(chunk) = match res.chunk().await {
+            Ok(chunk) => chunk,
+            Err(_) => {
+                continue 'req;
+            }
+        } {
+            writer
+                .write_all(&chunk)
+                .await
+                .with_context(|| format!("[download_single_file]"))
+                .with_context(|| {
+                    format!("failed to write chunk to file `{}`", file_path.display())
+                })?;
+            total_chunk_received += chunk.len() as u64;
+            on_chunk_received(total_chunk_received);
+        }
+
+        writer
+            .flush()
+            .await
+            .with_context(|| format!("[download_single_file]"))
+            .with_context(|| format!("failed to flush file `{}`", file_path.display()))?;
+
+        break;
+    }
+
+    Ok(())
 }
