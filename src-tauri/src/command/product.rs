@@ -5,11 +5,22 @@ use crate::{
         models::v2::{Product, ProductDownload},
         tables::v2::{ProductDownloadTable, ProductTable},
     },
-    dlsite::{download_product, remove_downloaded_product},
+    dlsite::{
+        download_product, remove_downloaded_product,
+        v2::{DLsiteProductAgeCategory, DLsiteProductType},
+    },
     window::{MainWindow, WindowInfoProvider},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{api::shell, Manager, Runtime};
+
+#[derive(Default, Debug, Clone, Deserialize)]
+pub struct ProductQuery<'s> {
+    pub query: Option<&'s str>,
+    pub ty: Option<DLsiteProductType>,
+    pub age: Option<DLsiteProductAgeCategory>,
+    pub order_by_asc: bool,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProductDownloadProgressEvent<'s> {
@@ -24,8 +35,9 @@ pub struct ProductDownloadEndEvent<'s> {
 }
 
 #[tauri::command]
-pub async fn product_list_products(query: Option<ProductQuery>) -> Result<Vec<Product>> {
-    Ok(ProductTable::get_many(&query.unwrap_or_default()).unwrap())
+pub async fn product_list_products<'a>(query: Option<ProductQuery<'a>>) -> Result<Vec<Product>> {
+    let query = query.unwrap_or_default();
+    Ok(ProductTable::get_many(query.query, query.ty, query.age, query.order_by_asc).unwrap())
 }
 
 #[tauri::command]
@@ -62,10 +74,14 @@ pub async fn product_download_product<R: Runtime>(
     )
     .await
     {
-        Ok(path) => Some(ProductDownloadTable::insert_one(&ProductDownload {
-            product_id: product_id.clone(),
-            path,
-        })?),
+        Ok(path) => {
+            let download = ProductDownload {
+                product_id: product_id.clone(),
+                path,
+            };
+            ProductDownloadTable::insert_one(&download)?;
+            Some(download)
+        }
         Err(..) => {
             remove_downloaded_product(&product_id, &path).ok();
             None
