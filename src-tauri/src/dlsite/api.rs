@@ -1,321 +1,68 @@
-use crate::application_error::{Error, Result};
-use chrono::{DateTime, Utc};
-use reqwest::ClientBuilder;
+use super::dto::{
+    DLsiteProduct, DLsiteProductFiles, DLsiteProductFromNonOwnerApi, DLsiteProductI18nString,
+    DLsiteProductListFromOwnerApi,
+};
+use anyhow::{anyhow, Context, Error};
+use chrono::{FixedOffset, NaiveDateTime, TimeZone};
+use lazy_static::lazy_static;
+use reqwest::{Client, ClientBuilder};
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{collections::HashMap, fmt::Display, sync::Arc};
-use strum_macros::EnumString;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+use thiserror::Error;
+use tokio::{
+    fs::{create_dir_all, remove_dir_all, OpenOptions},
+    io::{AsyncWriteExt, BufWriter},
+};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DLsiteProductList {
-    pub last: DateTime<Utc>,
-    pub limit: usize,
-    pub offset: usize,
-    pub works: Vec<DLsiteProduct>,
+lazy_static! {
+    static ref GROUP_NAME_SELECTOR_STR: &'static str = "#work_maker>tbody>tr>td>span>a";
+    // SAFETY: below selector is valid, so unwrap here is safe
+    static ref GROUP_NAME_SELECTOR: scraper::Selector =
+        scraper::Selector::parse(*GROUP_NAME_SELECTOR_STR).unwrap();
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DLsiteProduct {
-    #[serde(alias = "workno")]
-    pub id: String,
-    #[serde(alias = "work_type", default)]
-    pub ty: DLsiteProductType,
-    #[serde(alias = "age_category", default)]
-    pub age: DLsiteProductAgeCategory,
-    #[serde(alias = "name")]
-    pub title: DLsiteProductLocalizedString,
-    #[serde(alias = "maker")]
-    pub group: DLsiteProductGroup,
-    #[serde(alias = "work_files")]
-    pub icon: DLsiteProductIcon,
-    #[serde(alias = "regist_date")]
-    pub registered_at: Option<DateTime<Utc>>,
-    #[serde(alias = "upgrade_date")]
-    pub upgraded_at: Option<DateTime<Utc>>,
-    #[serde(alias = "sales_date")]
-    pub purchased_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DLsiteProductLocalizedString {
-    #[serde(alias = "ja_JP")]
-    pub japanese: Option<String>,
-    #[serde(alias = "en_US")]
-    pub english: Option<String>,
-    #[serde(alias = "ko_KR")]
-    pub korean: Option<String>,
-    #[serde(alias = "zh_TW")]
-    pub taiwanese: Option<String>,
-    #[serde(alias = "zh_CN")]
-    pub chinese: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DLsiteProductGroup {
-    pub id: String,
-    pub name: DLsiteProductLocalizedString,
-}
-
-#[derive(EnumString, Debug, Clone, PartialEq, Eq, Hash)]
-pub enum DLsiteProductType {
-    Adult,
-    Doujinsji,
-    Software,
-    Game,
-    Action,
-    Adventure,
-    AudioMaterial,
-    Comic,
-    DigitalNovel,
-    Other,
-    OtherGame,
-    Illust,
-    ImageMaterial,
-    Manga,
-    Anime,
-    Music,
-    Novel,
-    Puzzle,
-    Quiz,
-    RolePlaying,
-    Gekiga, // See https://en.wikipedia.org/wiki/Gekiga
-    Simulation,
-    Voice,
-    Shooter,
-    Tabletop,
-    Utility,
-    Typing,
-    SexualNovel,
-    VoiceComic,
-    #[strum(default)]
-    Unknown(String),
-}
-
-impl Default for DLsiteProductType {
-    fn default() -> Self {
-        Self::Unknown("Unknown".to_owned())
-    }
-}
-
-impl Display for DLsiteProductType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DLsiteProductType::Adult => write!(f, "Adult"),
-            DLsiteProductType::Doujinsji => write!(f, "Doujinsji"),
-            DLsiteProductType::Software => write!(f, "Software"),
-            DLsiteProductType::Game => write!(f, "Game"),
-            DLsiteProductType::Action => write!(f, "Action"),
-            DLsiteProductType::Adventure => write!(f, "Adventure"),
-            DLsiteProductType::AudioMaterial => write!(f, "AudioMaterial"),
-            DLsiteProductType::Comic => write!(f, "Comic"),
-            DLsiteProductType::DigitalNovel => write!(f, "DigitalNovel"),
-            DLsiteProductType::Other => write!(f, "Other"),
-            DLsiteProductType::OtherGame => write!(f, "OtherGame"),
-            DLsiteProductType::Illust => write!(f, "Illust"),
-            DLsiteProductType::ImageMaterial => write!(f, "ImageMaterial"),
-            DLsiteProductType::Manga => write!(f, "Manga"),
-            DLsiteProductType::Anime => write!(f, "Anime"),
-            DLsiteProductType::Music => write!(f, "Music"),
-            DLsiteProductType::Novel => write!(f, "Novel"),
-            DLsiteProductType::Puzzle => write!(f, "Puzzle"),
-            DLsiteProductType::Quiz => write!(f, "Quiz"),
-            DLsiteProductType::RolePlaying => write!(f, "RolePlaying"),
-            DLsiteProductType::Gekiga => write!(f, "Gekiga"),
-            DLsiteProductType::Simulation => write!(f, "Simulation"),
-            DLsiteProductType::Voice => write!(f, "Voice"),
-            DLsiteProductType::Shooter => write!(f, "Shooter"),
-            DLsiteProductType::Tabletop => write!(f, "Tabletop"),
-            DLsiteProductType::Utility => write!(f, "Utility"),
-            DLsiteProductType::Typing => write!(f, "Typing"),
-            DLsiteProductType::SexualNovel => write!(f, "SexualNovel"),
-            DLsiteProductType::VoiceComic => write!(f, "VoiceComic"),
-            DLsiteProductType::Unknown(s) => write!(f, "{}", s),
-        }
-    }
-}
-
-impl Serialize for DLsiteProductType {
-    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            DLsiteProductType::Adult => serializer.serialize_str("Adult"),
-            DLsiteProductType::Doujinsji => serializer.serialize_str("Doujinsji"),
-            DLsiteProductType::Software => serializer.serialize_str("Software"),
-            DLsiteProductType::Game => serializer.serialize_str("Game"),
-            DLsiteProductType::Action => serializer.serialize_str("Action"),
-            DLsiteProductType::Adventure => serializer.serialize_str("Adventure"),
-            DLsiteProductType::AudioMaterial => serializer.serialize_str("AudioMaterial"),
-            DLsiteProductType::Comic => serializer.serialize_str("Comic"),
-            DLsiteProductType::DigitalNovel => serializer.serialize_str("DigitalNovel"),
-            DLsiteProductType::Other => serializer.serialize_str("Other"),
-            DLsiteProductType::OtherGame => serializer.serialize_str("OtherGame"),
-            DLsiteProductType::Illust => serializer.serialize_str("Illust"),
-            DLsiteProductType::ImageMaterial => serializer.serialize_str("ImageMaterial"),
-            DLsiteProductType::Manga => serializer.serialize_str("Manga"),
-            DLsiteProductType::Anime => serializer.serialize_str("Anime"),
-            DLsiteProductType::Music => serializer.serialize_str("Music"),
-            DLsiteProductType::Novel => serializer.serialize_str("Novel"),
-            DLsiteProductType::Puzzle => serializer.serialize_str("Puzzle"),
-            DLsiteProductType::Quiz => serializer.serialize_str("Quiz"),
-            DLsiteProductType::RolePlaying => serializer.serialize_str("RolePlaying"),
-            DLsiteProductType::Gekiga => serializer.serialize_str("Gekiga"),
-            DLsiteProductType::Simulation => serializer.serialize_str("Simulation"),
-            DLsiteProductType::Voice => serializer.serialize_str("Voice"),
-            DLsiteProductType::Shooter => serializer.serialize_str("Shooter"),
-            DLsiteProductType::Tabletop => serializer.serialize_str("Tabletop"),
-            DLsiteProductType::Utility => serializer.serialize_str("Utility"),
-            DLsiteProductType::Typing => serializer.serialize_str("Typing"),
-            DLsiteProductType::SexualNovel => serializer.serialize_str("SexualNovel"),
-            DLsiteProductType::VoiceComic => serializer.serialize_str("VoiceComic"),
-            DLsiteProductType::Unknown(s) => serializer.serialize_str(s),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for DLsiteProductType {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let str = String::deserialize(deserializer)?;
-        Ok(match str.as_str() {
-            "ADL" => DLsiteProductType::Adult,
-            "DOH" => DLsiteProductType::Doujinsji,
-            "SOF" => DLsiteProductType::Software,
-            "GAM" => DLsiteProductType::Game,
-            "ACN" => DLsiteProductType::Action,
-            "ADV" => DLsiteProductType::Adventure,
-            "AMT" => DLsiteProductType::AudioMaterial,
-            "COM" => DLsiteProductType::Comic,
-            "DNV" => DLsiteProductType::DigitalNovel,
-            "ET3" => DLsiteProductType::Other,
-            "ETC" => DLsiteProductType::OtherGame,
-            "ICG" => DLsiteProductType::Illust,
-            "IMT" => DLsiteProductType::ImageMaterial,
-            "MNG" => DLsiteProductType::Manga,
-            "MOV" => DLsiteProductType::Anime,
-            "MUS" => DLsiteProductType::Music,
-            "NRE" => DLsiteProductType::Novel,
-            "PZL" => DLsiteProductType::Puzzle,
-            "QIZ" => DLsiteProductType::Quiz,
-            "RPG" => DLsiteProductType::RolePlaying,
-            "SCM" => DLsiteProductType::Gekiga,
-            "SLN" => DLsiteProductType::Simulation,
-            "SOU" => DLsiteProductType::Voice,
-            "STG" => DLsiteProductType::Shooter,
-            "TBL" => DLsiteProductType::Tabletop,
-            "TOL" => DLsiteProductType::Utility,
-            "TYP" => DLsiteProductType::Typing,
-            "KSV" => DLsiteProductType::SexualNovel,
-            "VCM" => DLsiteProductType::VoiceComic,
-            _ => DLsiteProductType::Unknown(str),
-        })
-    }
-}
-
-#[derive(EnumString, Debug, Clone, PartialEq, Eq, Hash)]
-pub enum DLsiteProductAgeCategory {
-    All,
-    R15,
-    R18,
-    #[strum(default, to_string = "{0}")]
-    Unknown(String),
-}
-
-impl Default for DLsiteProductAgeCategory {
-    fn default() -> Self {
-        Self::Unknown("Unknown".to_owned())
-    }
-}
-
-impl Display for DLsiteProductAgeCategory {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            DLsiteProductAgeCategory::All => write!(f, "All"),
-            DLsiteProductAgeCategory::R15 => write!(f, "R15"),
-            DLsiteProductAgeCategory::R18 => write!(f, "R18"),
-            DLsiteProductAgeCategory::Unknown(s) => write!(f, "{}", s),
-        }
-    }
-}
-
-impl Serialize for DLsiteProductAgeCategory {
-    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            DLsiteProductAgeCategory::All => serializer.serialize_str("All"),
-            DLsiteProductAgeCategory::R15 => serializer.serialize_str("R15"),
-            DLsiteProductAgeCategory::R18 => serializer.serialize_str("R18"),
-            DLsiteProductAgeCategory::Unknown(s) => serializer.serialize_str(s),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for DLsiteProductAgeCategory {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let str = String::deserialize(deserializer)?;
-        Ok(match str.as_str() {
-            "all" => DLsiteProductAgeCategory::All,
-            "r15" => DLsiteProductAgeCategory::R15,
-            "r18" => DLsiteProductAgeCategory::R18,
-            _ => DLsiteProductAgeCategory::Unknown(str),
-        })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct DLsiteProductIcon {
-    pub main: String,
-    #[serde(alias = "sam")]
-    pub small: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DLsiteProductDetail {
-    #[serde(alias = "image_main")]
-    pub image: DLsiteProductDetailImage,
-    pub contents: Vec<DLsiteProductDetailContent>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DLsiteProductDetailImage {
-    pub file_name: String,
-    pub file_size: String,
-    pub url: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DLsiteProductDetailContent {
-    pub file_name: String,
-    pub file_size: String,
+#[derive(Error, Debug)]
+pub enum LoginError {
+    #[error("wrong credentials")]
+    WrongCredentials,
+    #[error("{0}")]
+    Other(#[from] Error),
 }
 
 pub async fn login(
     username: impl AsRef<str>,
     password: impl AsRef<str>,
-) -> Result<Arc<CookieStoreMutex>> {
+) -> Result<Arc<CookieStoreMutex>, LoginError> {
     let cookie_store = Arc::new(CookieStoreMutex::new(CookieStore::default()));
     let client = ClientBuilder::new()
         .cookie_store(true)
         .cookie_provider(cookie_store.clone())
-        .build()?;
+        .build()
+        .with_context(|| "[login]")
+        .with_context(|| "failed to create HTTP client")?;
 
     client
         .get("https://www.dlsite.com/maniax/login/=/skip_register/1")
         .send()
-        .await?;
-    client.get("https://login.dlsite.com/login").send().await?;
-
-    // We must ignore the response of this login request here.
-    // The DLsite always responds with normal 200 status even if the login has been failed.
+        .await
+        .with_context(|| "[login]")
+        .with_context(|| "request failed for `skip_register`")?;
     client
+        .get("https://login.dlsite.com/login")
+        .send()
+        .await
+        .with_context(|| "[login]")
+        .with_context(|| "request failed for `fetch_initial_cookies`")?;
+
+    let res = client
         .post("https://login.dlsite.com/login")
         .form(&[
             ("login_id", username.as_ref()),
@@ -325,84 +72,367 @@ pub async fn login(
                     .lock()
                     .unwrap()
                     .get("login.dlsite.com", "/", "XSRF-TOKEN")
-                    .ok_or_else(|| Error::DLsiteCookieNotFound {
-                        cookie_domain: "login.dlsite.com".to_owned(),
-                        cookie_path: "/".to_owned(),
-                        cookie_name: "XSRF-TOKEN".to_owned(),
-                    })?
+                    .ok_or_else(|| anyhow!("cookie `XSRF-TOKEN` not found"))?
                     .value()
                     .to_owned();
                 cookie
             }),
         ])
         .send()
-        .await?;
+        .await
+        .with_context(|| "[login]")
+        .with_context(|| "request failed for `authenticate`")?;
+    let text = res
+        .text()
+        .await
+        .with_context(|| "[login]")
+        .with_context(|| "parse failed for `authenticate`")?;
+
+    if text.contains("ログインIDかパスワードが間違っています。") {
+        return Err(LoginError::WrongCredentials);
+    }
 
     Ok(cookie_store)
 }
 
-pub async fn get_product_count(cookie_store: Arc<CookieStoreMutex>) -> Result<usize> {
+/// Tests the given cookie store. Returns `true` if the cookie store contains valid credentials, `false` otherwise.
+pub async fn test_cookie_store(cookie_store: Arc<CookieStoreMutex>) -> Result<bool, Error> {
     let client = ClientBuilder::new()
         .cookie_store(true)
         .cookie_provider(cookie_store)
-        .build()?;
-    let response = client
+        .build()
+        .with_context(|| "[get_product_count]")
+        .with_context(|| "failed to create HTTP client")?;
+    let res = client
         .get("https://play.dlsite.com/api/product_count")
         .send()
-        .await?;
+        .await
+        .with_context(|| "[get_product_count]")
+        .with_context(|| "request failed")?;
 
-    // The body of the response will be a valid json if the login has been succeed.
-    match response.json::<HashMap<String, usize>>().await {
-        Ok(product_count) => Ok(product_count.get("user").cloned().unwrap_or(0)),
-        Err(..) => Err(Error::DLsiteNotAuthenticated),
-    }
+    let text = res.text().await?;
+
+    Ok(!text.contains("status") && !text.contains("401"))
 }
 
-pub async fn get_product(
+pub async fn get_product_count(cookie_store: Arc<CookieStoreMutex>) -> Result<u32, Error> {
+    let client = ClientBuilder::new()
+        .cookie_store(true)
+        .cookie_provider(cookie_store)
+        .build()
+        .with_context(|| "[get_product_count]")
+        .with_context(|| "failed to create HTTP client")?;
+    let res = client
+        .get("https://play.dlsite.com/api/product_count")
+        .send()
+        .await
+        .with_context(|| "[get_product_count]")
+        .with_context(|| "request failed")?;
+
+    let product_count_map = res
+        .json::<HashMap<String, u32>>()
+        .await
+        .with_context(|| "[get_product_count]")
+        .with_context(|| "parse failed")?;
+
+    product_count_map
+        .get("user")
+        .cloned()
+        .ok_or_else(|| anyhow!("unable to get product count; `user` key not found in response"))
+        .with_context(|| "[get_product_count]")
+}
+
+pub async fn get_products(
     cookie_store: Arc<CookieStoreMutex>,
-    page: usize,
-) -> Result<Vec<DLsiteProduct>> {
+    page: u32,
+) -> Result<Vec<DLsiteProduct>, Error> {
+    let client = ClientBuilder::new()
+        .cookie_store(true)
+        .cookie_provider(cookie_store)
+        .build()
+        .with_context(|| format!("[get_products]"))
+        .with_context(|| format!("failed to create HTTP client for page `{}`", page))?;
+    let url = format!("https://play.dlsite.com/api/purchases?page={}", page);
+    let res = client
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| format!("[get_products]"))
+        .with_context(|| format!("request failed for page `{}` with url: `{}`", page, url))?;
+    let product_list = res
+        .json::<DLsiteProductListFromOwnerApi>()
+        .await
+        .with_context(|| format!("[get_products]"))
+        .with_context(|| format!("parse failed for page `{}`", page))?;
+
+    fn get_localized_string(i18n: &DLsiteProductI18nString) -> Result<String, Error> {
+        i18n.japanese
+            .as_ref()
+            .or_else(|| i18n.english.as_ref())
+            .or_else(|| i18n.korean.as_ref())
+            .or_else(|| i18n.taiwanese.as_ref())
+            .or_else(|| i18n.chinese.as_ref())
+            .cloned()
+            .ok_or_else(|| anyhow!("localized string is empty"))
+    }
+
+    let product_list = product_list
+        .works
+        .into_iter()
+        .map(|product| -> Result<_, Error> {
+            Ok(DLsiteProduct {
+                id: product.id.clone(),
+                ty: product.ty,
+                age: product.age,
+                title: get_localized_string(&product.title)
+                    .with_context(|| format!("mapping `title` of product id `{}`", product.id))?,
+                thumbnail: product.icon.main,
+                group_id: product.group.id,
+                group_name: get_localized_string(&product.group.name).with_context(|| {
+                    format!("mapping `group_name` of product id `{}`", product.id)
+                })?,
+                registered_at: product.registered_at,
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()
+        .with_context(|| format!("[get_products]"))
+        .with_context(|| format!("mapping failed for page `{}`", page))?;
+
+    Ok(product_list)
+}
+
+pub async fn get_product_from_non_owner_api(id: &str) -> Result<DLsiteProduct, Error> {
+    let url = format!(
+        "https://www.dlsite.com/maniax/api/=/product.json?workno={}",
+        id
+    );
+    let res = reqwest::get(&url)
+        .await
+        .with_context(|| format!("[get_product_from_non_owner_api]"))
+        .with_context(|| format!("request failed for product id `{}` with url: `{}`", id, url))?;
+    let products = res
+        .json::<Vec<DLsiteProductFromNonOwnerApi>>()
+        .await
+        .with_context(|| format!("[get_product_from_non_owner_api]"))
+        .with_context(|| format!("parse failed for product id `{}`", id))?;
+
+    if products.is_empty() {
+        return Err(anyhow!("product list is empty"));
+    }
+
+    let product = products.into_iter().next().unwrap();
+
+    let naive_registered_at =
+        NaiveDateTime::parse_from_str(&product.registered_at, "%Y-%m-%d %H:%M:%S")?;
+    let jst_offset = FixedOffset::east_opt(9 * 3600).unwrap();
+    let jst_registered_at = jst_offset
+        .from_local_datetime(&naive_registered_at)
+        .single()
+        .unwrap();
+    let utc_registered_at = jst_registered_at.to_utc();
+
+    Ok(DLsiteProduct {
+        id: id.to_owned(),
+        ty: product.ty,
+        age: product.age,
+        title: product.title,
+        thumbnail: if product.image.url.starts_with("http") {
+            product.image.url
+        } else {
+            format!("https:{}", product.image.url)
+        },
+        group_id: product.group_id,
+        group_name: product.group_name,
+        registered_at: utc_registered_at,
+    })
+}
+
+pub async fn get_product_files(id: &str) -> Result<DLsiteProductFiles, Error> {
+    let url = format!(
+        "https://www.dlsite.com/maniax/api/=/product.json?workno={}",
+        id
+    );
+    let res = reqwest::get(&url)
+        .await
+        .with_context(|| format!("[get_product_files]"))
+        .with_context(|| format!("request failed for product id `{}` with url: `{}`", id, url))?;
+
+    let product_details_list = res
+        .json::<Vec<DLsiteProductFiles>>()
+        .await
+        .with_context(|| format!("[get_product_files]"))
+        .with_context(|| format!("parse failed for product id `{}`", id))?;
+
+    if product_details_list.is_empty() {
+        return Err(anyhow!("product details list is empty"));
+    }
+
+    Ok(product_details_list.into_iter().next().unwrap())
+}
+
+pub async fn download_product_files(
+    cookie_store: Arc<CookieStoreMutex>,
+    id: &str,
+    product_files: &DLsiteProductFiles,
+    base_path: impl AsRef<Path>,
+    on_progress: impl Fn(u64, u64),
+) -> Result<(), Error> {
+    let total_file_size = product_files.files.iter().fold(0, |acc, detail| {
+        acc + detail.file_size.parse::<u64>().unwrap()
+    });
+    let file_urls = resolve_file_urls(id, product_files);
+    let target_path = prepare_target_path(id, base_path).await?;
+
+    let progress = AtomicU64::new(0);
     let client = ClientBuilder::new()
         .cookie_store(true)
         .cookie_provider(cookie_store)
         .build()?;
-    let response = client
-        .get(format!(
-            "https://play.dlsite.com/api/purchases?page={}",
-            page
-        ))
-        .send()
-        .await?;
 
-    // The body of the response will be a valid json if the login has been succeed.
-    match response.json::<DLsiteProductList>().await {
-        Ok(product_list) => Ok(product_list.works),
-        Err(..) => Err(Error::DLsiteNotAuthenticated),
+    let on_chunk_received = |chunk_received| {
+        progress.fetch_add(chunk_received, Ordering::SeqCst);
+        on_progress(progress.load(Ordering::SeqCst), total_file_size);
+    };
+
+    let results =
+        futures::future::try_join_all(file_urls.iter().enumerate().map(|(index, file_url)| {
+            download_single_file(
+                &client,
+                file_url,
+                &target_path,
+                &product_files.files[index].file_name,
+                on_chunk_received,
+            )
+        }))
+        .await;
+
+    if let Err(err) = results {
+        // ignore errors occurred during cleanup
+        remove_dir_all(&target_path).await.ok();
+
+        return Err(err)
+            .with_context(|| format!("[download_product_files]"))
+            .with_context(|| {
+                format!("failed to download product files for product id `{}`", id)
+            })?;
+    }
+
+    Ok(())
+}
+
+fn resolve_file_urls(id: &str, product_files: &DLsiteProductFiles) -> Vec<String> {
+    match product_files.files.len() {
+        0 => vec![],
+        1 => vec![format!(
+            "https://www.dlsite.com/maniax/download/=/product_id/{}.html",
+            id
+        )],
+        len => (1..=len)
+            .map(|index| {
+                format!(
+                    "https://www.dlsite.com/maniax/download/=/number/{}/product_id/{}.html",
+                    index, id
+                )
+            })
+            .collect(),
     }
 }
 
-pub async fn get_product_details(
-    cookie_store: Arc<CookieStoreMutex>,
-    product_id: impl AsRef<str>,
-) -> Result<Vec<DLsiteProductDetail>> {
-    let client = ClientBuilder::new()
-        .cookie_store(true)
-        .cookie_provider(cookie_store)
-        .build()?;
-    let response = client
-        .get(format!(
-            "https://www.dlsite.com/maniax/api/=/product.json?workno={}",
-            product_id.as_ref()
-        ))
-        .send()
-        .await?;
+async fn prepare_target_path(id: &str, base_path: impl AsRef<Path>) -> Result<PathBuf, Error> {
+    let target_path = base_path.as_ref().join(id);
 
-    // The body of the response will be a valid json if the login has been succeed.
-    match response.json::<Vec<DLsiteProductDetail>>().await {
-        Ok(details) => Ok(details),
-        Err(err) => {
-            println!("{:#?}", err);
-            Err(Error::DLsiteNotAuthenticated)
+    if target_path.exists() {
+        remove_dir_all(&target_path)
+            .await
+            .with_context(|| format!("[prepare_target_path]"))
+            .with_context(|| {
+                format!(
+                    "failed to cleanup existing target path `{}`",
+                    target_path.display()
+                )
+            })?;
+    }
+
+    create_dir_all(&target_path)
+        .await
+        .with_context(|| format!("[prepare_target_path]"))
+        .with_context(|| format!("failed to create target path `{}`", target_path.display()))?;
+
+    Ok(target_path)
+}
+
+async fn download_single_file(
+    client: &Client,
+    url: &str,
+    target_path: impl AsRef<Path>,
+    file_name: &str,
+    mut on_chunk_received: impl FnMut(u64),
+) -> Result<(), Error> {
+    let file_path = target_path.as_ref().join(file_name);
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&file_path)
+        .await
+        .with_context(|| format!("[download_single_file]"))
+        .with_context(|| format!("failed to open file `{}`", file_path.display()))?;
+
+    let mut writer = BufWriter::with_capacity(1 * 1024 * 1024, file);
+    let mut total_chunk_received: u64 = 0;
+    let mut retry_count = 0;
+    const MAX_RETRY_COUNT: u32 = 3;
+
+    'req: loop {
+        let mut res = match client
+            .get(url)
+            .header("range", format!("bytes={}-", total_chunk_received))
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                retry_count += 1;
+
+                if MAX_RETRY_COUNT < retry_count {
+                    return Err(anyhow!("max retry count reached").context(err))
+                        .with_context(|| format!("[download_single_file]"))
+                        .with_context(|| {
+                            format!("failed to download file `{}`", file_path.display())
+                        })?;
+                }
+
+                // wait for 5 seconds
+                tokio::time::sleep(Duration::from_secs(5)).await;
+
+                continue;
+            }
+        };
+
+        while let Some(chunk) = match res.chunk().await {
+            Ok(chunk) => chunk,
+            Err(_) => {
+                continue 'req;
+            }
+        } {
+            writer
+                .write_all(&chunk)
+                .await
+                .with_context(|| format!("[download_single_file]"))
+                .with_context(|| {
+                    format!("failed to write chunk to file `{}`", file_path.display())
+                })?;
+            total_chunk_received += chunk.len() as u64;
+            on_chunk_received(total_chunk_received);
         }
+
+        writer
+            .flush()
+            .await
+            .with_context(|| format!("[download_single_file]"))
+            .with_context(|| format!("failed to flush file `{}`", file_path.display()))?;
+
+        break;
     }
+
+    Ok(())
 }

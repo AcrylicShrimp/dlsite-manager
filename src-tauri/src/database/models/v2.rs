@@ -1,4 +1,4 @@
-use crate::dlsite::v2::{DLsiteProductAgeCategory, DLsiteProductType};
+use crate::dlsite::dto::{DLsiteProductAgeCategory, DLsiteProductType};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -44,16 +44,16 @@ pub struct Product {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct CreatingProduct {
-    pub id: String,
+pub struct CreatingProduct<'a> {
+    pub id: &'a str,
     /// it can be `NULL` if the product is not owned by any account (found in local)
     pub account_id: Option<i64>,
     pub ty: DLsiteProductType,
     pub age: DLsiteProductAgeCategory,
-    pub title: String,
-    pub thumbnail: String,
-    pub group_id: String,
-    pub group_name: String,
+    pub title: &'a str,
+    pub thumbnail: &'a str,
+    pub group_id: &'a str,
+    pub group_name: &'a str,
     pub registered_at: DateTime<Utc>,
 }
 

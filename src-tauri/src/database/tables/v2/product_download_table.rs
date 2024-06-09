@@ -1,6 +1,6 @@
+use super::DBResult;
 use crate::{
     application::use_application,
-    application_error::Result,
     database::{models::v2::ProductDownload, tables::Table},
 };
 use rusqlite::types::Value;
@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS v2_product_downloads (
 
 impl ProductDownloadTable {
     /// Inserts a single product download into the database.
-    pub fn insert_one(download: &ProductDownload) -> Result<()> {
+    pub fn insert_one(download: &ProductDownload) -> DBResult<()> {
         let connection = use_application().connection();
         let mut stmt = connection.prepare(
             r#"
@@ -43,7 +43,7 @@ INSERT INTO v2_product_downloads (
     }
 
     /// Retrieves many product downloads from the database.
-    pub fn get_many(product_ids: impl Iterator<Item = String>) -> Result<Vec<ProductDownload>> {
+    pub fn get_many(product_ids: impl Iterator<Item = String>) -> DBResult<Vec<ProductDownload>> {
         let connection = use_application().connection();
         let mut stmt = connection.prepare(
             r#"
@@ -67,7 +67,7 @@ FROM v2_product_downloads WHERE product_id IN (
     }
 
     /// Retrieves a single product download from the database.
-    pub fn get_one(product_id: &str) -> Result<Option<ProductDownload>> {
+    pub fn get_one(product_id: &str) -> DBResult<Option<ProductDownload>> {
         let connection = use_application().connection();
         let mut stmt = connection.prepare(
             r#"
@@ -87,7 +87,7 @@ WHERE product_id = :product_id
     }
 
     /// Removes a single product download from the database.
-    pub fn remove_one(product_id: &str) -> Result<()> {
+    pub fn remove_one(product_id: &str) -> DBResult<()> {
         let connection = use_application().connection();
         let mut stmt = connection.prepare(
             r#"

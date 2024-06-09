@@ -1,11 +1,12 @@
-use crate::{application_error::Result, database::tables::v2::SettingTable};
-use std::path::PathBuf;
-use tauri::{api::path::download_dir, generate_handler, Builder, Runtime};
-
 mod account_management;
+mod error;
 mod product;
 mod setting;
 mod window;
+
+use crate::{application_error::Result, database::tables::v2::SettingTable};
+use std::path::PathBuf;
+use tauri::{api::path::download_dir, generate_handler, Builder, Runtime};
 
 pub trait CommandProvider<R>
 where

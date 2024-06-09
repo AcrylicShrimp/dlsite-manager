@@ -1,7 +1,6 @@
 use crate::{
     application::use_application,
     application_error::Result,
-    dlsite::refresh_product,
     window::{MainWindow, WindowInfoProvider},
 };
 use serde::Serialize;

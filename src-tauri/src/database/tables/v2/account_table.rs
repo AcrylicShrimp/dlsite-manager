@@ -1,6 +1,6 @@
+use super::DBResult;
 use crate::{
     application::use_application,
-    application_error::Result,
     database::{
         models::v2::{Account, CreatingAccount, UpdatingAccount},
         tables::Table,
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS v2_accounts (
 impl AccountTable {
     /// Inserts a single account into the database.
     /// Returns the ID of the inserted account.
-    pub fn insert_one(account: CreatingAccount) -> Result<i64> {
+    pub fn insert_one(account: CreatingAccount) -> DBResult<i64> {
         let connection = use_application().connection();
         let mut stmt = connection.prepare(
             r#"
@@ -50,7 +50,7 @@ INSERT INTO v2_accounts (
     }
 
     /// Retrieves all accounts from the database.
-    pub fn get_all() -> Result<Vec<Account>> {
+    pub fn get_all() -> DBResult<Vec<Account>> {
         let connection = use_application().connection();
         let mut stmt = connection.prepare(
             r#"
@@ -74,7 +74,7 @@ ORDER BY id ASC
     }
 
     /// Retrieves a single account from the database.
-    pub fn get_one(id: i64) -> Result<Option<Account>> {
+    pub fn get_one(id: i64) -> DBResult<Option<Account>> {
         let connection = use_application().connection();
         let mut stmt = connection.prepare(
             r#"
@@ -100,7 +100,7 @@ WHERE id = :id
     }
 
     /// Updates a single account in the database.
-    pub fn update_one(account: UpdatingAccount) -> Result<()> {
+    pub fn update_one(account: UpdatingAccount) -> DBResult<()> {
         let connection = use_application().connection();
         let mut stmt = connection.prepare(
             r#"
@@ -123,7 +123,7 @@ WHERE id = :id
     }
 
     /// Updates a single account's product count in the database.
-    pub fn update_one_product_count(id: i64, product_count: i32) -> Result<()> {
+    pub fn update_one_product_count(id: i64, product_count: i32) -> DBResult<()> {
         let connection = use_application().connection();
         let mut stmt = connection.prepare(
             r#"
@@ -142,7 +142,7 @@ WHERE id = :id
     }
 
     /// Updates a single account's cookie JSON in the database.
-    pub fn update_one_cookie_json(id: i64, cookie_json: &str) -> Result<()> {
+    pub fn update_one_cookie_json(id: i64, cookie_json: &str) -> DBResult<()> {
         let connection = use_application().connection();
         let mut stmt = connection.prepare(
             r#"
@@ -161,7 +161,7 @@ WHERE id = :id
     }
 
     /// Removes a single account from the database.
-    pub fn remove_one(id: i64) -> Result<()> {
+    pub fn remove_one(id: i64) -> DBResult<()> {
         let connection = use_application().connection();
         let mut stmt = connection.prepare(
             r#"

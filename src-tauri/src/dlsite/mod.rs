@@ -1,102 +1,18 @@
-pub mod api;
-pub mod v2;
-
-use crate::{
-    application_error::{Error, Result},
-    database::tables::v2::{AccountTable, ProductTable},
-    dlsite::api::DLsiteProductDetail,
-};
+use crate::database::tables::v2::{AccountTable, ProductTable};
+use anyhow::Result;
 use reqwest::ClientBuilder;
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use std::{
-    fs::{create_dir_all, read_dir, remove_dir_all, remove_file, rename, OpenOptions},
-    io::{BufReader, BufWriter, Result as IOResult, Write},
+    io::BufWriter,
     path::{Path, PathBuf},
     sync::Arc,
-    time::{Duration, Instant},
 };
-use unrar::Archive;
+use thiserror::Error;
+
+pub mod api;
+pub mod dto;
 
 static PAGE_LIMIT: usize = 50;
-
-macro_rules! with_cookie_store {
-    ($account_id:ident, $f:ident) => {
-        let account = AccountTable::get_one($account_id)?;
-        let account = match account {
-            Some(account) => account,
-            None => return Err(Error::AccountNotExists { $account_id }),
-        };
-
-        if let Ok(cookie_store) = CookieStore::load_json(account.cookie_json.as_bytes()) {
-            match $f(Arc::new(CookieStoreMutex::new(cookie_store))).await {
-                Ok(result) => {
-                    AccountTable::update_one_cookie_json($account_id, &account.cookie_json)?;
-                    return Ok(result);
-                }
-                Err(err) => match err {
-                    Error::DLsiteNotAuthenticated => {}
-                    _ => return Err(err),
-                },
-            }
-        }
-
-        let cookie_store = api::login(&account.username, &account.password).await?;
-
-        match $f(cookie_store.clone()).await {
-            Ok(result) => {
-                AccountTable::update_one_cookie_json($account_id, {
-                    let mut writer = BufWriter::new(Vec::new());
-                    cookie_store
-                        .lock()
-                        .unwrap()
-                        .save_json(&mut writer)
-                        .map_err(|err| Error::ReqwestCookieStoreError {
-                            reqwest_cookie_store_error: err,
-                        })?;
-                    std::str::from_utf8(&writer.into_inner().unwrap()).unwrap()
-                })?;
-                return Ok(result);
-            }
-            Err(err) => return Err(err),
-        }
-    };
-}
-
-async fn get_product_count_and_cookie_store(
-    account_id: i64,
-) -> Result<(usize, Arc<CookieStoreMutex>)> {
-    async fn body(
-        account_id: i64,
-        cookie_store: Arc<CookieStoreMutex>,
-    ) -> Result<(usize, Arc<CookieStoreMutex>)> {
-        let product_count = api::get_product_count(cookie_store.clone()).await?;
-        AccountTable::update_one_product_count(account_id, product_count as i32)?;
-        Ok((product_count, cookie_store))
-    }
-
-    let body = move |cookie_store: Arc<CookieStoreMutex>| body(account_id, cookie_store);
-
-    with_cookie_store!(account_id, body);
-}
-
-async fn get_product_details_and_cookie_store(
-    account_id: i64,
-    product_id: impl AsRef<str>,
-) -> Result<(Vec<DLsiteProductDetail>, Arc<CookieStoreMutex>)> {
-    async fn body(
-        product_id: impl AsRef<str>,
-        cookie_store: Arc<CookieStoreMutex>,
-    ) -> Result<(Vec<DLsiteProductDetail>, Arc<CookieStoreMutex>)> {
-        Ok((
-            api::get_product_details(cookie_store.clone(), product_id).await?,
-            cookie_store,
-        ))
-    }
-
-    let body = |cookie_store: Arc<CookieStoreMutex>| body(product_id.as_ref(), cookie_store);
-
-    with_cookie_store!(account_id, body);
-}
 
 pub async fn update_product(mut on_progress: impl FnMut(usize, usize) -> Result<()>) -> Result<()> {
     let accounts = AccountTable::get_all()?;
@@ -243,20 +159,13 @@ pub async fn download_product(
     base_path: impl AsRef<Path>,
     on_progress: impl Fn(u64, u64) -> Result<()>,
 ) -> Result<PathBuf> {
-    let (details, cookie_store) =
-        get_product_details_and_cookie_store(account_id, product_id.as_ref()).await?;
-
-    if details.len() != 1 {
-        return Err(Error::DLsiteProductDetailMissingOrNotUnique);
-    }
-
-    let detail = details.into_iter().next().unwrap();
-    let file_size = detail.contents.iter().fold(0, |acc, detail| {
-        acc + detail.file_size.parse::<u64>().unwrap()
-    });
+    let files = api::get_product_files(product_id.as_ref()).await?.files;
+    let file_size = files
+        .iter()
+        .fold(0, |acc, file| acc + file.file_size.parse::<u64>().unwrap());
     let file_urls;
 
-    match detail.contents.len() {
+    match files.len() {
         1 => {
             file_urls = vec![format!(
                 "https://www.dlsite.com/maniax/download/=/product_id/{}.html",
@@ -279,10 +188,12 @@ pub async fn download_product(
     let path = base_path.as_ref().join(product_id.as_ref());
 
     if path.exists() {
-        remove_dir_all(&path).map_err(|err| Error::ProductDirCreationError { io_error: err })?;
+        std::fs::remove_dir_all(&path)
+            .map_err(|err| Error::ProductDirCreationError { io_error: err })?;
     }
 
-    create_dir_all(&path).map_err(|err| Error::ProductDirCreationError { io_error: err })?;
+    std::fs::create_dir_all(&path)
+        .map_err(|err| Error::ProductDirCreationError { io_error: err })?;
     on_progress(0, file_size)?;
 
     let mut progress = 0;
@@ -441,14 +352,14 @@ pub async fn download_product(
         for content_path in content_paths {
             let content_path = content_path.path();
 
-            rename(
+            std::fs::rename(
                 &content_path,
                 path.join(content_path.strip_prefix(&content_prefix_path).unwrap()),
             )
             .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?;
         }
 
-        remove_dir_all(&tmp_path)
+        std::fs::remove_dir_all(&tmp_path)
             .map_err(|err| Error::ProductArchiveCleanupError { io_error: err })?;
     }
 
@@ -460,6 +371,7 @@ pub fn remove_downloaded_product(
     base_path: impl AsRef<Path>,
 ) -> Result<()> {
     let path = base_path.as_ref().join(product_id.as_ref());
-    remove_dir_all(&path).map_err(|err| Error::ProductDirCreationError { io_error: err })?;
+    std::fs::remove_dir_all(&path)
+        .map_err(|err| Error::ProductDirCreationError { io_error: err })?;
     Ok(())
 }

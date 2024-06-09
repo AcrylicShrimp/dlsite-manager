@@ -1,10 +1,10 @@
+use super::DBResult;
 use crate::{
-    application_error::Result,
     database::{
         models::v2::{CreatingProduct, Product},
         tables::Table,
     },
-    dlsite::v2::{DLsiteProductAgeCategory, DLsiteProductType},
+    dlsite::dto::{DLsiteProductAgeCategory, DLsiteProductType},
     use_application,
 };
 use serde_rusqlite::*;
@@ -48,7 +48,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS v2_indexed_products USING fts5 (
 
 impl ProductTable {
     /// Inserts many products into the database.
-    pub fn insert_many<'a>(products: impl Iterator<Item = &'a CreatingProduct>) -> Result<()> {
+    pub fn insert_many<'a>(products: impl Iterator<Item = CreatingProduct<'a>>) -> DBResult<()> {
         let mut connection = use_application().connection();
         let tx = connection.transaction()?;
         {
@@ -126,7 +126,7 @@ INSERT INTO v2_indexed_products (
         ty: Option<DLsiteProductType>,
         age: Option<DLsiteProductAgeCategory>,
         order_by_asc: bool,
-    ) -> Result<Vec<Product>> {
+    ) -> DBResult<Vec<Product>> {
         let mut where_clause = String::new();
         let mut params = vec![];
         where_clause.push_str("WHERE TRUE");
@@ -197,7 +197,7 @@ ORDER BY {}
 
     /// Removes many products from the database.
     /// It does not remove the product which is not owned by any account.
-    pub fn remove_many_owned() -> Result<()> {
+    pub fn remove_many_owned() -> DBResult<()> {
         let connection = use_application().connection();
         let mut stmt = connection.prepare(
             r#"

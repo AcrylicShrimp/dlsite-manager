@@ -1,6 +1,6 @@
+use super::DBResult;
 use crate::{
     application::use_application,
-    application_error::Result,
     database::{models::v2::Setting, tables::Table},
 };
 use rusqlite::OptionalExtension;
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS v2_settings (
 
 impl SettingTable {
     /// Inserts or updates the singleton setting in the database.
-    pub fn insert(setting: &Setting) -> Result<()> {
+    pub fn insert(setting: &Setting) -> DBResult<()> {
         let connection = use_application().connection();
         let mut stmt = connection.prepare(
             r#"
@@ -36,7 +36,7 @@ ON CONFLICT(id) DO UPDATE SET
     }
 
     /// Gets the singleton setting from the database.
-    pub fn get() -> Result<Option<Setting>> {
+    pub fn get() -> DBResult<Option<Setting>> {
         let connection = use_application().connection();
         let mut stmt = connection.prepare(
             r#"

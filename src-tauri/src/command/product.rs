@@ -6,8 +6,8 @@ use crate::{
         tables::v2::{ProductDownloadTable, ProductTable},
     },
     dlsite::{
-        download_product, remove_downloaded_product,
-        v2::{DLsiteProductAgeCategory, DLsiteProductType},
+        api::{download_product, remove_downloaded_product},
+        dto::{DLsiteProductAgeCategory, DLsiteProductType},
     },
     window::{MainWindow, WindowInfoProvider},
 };

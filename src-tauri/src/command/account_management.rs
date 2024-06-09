@@ -1,21 +1,21 @@
+use super::error::CommandResult;
 use crate::{
-    application_error::{Error, Result},
     database::{
         models::v2::{Account, CreatingAccount, UpdatingAccount},
         tables::v2::AccountTable,
     },
-    dlsite::api::{get_product_count, login},
+    dlsite::api::{get_product_count, login, LoginError},
     window::{AccountEditWindow, AccountManagementWindow, WindowInfoProvider},
 };
 use tauri::{Manager, Runtime, Window};
 
 #[tauri::command]
-pub fn account_management_list_accounts() -> Result<Vec<Account>> {
+pub fn account_management_list_accounts() -> CommandResult<Vec<Account>> {
     AccountTable::get_all()
 }
 
 #[tauri::command]
-pub fn account_management_get_account(account_id: i64) -> Result<Option<Account>> {
+pub fn account_management_get_account(account_id: i64) -> CommandResult<Option<Account>> {
     AccountTable::get_one(account_id)
 }
 
@@ -24,7 +24,7 @@ pub fn account_management_add_account<R: Runtime>(
     app_handle: tauri::AppHandle<R>,
     window: Window<R>,
     account: CreatingAccount,
-) -> Result<()> {
+) -> CommandResult<()> {
     let account = AccountTable::insert_one(account)?;
 
     if let Some(window) = app_handle.get_window(&AccountManagementWindow.label()) {
@@ -40,7 +40,7 @@ pub fn account_management_update_account<R: Runtime>(
     app_handle: tauri::AppHandle<R>,
     window: Window<R>,
     account: UpdatingAccount,
-) -> Result<()> {
+) -> CommandResult<()> {
     let account = AccountTable::update_one(account)?;
 
     if let Some(window) = app_handle.get_window(&AccountManagementWindow.label()) {
@@ -55,7 +55,7 @@ pub fn account_management_update_account<R: Runtime>(
 pub fn account_management_remove_account<R: Runtime>(
     app_handle: tauri::AppHandle<R>,
     account_id: i64,
-) -> Result<()> {
+) -> CommandResult<()> {
     AccountTable::remove_one(account_id)?;
 
     if let Some(window) = app_handle.get_window(&AccountManagementWindow.label()) {
@@ -70,12 +70,21 @@ pub fn account_management_remove_account<R: Runtime>(
 }
 
 #[tauri::command]
-pub async fn account_management_test_account(username: String, password: String) -> Result<isize> {
-    match get_product_count(login(username.clone(), password.clone()).await?).await {
-        Ok(product_count) => Ok(product_count as isize),
-        Err(err) => match err {
-            Error::DLsiteNotAuthenticated => Ok(-1),
-            _ => return Err(err),
-        },
-    }
+pub async fn account_management_test_account(
+    username: String,
+    password: String,
+) -> CommandResult<isize> {
+    let cookie = match login(username, password).await {
+        Ok(cookie) => cookie,
+        Err(err) => {
+            return match err {
+                LoginError::WrongCredentials => Ok(-1),
+                LoginError::Other(err) => Err(err),
+            }
+        }
+    };
+
+    Ok(get_product_count(cookie)
+        .await
+        .map(|count| count as isize)?)
 }

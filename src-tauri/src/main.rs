@@ -9,6 +9,7 @@ mod command;
 mod database;
 mod dlsite;
 mod menu;
+mod services;
 mod window;
 
 use application::{create_application, use_application};
