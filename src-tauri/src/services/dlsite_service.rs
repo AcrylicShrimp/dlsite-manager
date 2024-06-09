@@ -9,7 +9,7 @@ use crate::{
     },
 };
 use anyhow::{anyhow, Error as AnyError};
-use log::{debug, warn};
+use log::{error, info, warn};
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use std::{io::BufWriter, sync::Arc};
 use thiserror::Error;
@@ -37,7 +37,7 @@ impl DLsiteService {
         &self,
         account_id: i64,
     ) -> Result<Arc<CookieStoreMutex>, DLsiteServiceError> {
-        debug!(
+        info!(
             "[get_cookie_store] fetching cookie store of the account id `{}`",
             account_id
         );
@@ -53,11 +53,11 @@ impl DLsiteService {
             }
         };
 
-        debug!("[get_cookie_store] account: {:#?}", account);
+        info!("[get_cookie_store] account: {:#?}", account);
 
         match CookieStore::load_json(account.cookie_json.as_bytes()) {
             Ok(cookies) => {
-                debug!("[get_cookie_store] successfully parsed cookie_json of the account");
+                info!("[get_cookie_store] successfully parsed cookie_json of the account");
                 let cookie_store = Arc::new(CookieStoreMutex::new(cookies));
                 let is_valid = test_cookie_store(cookie_store.clone()).await?;
 
@@ -65,17 +65,17 @@ impl DLsiteService {
                     return Ok(cookie_store);
                 }
 
-                debug!("[get_cookie_store] the parsed cookie_json is invalid");
+                info!("[get_cookie_store] the parsed cookie_json is invalid");
             }
             Err(err) => {
-                debug!(
+                info!(
                     "[get_cookie_store] failed to parse cookie_json of the account: {:?}",
                     err
                 );
             }
         }
 
-        debug!("[get_cookie_store] fresh cookie_json is needed; logging in");
+        info!("[get_cookie_store] fresh cookie_json is needed; logging in");
 
         match login(&account.username, &account.password).await {
             Ok(cookie_store) => {
@@ -84,7 +84,7 @@ impl DLsiteService {
             }
             Err(err) => match err {
                 LoginError::WrongCredentials => {
-                    debug!("[get_cookie_store] invalid credentials: {:?}", account);
+                    info!("[get_cookie_store] invalid credentials: {:?}", account);
                     return Err(DLsiteServiceError::InvalidCredentials {
                         username: account.username.clone(),
                         password: account.password.clone(),
@@ -103,7 +103,7 @@ impl DLsiteService {
         account_id: i64,
         cookie_store: Arc<CookieStoreMutex>,
     ) -> Result<u32, DLsiteServiceError> {
-        debug!(
+        info!(
             "[get_product_count] fetching product count of the account id `{}`",
             account_id
         );
@@ -117,7 +117,7 @@ impl DLsiteService {
         &self,
         mut on_progress: impl FnMut(u32, u32),
     ) -> Result<(), DLsiteServiceError> {
-        debug!("[fetch_new_products] fetching new products for all accounts");
+        info!("[fetch_new_products] fetching new products for all accounts");
 
         struct AccountDetail {
             pub account_id: i64,
@@ -133,7 +133,7 @@ impl DLsiteService {
         let mut total_progress = 0;
 
         for account in &accounts {
-            debug!(
+            info!(
                 "[fetch_new_products] fetching account detail of the account id `{}`",
                 account.id
             );
@@ -144,7 +144,7 @@ impl DLsiteService {
                 .get_product_count(account.id, cookie_store.clone())
                 .await?;
 
-            debug!(
+            info!(
                 "[fetch_new_products] the account id `{}` has {} product(s) before, now has {} product(s)",
                 account.id,
                 prev_product_count,
@@ -166,7 +166,7 @@ impl DLsiteService {
         }
 
         if total_progress == 0 {
-            debug!("[fetch_new_products] nothing to update");
+            info!("[fetch_new_products] nothing to update");
             return Ok(());
         }
 
@@ -193,18 +193,6 @@ impl DLsiteService {
                 progress += products.len() as u32;
                 detail.prev_product_count += products.len() as u32;
 
-                if let Err(err) = AccountTable::update_one_product_count(
-                    detail.account_id,
-                    detail.prev_product_count as i32,
-                ) {
-                    warn!(
-                        "[fetch_new_products] failed to update the product count of the account id `{}` to the database: {:?}",
-                        detail.account_id,
-                        err
-                    );
-                    break;
-                }
-
                 if let Err(err) = ProductTable::insert_many(
                     products
                         .into_iter()
@@ -219,16 +207,129 @@ impl DLsiteService {
                 // first page is over
                 already_fetched_product_count = 0;
             }
+
+            if let Err(err) = AccountTable::update_one_product_count(
+                detail.account_id,
+                detail.prev_product_count as i32,
+            ) {
+                warn!(
+                        "[fetch_new_products] failed to update the product count of the account id `{}` to the database: {:?}",
+                        detail.account_id,
+                        err
+                    );
+                break;
+            }
         }
 
         Ok(())
     }
 
-    pub async fn refresh_products_all(&self) -> Result<(), DLsiteServiceError> {}
+    pub async fn refresh_products_all(
+        &self,
+        mut on_progress: impl FnMut(u32, u32),
+    ) -> Result<(), DLsiteServiceError> {
+        info!("[refresh_products_all] fetching new products for all accounts");
+
+        if let Err(err) = ProductTable::remove_many_owned() {
+            error!(
+                "[refresh_products_all] failed to remove all owned products: {:?}",
+                err
+            );
+            return Err(DLsiteServiceError::DBError(err));
+        }
+
+        struct AccountDetail {
+            pub account_id: i64,
+            pub cookie_store: Arc<CookieStoreMutex>,
+            pub new_product_count: u32,
+        }
+
+        let accounts = AccountTable::get_all()?;
+        let mut account_details = Vec::with_capacity(accounts.len());
+
+        let mut progress = 0;
+        let mut total_progress = 0;
+
+        for account in &accounts {
+            info!(
+                "[refresh_products_all] fetching account detail of the account id `{}`",
+                account.id
+            );
+
+            let cookie_store = self.get_cookie_store(account.id).await?;
+            let new_product_count = self
+                .get_product_count(account.id, cookie_store.clone())
+                .await?;
+
+            info!(
+                "[refresh_products_all] the account id `{}` now has {} product(s)",
+                account.id, new_product_count
+            );
+
+            total_progress += new_product_count;
+
+            account_details.push(AccountDetail {
+                account_id: account.id,
+                cookie_store,
+                new_product_count,
+            });
+        }
+
+        if total_progress == 0 {
+            info!("[refresh_products_all] nothing to update");
+            return Ok(());
+        }
+
+        on_progress(progress, total_progress);
+
+        for detail in account_details {
+            const PAGE_LIMIT: u32 = 50;
+
+            let mut prev_product_count = 0;
+
+            while prev_product_count < detail.new_product_count {
+                let page = 1 + prev_product_count / PAGE_LIMIT;
+                let products = match get_products(detail.cookie_store.clone(), page).await {
+                    Ok(products) => products,
+                    Err(err) => {
+                        warn!("[refresh_products_all] failed to fetch products of {} page of the account id `{}`: {:?}", page, detail.account_id, err);
+                        break;
+                    }
+                };
+
+                progress += products.len() as u32;
+                prev_product_count += products.len() as u32;
+
+                if let Err(err) = ProductTable::insert_many(
+                    products
+                        .iter()
+                        .map(|product| make_creating_product(detail.account_id, product)),
+                ) {
+                    warn!("[refresh_products_all] failed to update the products from the account id `{}` to the database: {:?}", detail.account_id, err);
+                    break;
+                }
+
+                on_progress(progress, total_progress);
+            }
+
+            if let Err(err) =
+                AccountTable::update_one_product_count(detail.account_id, prev_product_count as i32)
+            {
+                warn!(
+                        "[refresh_products_all] failed to update the product count of the account id `{}` to the database: {:?}",
+                        detail.account_id,
+                        err
+                    );
+                break;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 fn update_cookie_json(account_id: i64, cookie_store: &CookieStoreMutex) {
-    debug!(
+    info!(
         "[update_cookie_json] updating cookie_json of the account id `{}`",
         account_id
     );
