@@ -362,7 +362,7 @@ fn serialize_cookie_store(cookie_store: &CookieStoreMutex) -> Result<String, Any
 
     cookie_store_guard
         .save_json(&mut writer)
-        .map_err(|err| anyhow!("failed to serialize the cookie store: {:?}", err));
+        .map_err(|err| anyhow!("failed to serialize the cookie store: {:?}", err))?;
 
     drop(cookie_store_guard);
 

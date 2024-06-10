@@ -1,10 +1,10 @@
+mod fetch_new_products;
 mod refresh_product_download;
-mod refresh_product_list;
-mod update_product_list;
+mod refresh_products_all;
 
 use self::{
-    refresh_product_download::refresh_product_download, refresh_product_list::refresh_product_list,
-    update_product_list::update_product_list,
+    fetch_new_products::fetch_new_products, refresh_product_download::refresh_product_download,
+    refresh_products_all::refresh_products_all,
 };
 use crate::{
     application::use_application,
@@ -76,7 +76,7 @@ impl MenuProvider for ApplicationMenu {
             "account/open-account-management" => {
                 AccountManagementWindow.build_or_focus(use_application().app_handle())?;
             }
-            "product/update-product-list" => {
+            "product/fetch-new-products" => {
                 spawn((|| async {
                     {
                         let mut is_updating_product = use_application().is_updating_product();
@@ -88,7 +88,7 @@ impl MenuProvider for ApplicationMenu {
                         *is_updating_product = true;
                     }
 
-                    let result = update_product_list().await;
+                    let result = fetch_new_products().await;
                     *use_application().is_updating_product() = false;
 
                     result.unwrap();
@@ -106,7 +106,7 @@ impl MenuProvider for ApplicationMenu {
                         *is_updating_product = true;
                     }
 
-                    let result = refresh_product_list().await;
+                    let result = refresh_products_all().await;
                     *use_application().is_updating_product() = false;
 
                     result.unwrap();
@@ -124,7 +124,7 @@ impl MenuProvider for ApplicationMenu {
                         *is_updating_product = true;
                     }
 
-                    let result = refresh_product_list().await;
+                    let result = refresh_products_all().await;
 
                     if result.is_err() {
                         *use_application().is_updating_product() = false;

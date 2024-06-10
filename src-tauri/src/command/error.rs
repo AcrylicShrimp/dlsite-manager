@@ -1,13 +1,18 @@
-use anyhow::Error;
+use anyhow::Error as AnyError;
 use serde::{Serialize, Serializer};
 
 pub struct CommandError {
-    error: Error,
+    error: AnyError,
 }
 
-impl From<Error> for CommandError {
-    fn from(value: Error) -> Self {
-        Self { error: value }
+impl<T> From<T> for CommandError
+where
+    T: Into<AnyError>,
+{
+    fn from(value: T) -> Self {
+        Self {
+            error: value.into(),
+        }
     }
 }
 

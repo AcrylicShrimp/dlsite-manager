@@ -1,16 +1,14 @@
-use crate::{
-    application_error::Result,
-    database::{models::v2::Setting, tables::v2::SettingTable},
-};
+use super::error::CommandResult;
+use crate::database::{models::v2::Setting, tables::v2::SettingTable};
 use tauri::{api::dialog::blocking::FileDialogBuilder, Runtime, Window};
 
 #[tauri::command]
-pub async fn setting_get() -> Result<Setting> {
+pub async fn setting_get() -> CommandResult<Setting> {
     Ok(SettingTable::get()?.unwrap_or_default())
 }
 
 #[tauri::command]
-pub async fn setting_browse_default_root_directory() -> Result<Option<String>> {
+pub async fn setting_browse_default_root_directory() -> CommandResult<Option<String>> {
     Ok(FileDialogBuilder::new()
         .set_title("Pick a default root directory")
         .pick_folder()
@@ -18,17 +16,16 @@ pub async fn setting_browse_default_root_directory() -> Result<Option<String>> {
 }
 
 #[tauri::command]
-pub async fn setting_close<R: Runtime>(window: Window<R>) -> Result<()> {
+pub async fn setting_close<R: Runtime>(window: Window<R>) -> CommandResult<()> {
     window.close()?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn setting_save_and_close<R: Runtime>(
-    app_handle: tauri::AppHandle<R>,
     window: Window<R>,
     setting: Setting,
-) -> Result<()> {
+) -> CommandResult<()> {
     SettingTable::insert(&setting)?;
     window.close()?;
     Ok(())

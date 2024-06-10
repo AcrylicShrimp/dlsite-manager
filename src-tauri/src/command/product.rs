@@ -1,17 +1,15 @@
-use super::get_product_download_path;
+use super::{error::CommandResult, get_product_download_path};
 use crate::{
-    application_error::{Error, Result},
     database::{
-        models::v2::{Product, ProductDownload},
+        models::v2::Product,
         tables::v2::{ProductDownloadTable, ProductTable},
     },
-    dlsite::{
-        api::{download_product, remove_downloaded_product},
-        dto::{DLsiteProductAgeCategory, DLsiteProductType},
-    },
+    dlsite::dto::{DLsiteProductAgeCategory, DLsiteProductType},
+    services::download_service::DownloadService,
     window::{MainWindow, WindowInfoProvider},
 };
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use tauri::{api::shell, Manager, Runtime};
 
 #[derive(Default, Debug, Clone, Deserialize)]
@@ -31,11 +29,13 @@ pub struct ProductDownloadProgressEvent<'s> {
 #[derive(Debug, Clone, Serialize)]
 pub struct ProductDownloadEndEvent<'s> {
     pub product_id: &'s str,
-    pub download: Option<ProductDownload>,
+    pub downloaded_path: Option<&'s Path>,
 }
 
 #[tauri::command]
-pub async fn product_list_products<'a>(query: Option<ProductQuery<'a>>) -> Result<Vec<Product>> {
+pub async fn product_list_products<'a>(
+    query: Option<ProductQuery<'a>>,
+) -> CommandResult<Vec<Product>> {
     let query = query.unwrap_or_default();
     Ok(ProductTable::get_many(query.query, query.ty, query.age, query.order_by_asc).unwrap())
 }
@@ -46,46 +46,58 @@ pub async fn product_download_product<R: Runtime>(
     account_id: i64,
     product_id: String,
     decompress: Option<bool>,
-) -> Result<()> {
+) -> CommandResult<()> {
     if let Some(window) = app_handle.get_window(&MainWindow.label()) {
         window.emit("download-begin", &product_id)?;
     }
 
     let path = get_product_download_path(&app_handle)?;
-    let download = match download_product(
-        decompress.unwrap_or(true),
-        account_id,
-        &product_id,
-        &path,
-        |progress, total_progress| {
-            if let Some(window) = app_handle.get_window(&MainWindow.label()) {
-                window.emit(
-                    "download-progress",
-                    ProductDownloadProgressEvent {
-                        product_id: &product_id,
-                        progress: (progress as f64 / total_progress as f64 * 100f64).round()
-                            as usize,
-                    },
-                )?;
-            }
-
-            Ok(())
-        },
-    )
-    .await
-    {
-        Ok(path) => {
-            let download = ProductDownload {
-                product_id: product_id.clone(),
-                path,
-            };
-            ProductDownloadTable::insert_one(&download)?;
-            Some(download)
-        }
-        Err(..) => {
-            remove_downloaded_product(&product_id, &path).ok();
-            None
-        }
+    let downloaded_path = if decompress.unwrap_or(true) {
+        DownloadService::new()
+            .download_with_decompression(
+                account_id,
+                &product_id,
+                &path,
+                |progress, total_progress| {
+                    if let Some(window) = app_handle.get_window(&MainWindow.label()) {
+                        window
+                            .emit(
+                                "download-progress",
+                                ProductDownloadProgressEvent {
+                                    product_id: &product_id,
+                                    progress: (progress as f64 / total_progress as f64 * 100f64)
+                                        .round()
+                                        as usize,
+                                },
+                            )
+                            .ok();
+                    }
+                },
+            )
+            .await
+    } else {
+        DownloadService::new()
+            .download(
+                account_id,
+                &product_id,
+                &path,
+                |progress, total_progress| {
+                    if let Some(window) = app_handle.get_window(&MainWindow.label()) {
+                        window
+                            .emit(
+                                "download-progress",
+                                ProductDownloadProgressEvent {
+                                    product_id: &product_id,
+                                    progress: (progress as f64 / total_progress as f64 * 100f64)
+                                        .round()
+                                        as usize,
+                                },
+                            )
+                            .ok();
+                    }
+                },
+            )
+            .await
     };
 
     if let Some(window) = app_handle.get_window(&MainWindow.label()) {
@@ -93,19 +105,22 @@ pub async fn product_download_product<R: Runtime>(
             "download-end",
             ProductDownloadEndEvent {
                 product_id: &product_id,
-                download,
+                downloaded_path: downloaded_path.as_ref().map(|path| path.as_path()).ok(),
             },
         )?;
     }
 
-    Ok(())
+    match downloaded_path {
+        Ok(_) => Ok(()),
+        Err(err) => Err(err.into()),
+    }
 }
 
 #[tauri::command]
 pub async fn product_open_downloaded_folder<R: Runtime>(
     app_handle: tauri::AppHandle<R>,
     product_id: String,
-) -> Result<()> {
+) -> CommandResult<()> {
     let path = if let Some(download) = ProductDownloadTable::get_one(&product_id)? {
         download.path
     } else {
@@ -126,8 +141,7 @@ pub async fn product_open_downloaded_folder<R: Runtime>(
         return Ok(());
     }
 
-    shell::open(&app_handle.shell_scope(), path.to_str().unwrap(), None)
-        .map_err(|err| Error::ProductPathOpenError { tauri_error: err })?;
+    shell::open(&app_handle.shell_scope(), path.to_str().unwrap(), None)?;
 
     Ok(())
 }
@@ -136,11 +150,12 @@ pub async fn product_open_downloaded_folder<R: Runtime>(
 pub async fn product_remove_downloaded_product<R: Runtime>(
     app_handle: tauri::AppHandle<R>,
     product_id: String,
-) -> Result<()> {
+) -> CommandResult<()> {
     let path = get_product_download_path(&app_handle)?;
 
-    remove_downloaded_product(&product_id, path).ok();
-    ProductDownloadTable::remove_one(&product_id)?;
+    DownloadService::new()
+        .remove_downloaded(&product_id, path)
+        .ok();
 
     if let Some(window) = app_handle.get_window(&MainWindow.label()) {
         window.emit("download-invalid", &product_id)?;

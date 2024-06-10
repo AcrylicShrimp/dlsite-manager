@@ -1,6 +1,9 @@
 use super::dlsite_service::DLsiteServiceError;
 use crate::{
-    database::tables::v2::DBError,
+    database::{
+        models::v2::CreatingProductDownload,
+        tables::v2::{DBError, ProductDownloadTable},
+    },
     dlsite::{
         api::{download_product_files, get_product_files},
         dto::DLsiteProductFiles,
@@ -14,8 +17,6 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum DownloadServiceError {
-    #[error("the given account id `{id}` is not valid")]
-    InvalidAccountId { id: i64 },
     #[error("{0:?}")]
     DBError(#[from] DBError),
     #[error("{0:?}")]
@@ -93,6 +94,39 @@ impl DownloadService {
 
         Ok(downloaded.base_path)
     }
+
+    pub fn remove_downloaded(
+        &self,
+        product_id: impl AsRef<str>,
+        base_path: impl AsRef<Path>,
+    ) -> Result<(), DownloadServiceError> {
+        let product_id = product_id.as_ref();
+        let base_path = base_path.as_ref();
+
+        info!(
+            "[remove_downloaded] removing the downloaded product `{}` at path `{}`",
+            product_id,
+            base_path.display()
+        );
+
+        if let Err(err) = ProductDownloadTable::remove_one(product_id) {
+            warn!("[remove_downloaded] failed to remove the downloaded product `{}` from the database at path `{}`: {:?}",
+                product_id,
+                base_path.display(),
+                err
+            );
+        }
+
+        if let Err(err) = std::fs::remove_dir_all(base_path) {
+            warn!("[remove_downloaded] failed to remove the downloaded product `{}` to the file system at path `{}`: {:?}",
+                product_id,
+                base_path.display(),
+                err
+            );
+        }
+
+        Ok(())
+    }
 }
 
 struct Downloaded {
@@ -149,6 +183,18 @@ async fn download(
         return Err(DownloadServiceError::AnyError(err));
     }
 
+    if let Err(err) = ProductDownloadTable::insert_one(CreatingProductDownload {
+        product_id,
+        path: base_path,
+    }) {
+        warn!(
+            "[download] failed to insert the downloaded product `{}` to the database at path `{}`: {:?}",
+            product_id,
+            base_path.display(),
+            err
+        );
+    }
+
     Ok(Downloaded {
         base_path: base_path.to_owned(),
         product_files,
@@ -191,8 +237,8 @@ async fn decompress_single(
         )?;
     }
 
-    remove_dir_all(&tmp_path).is_ok();
-    remove_file(&file_path).is_ok();
+    remove_dir_all(&tmp_path).ok();
+    remove_file(&file_path).ok();
 
     Ok(())
 }
@@ -242,13 +288,14 @@ async fn decompress_multiple(
         rename(
             &content_path,
             base_path.join(content_path.strip_prefix(&content_prefix_path).unwrap()),
-        );
+        )
+        .ok();
     }
 
-    remove_dir_all(&tmp_path).is_ok();
+    remove_dir_all(&tmp_path).ok();
 
     for file in &product_files.files {
-        remove_file(&base_path.join(&file.file_name)).is_ok();
+        remove_file(&base_path.join(&file.file_name)).ok();
     }
 
     Ok(())

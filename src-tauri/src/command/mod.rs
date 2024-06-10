@@ -4,7 +4,8 @@ mod product;
 mod setting;
 mod window;
 
-use crate::{application_error::Result, database::tables::v2::SettingTable};
+use crate::database::tables::v2::SettingTable;
+use anyhow::Error as AnyError;
 use std::path::PathBuf;
 use tauri::{api::path::download_dir, generate_handler, Builder, Runtime};
 
@@ -42,13 +43,17 @@ where
     }
 }
 
-pub fn get_product_download_path<R: Runtime>(app_handle: &tauri::AppHandle<R>) -> Result<PathBuf> {
+pub fn get_product_download_path<R: Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+) -> Result<PathBuf, AnyError> {
     let setting = SettingTable::get()?;
     let setting = setting.unwrap_or_default();
 
-    Ok(setting.download_root_dir.unwrap_or_else(|| {
+    let path = setting.download_root_dir.unwrap_or_else(|| {
         download_dir()
             .unwrap_or_else(|| app_handle.path_resolver().app_local_data_dir().unwrap())
             .join("DLsite")
-    }))
+    });
+
+    Ok(path)
 }

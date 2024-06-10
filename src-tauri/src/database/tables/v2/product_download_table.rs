@@ -1,7 +1,10 @@
 use super::DBResult;
 use crate::{
     application::use_application,
-    database::{models::v2::ProductDownload, tables::Table},
+    database::{
+        models::v2::{CreatingProductDownload, ProductDownload},
+        tables::Table,
+    },
 };
 use rusqlite::types::Value;
 use serde_rusqlite::*;
@@ -24,7 +27,7 @@ CREATE TABLE IF NOT EXISTS v2_product_downloads (
 
 impl ProductDownloadTable {
     /// Inserts a single product download into the database.
-    pub fn insert_one(download: &ProductDownload) -> DBResult<()> {
+    pub fn insert_one(download: CreatingProductDownload) -> DBResult<()> {
         let connection = use_application().connection();
         let mut stmt = connection.prepare(
             r#"

@@ -11,12 +11,12 @@ use tauri::{Manager, Runtime, Window};
 
 #[tauri::command]
 pub fn account_management_list_accounts() -> CommandResult<Vec<Account>> {
-    AccountTable::get_all()
+    Ok(AccountTable::get_all()?)
 }
 
 #[tauri::command]
 pub fn account_management_get_account(account_id: i64) -> CommandResult<Option<Account>> {
-    AccountTable::get_one(account_id)
+    Ok(AccountTable::get_one(account_id)?)
 }
 
 #[tauri::command]
@@ -79,7 +79,7 @@ pub async fn account_management_test_account(
         Err(err) => {
             return match err {
                 LoginError::WrongCredentials => Ok(-1),
-                LoginError::Other(err) => Err(err),
+                LoginError::Other(err) => Err(err.into()),
             }
         }
     };

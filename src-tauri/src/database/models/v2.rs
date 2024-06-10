@@ -1,7 +1,7 @@
 use crate::dlsite::dto::{DLsiteProductAgeCategory, DLsiteProductType};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Account {
@@ -61,6 +61,12 @@ pub struct CreatingProduct<'a> {
 pub struct ProductDownload {
     pub product_id: String,
     pub path: PathBuf,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CreatingProductDownload<'a> {
+    pub product_id: &'a str,
+    pub path: &'a Path,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
