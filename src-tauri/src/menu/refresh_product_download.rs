@@ -1,10 +1,7 @@
 use crate::{
     application::use_application,
     command::get_product_download_path,
-    database::{
-        models::v2::CreatingProductDownload,
-        tables::v2::{ProductDownloadTable, ProductTable},
-    },
+    database::{models::v2::CreatingProductDownload, tables::v2::ProductDownloadTable},
 };
 use anyhow::Error as AnyError;
 use std::fs::read_dir;
@@ -13,7 +10,7 @@ pub async fn refresh_product_download() -> Result<(), AnyError> {
     let download_path = get_product_download_path(use_application().app_handle())?;
     let contents = read_dir(download_path)?;
 
-    ProductTable::remove_many_owned()?;
+    ProductDownloadTable::remove_many_owned()?;
 
     for entry in contents {
         let entry = entry?;
