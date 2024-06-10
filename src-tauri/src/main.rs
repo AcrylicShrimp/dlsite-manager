@@ -14,10 +14,13 @@ mod window;
 
 use application::{create_application, use_application};
 use command::CommandProvider;
+use log::LevelFilter;
 use menu::{ApplicationMenu, MenuProvider};
 use tauri::RunEvent;
 
 fn main() {
+    env_logger::builder().filter_level(LevelFilter::Info).init();
+
     let app = tauri::Builder::default()
         .menu(ApplicationMenu::create_menu())
         .on_menu_event(|event| ApplicationMenu::handle_menu(event).unwrap())

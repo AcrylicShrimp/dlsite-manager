@@ -101,26 +101,26 @@ impl DownloadService {
         base_path: impl AsRef<Path>,
     ) -> Result<(), DownloadServiceError> {
         let product_id = product_id.as_ref();
-        let base_path = base_path.as_ref();
+        let path = base_path.as_ref().join(product_id);
 
         info!(
             "[remove_downloaded] removing the downloaded product `{}` at path `{}`",
             product_id,
-            base_path.display()
+            path.display()
         );
 
         if let Err(err) = ProductDownloadTable::remove_one(product_id) {
             warn!("[remove_downloaded] failed to remove the downloaded product `{}` from the database at path `{}`: {:?}",
                 product_id,
-                base_path.display(),
+                path.display(),
                 err
             );
         }
 
-        if let Err(err) = std::fs::remove_dir_all(base_path) {
+        if let Err(err) = std::fs::remove_dir_all(&path) {
             warn!("[remove_downloaded] failed to remove the downloaded product `{}` to the file system at path `{}`: {:?}",
                 product_id,
-                base_path.display(),
+                path.display(),
                 err
             );
         }
@@ -141,13 +141,13 @@ async fn download(
     on_progress: impl Fn(u64, u64),
 ) -> Result<Downloaded, DownloadServiceError> {
     let product_id = product_id.as_ref();
-    let base_path = base_path.as_ref();
+    let path = base_path.as_ref().join(product_id);
 
     info!(
         "[download] downloading product `{}` of the account id `{}` at path `{}`",
         product_id,
         account_id,
-        base_path.display()
+        path.display()
     );
 
     let cookie_store = DLsiteService::new().get_cookie_store(account_id).await?;
@@ -157,7 +157,7 @@ async fn download(
             error!("[download] failed to download product `{}` of the account id `{}` at path `{}`: {:?}",
                 product_id,
                     account_id,
-                    base_path.display(),
+                    path.display(),
                     err
                 );
             return Err(DownloadServiceError::AnyError(err));
@@ -177,7 +177,7 @@ async fn download(
             "[download] failed to download product `{}` of the account id `{}` at path `{}`: {:?}",
             product_id,
             account_id,
-            base_path.display(),
+            path.display(),
             err
         );
         return Err(DownloadServiceError::AnyError(err));
@@ -185,32 +185,32 @@ async fn download(
 
     if let Err(err) = ProductDownloadTable::insert_one(CreatingProductDownload {
         product_id,
-        path: base_path,
+        path: &path,
     }) {
         warn!(
             "[download] failed to insert the downloaded product `{}` to the database at path `{}`: {:?}",
             product_id,
-            base_path.display(),
+            path.display(),
             err
         );
     }
 
     Ok(Downloaded {
-        base_path: base_path.to_owned(),
+        base_path: path.to_owned(),
         product_files,
     })
 }
 
 async fn decompress_single(
     product_files: &DLsiteProductFiles,
-    base_path: impl AsRef<Path>,
+    path: impl AsRef<Path>,
 ) -> Result<(), DownloadServiceError> {
     use std::fs::*;
     use std::io::BufReader;
 
-    let base_path = base_path.as_ref();
-    let tmp_path = base_path.join("__tmp__");
-    let file_path = base_path.join(&product_files.files[0].file_name);
+    let path = path.as_ref();
+    let tmp_path = path.join("__tmp__");
+    let file_path = path.join(&product_files.files[0].file_name);
     let file = OpenOptions::new()
         .read(true)
         .open(&file_path)
@@ -233,7 +233,7 @@ async fn decompress_single(
 
         rename(
             &content_path,
-            base_path.join(content_path.strip_prefix(&tmp_path).unwrap()),
+            path.join(content_path.strip_prefix(&tmp_path).unwrap()),
         )?;
     }
 
@@ -245,32 +245,26 @@ async fn decompress_single(
 
 async fn decompress_multiple(
     product_files: &DLsiteProductFiles,
-    base_path: impl AsRef<Path>,
+    path: impl AsRef<Path>,
 ) -> Result<(), DownloadServiceError> {
     use std::fs::*;
     use unrar::Archive;
 
-    let base_path = base_path.as_ref();
-    let rar_file_name = base_path
+    let path = path.as_ref();
+    let rar_file_name = path
         .join(&product_files.files[0].file_name)
         .with_extension("rar");
 
-    rename(
-        base_path.join(&product_files.files[0].file_name),
-        &rar_file_name,
-    )?;
+    rename(path.join(&product_files.files[0].file_name), &rar_file_name)?;
 
-    let tmp_path = base_path.join("__tmp__");
+    let tmp_path = path.join("__tmp__");
     let mut archive = Archive::new(&rar_file_name).open_for_processing()?;
 
     while let Some(header) = archive.read_header()? {
         archive = header.extract_with_base(&tmp_path)?;
     }
 
-    rename(
-        &rar_file_name,
-        base_path.join(&product_files.files[0].file_name),
-    )?;
+    rename(&rar_file_name, path.join(&product_files.files[0].file_name))?;
 
     let mut content_paths = read_dir(&tmp_path)?.collect::<std::io::Result<Vec<_>>>()?;
     let content_prefix_path;
@@ -287,7 +281,7 @@ async fn decompress_multiple(
 
         rename(
             &content_path,
-            base_path.join(content_path.strip_prefix(&content_prefix_path).unwrap()),
+            path.join(content_path.strip_prefix(&content_prefix_path).unwrap()),
         )
         .ok();
     }
@@ -295,7 +289,7 @@ async fn decompress_multiple(
     remove_dir_all(&tmp_path).ok();
 
     for file in &product_files.files {
-        remove_file(&base_path.join(&file.file_name)).ok();
+        remove_file(&path.join(&file.file_name)).ok();
     }
 
     Ok(())

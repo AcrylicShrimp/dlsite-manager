@@ -4,7 +4,6 @@
   import DragDropList from "@app/lib/lists/DragDropList.svelte";
   import PrimaryButton from "@app/lib/buttons/PrimaryButton.svelte";
   import SecondaryButton from "@app/lib/buttons/SecondaryButton.svelte";
-  import type { DLsiteProductLocalizedString } from "@app/types/product";
 
   import { invoke } from "@tauri-apps/api/tauri";
   import { onMount } from "svelte";
@@ -20,7 +19,6 @@
 
   onMount(async () => {
     defaultRootDir = data.setting.download_root_dir;
-    languages = agmentLanguage(data.display_language_setting.languages);
 
     await invoke("show_window");
   });
@@ -39,30 +37,7 @@
       setting: {
         download_root_dir: defaultRootDir,
       },
-      displayLanguageSetting: {
-        languages: deagmentLanguage(languages),
-      },
     });
-  }
-
-  function agmentLanguage(
-    languages: (keyof DLsiteProductLocalizedString)[]
-  ): Language[] {
-    const displayNames: Record<keyof DLsiteProductLocalizedString, string> = {
-      japanese: "Japanese",
-      english: "English",
-      korean: "Korean",
-      taiwanese: "Simplified Chinese",
-      chinese: "Traditional Chinese",
-    };
-    return languages.map((language) => ({
-      id: language,
-      text: displayNames[language],
-    }));
-  }
-
-  function deagmentLanguage(languages: Language[]): string[] {
-    return languages.map((language) => language.id);
   }
 </script>
 
@@ -83,14 +58,6 @@
         <SecondaryButton on:click={browse}>Browse</SecondaryButton>
       </div>
     </label>
-  </div>
-  <div class="mt-8">
-    <p>
-      Display Language <span class="text-3/5">(higher takes precedence)</span>
-    </p>
-    <div class="pl-2 pt-2">
-      <DragDropList bind:data={languages} />
-    </div>
   </div>
   <span class="block h-16" />
   <div class="flex flex-row items-center justify-center">

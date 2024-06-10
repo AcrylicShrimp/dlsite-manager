@@ -1,35 +1,36 @@
 use super::{error::CommandResult, get_product_download_path};
 use crate::{
     database::{
-        models::v2::Product,
+        models::v2::{Product, ProductDownload},
         tables::v2::{ProductDownloadTable, ProductTable},
     },
     dlsite::dto::{DLsiteProductAgeCategory, DLsiteProductType},
     services::download_service::DownloadService,
     window::{MainWindow, WindowInfoProvider},
 };
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tauri::{api::shell, Manager, Runtime};
 
 #[derive(Default, Debug, Clone, Deserialize)]
-pub struct ProductQuery<'s> {
-    pub query: Option<&'s str>,
+pub struct ProductQuery<'a> {
+    pub query: Option<&'a str>,
     pub ty: Option<DLsiteProductType>,
     pub age: Option<DLsiteProductAgeCategory>,
     pub order_by_asc: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ProductDownloadProgressEvent<'s> {
-    pub product_id: &'s str,
+pub struct ProductDownloadProgressEvent<'a> {
+    pub product_id: &'a str,
     pub progress: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ProductDownloadEndEvent<'s> {
-    pub product_id: &'s str,
-    pub downloaded_path: Option<&'s Path>,
+pub struct ProductDownloadEndEvent<'a> {
+    pub product_id: &'a str,
+    pub downloaded_path: Option<&'a Path>,
 }
 
 #[tauri::command]
@@ -37,7 +38,19 @@ pub async fn product_list_products<'a>(
     query: Option<ProductQuery<'a>>,
 ) -> CommandResult<Vec<Product>> {
     let query = query.unwrap_or_default();
-    Ok(ProductTable::get_many(query.query, query.ty, query.age, query.order_by_asc).unwrap())
+    let results = ProductTable::get_many(query.query, query.ty, query.age, query.order_by_asc)
+        .with_context(|| format!("[command/product_list_products] ProductTable::get_many"))?;
+    Ok(results)
+}
+
+#[tauri::command]
+pub async fn product_list_product_downloads(
+    product_ids: Vec<String>,
+) -> CommandResult<Vec<ProductDownload>> {
+    let results = ProductDownloadTable::get_many(product_ids.into_iter()).with_context(|| {
+        format!("[command/product_list_product_downloads] ProductDownloadTable::get_many")
+    })?;
+    Ok(results)
 }
 
 #[tauri::command]

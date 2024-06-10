@@ -25,8 +25,6 @@
           account.username = event.payload.username;
           account.password = event.payload.password;
           account.memo = event.payload.memo;
-          account.created_at = event.payload.created_at;
-          account.updated_at = event.payload.updated_at;
           break;
         }
 

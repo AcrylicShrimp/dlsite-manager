@@ -3,6 +3,4 @@ export interface Account {
   username: string;
   password: string;
   memo?: string;
-  created_at: number;
-  updated_at: number;
 }

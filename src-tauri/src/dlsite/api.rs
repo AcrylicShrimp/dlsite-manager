@@ -14,7 +14,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
-    time::Duration,
+    time::{Duration, Instant, UNIX_EPOCH},
 };
 use thiserror::Error;
 use tokio::{
@@ -221,15 +221,19 @@ pub async fn get_product_from_non_owner_api(id: &str) -> Result<DLsiteProduct, E
     }
 
     let product = products.into_iter().next().unwrap();
-
-    let naive_registered_at =
-        NaiveDateTime::parse_from_str(&product.registered_at, "%Y-%m-%d %H:%M:%S")?;
-    let jst_offset = FixedOffset::east_opt(9 * 3600).unwrap();
-    let jst_registered_at = jst_offset
-        .from_local_datetime(&naive_registered_at)
-        .single()
-        .unwrap();
-    let utc_registered_at = jst_registered_at.to_utc();
+    let utc_registered_at = match product.registered_at {
+        Some(registered_at) => {
+            let naive_registered_at =
+                NaiveDateTime::parse_from_str(&registered_at, "%Y-%m-%d %H:%M:%S")?;
+            let jst_offset = FixedOffset::east_opt(9 * 3600).unwrap();
+            let jst_registered_at = jst_offset
+                .from_local_datetime(&naive_registered_at)
+                .single()
+                .unwrap();
+            Some(jst_registered_at.to_utc())
+        }
+        None => None,
+    };
 
     Ok(DLsiteProduct {
         id: id.to_owned(),
@@ -283,6 +287,7 @@ pub async fn download_product_files(
     let file_urls = resolve_file_urls(id, product_files);
     let target_path = prepare_target_path(id, base_path).await?;
 
+    let last_callback_time = AtomicU64::new(0);
     let progress = AtomicU64::new(0);
     let client = ClientBuilder::new()
         .cookie_store(true)
@@ -290,8 +295,15 @@ pub async fn download_product_files(
         .build()?;
 
     let on_chunk_received = |chunk_received| {
-        progress.fetch_add(chunk_received, Ordering::SeqCst);
-        on_progress(progress.load(Ordering::SeqCst), total_file_size);
+        let prev_progress = progress.fetch_add(chunk_received, Ordering::SeqCst);
+
+        let now = UNIX_EPOCH.elapsed().unwrap().as_secs();
+
+        if now == last_callback_time.swap(now, Ordering::SeqCst) {
+            return;
+        }
+
+        on_progress(prev_progress + chunk_received, total_file_size);
     };
 
     let results =
@@ -422,7 +434,7 @@ async fn download_single_file(
                     format!("failed to write chunk to file `{}`", file_path.display())
                 })?;
             total_chunk_received += chunk.len() as u64;
-            on_chunk_received(total_chunk_received);
+            on_chunk_received(chunk.len() as u64);
         }
 
         writer

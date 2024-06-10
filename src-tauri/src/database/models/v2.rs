@@ -14,6 +14,14 @@ pub struct Account {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SimpleAccount {
+    pub id: i64,
+    pub username: String,
+    pub password: String,
+    pub memo: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CreatingAccount<'a> {
     pub username: &'a str,
     pub password: &'a str,
@@ -31,7 +39,6 @@ pub struct UpdatingAccount<'a> {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Product {
     pub id: String,
-    pub order_index: i64,
     /// it can be `NULL` if the product is not owned by any account (found in local)
     pub account_id: Option<i64>,
     pub ty: DLsiteProductType,
@@ -40,7 +47,7 @@ pub struct Product {
     pub thumbnail: String,
     pub group_id: String,
     pub group_name: String,
-    pub registered_at: DateTime<Utc>,
+    pub registered_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -54,7 +61,7 @@ pub struct CreatingProduct<'a> {
     pub thumbnail: &'a str,
     pub group_id: &'a str,
     pub group_name: &'a str,
-    pub registered_at: DateTime<Utc>,
+    pub registered_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

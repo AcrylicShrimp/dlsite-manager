@@ -2,7 +2,7 @@ use super::DBResult;
 use crate::{
     application::use_application,
     database::{
-        models::v2::{Account, CreatingAccount, UpdatingAccount},
+        models::v2::{Account, CreatingAccount, SimpleAccount, UpdatingAccount},
         tables::Table,
     },
 };
@@ -79,6 +79,36 @@ ORDER BY id ASC
         let mut stmt = connection.prepare(
             r#"
 SELECT
+    id,
+    username,
+    password,
+    memo,
+    product_count,
+    cookie_json
+FROM v2_accounts
+WHERE id = :id
+"#,
+        )?;
+
+        let account = stmt
+            .query_row(
+                named_params! {
+                    ":id": id,
+                },
+                |row| Ok(from_row::<Account>(row)),
+            )
+            .optional()?
+            .transpose()?;
+        Ok(account)
+    }
+
+    /// Retrieves a single account (simple) from the database.
+    pub fn get_one_simple(id: i64) -> DBResult<Option<SimpleAccount>> {
+        let connection = use_application().connection();
+        let mut stmt = connection.prepare(
+            r#"
+SELECT
+    id,
     username,
     password,
     memo
@@ -92,7 +122,7 @@ WHERE id = :id
                 named_params! {
                     ":id": id,
                 },
-                |row| Ok(from_row::<Account>(row)),
+                |row| Ok(from_row::<SimpleAccount>(row)),
             )
             .optional()?
             .transpose()?;

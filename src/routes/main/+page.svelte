@@ -1,19 +1,16 @@
 <script lang="ts">
-  import type { PageData } from "./$types";
   import {
     DLsiteProductDownloadState,
-    ProductQueryOrderBy,
     type DLsiteProductAge,
-    type DLsiteProductLocalizedString,
     type DLsiteProductType,
     type Product,
+    type ProductDownload,
   } from "@app/types/product";
   import type {
     DownloadComplete,
     DownloadProgress,
   } from "@app/types/download-event";
   import type { RefreshProgress } from "@app/types/refresh-event";
-  import type { DisplayLanguageSetting } from "@app/types/setting";
 
   import throttle from "lodash/throttle";
 
@@ -22,6 +19,7 @@
   import SmallButtonLink from "@app/lib/buttons/SmallButtonLink.svelte";
   import SmallFixedRedButton from "@app/lib/buttons/SmallFixedRedButton.svelte";
   import SmallFixedRedWithMenuButton from "@app/lib/buttons/SmallFixedRedWithMenuButton.svelte";
+  import SmallFixedBrightRedWithMenuButton from "@app/lib/buttons/SmallFixedBrightRedWithMenuButton.svelte";
   import SmallMenuButton from "@app/lib/buttons/SmallMenuButton.svelte";
 
   import { invoke } from "@tauri-apps/api/tauri";
@@ -34,26 +32,19 @@
   type Type = "" | DLsiteProductType;
   type DownloadState = "" | DLsiteProductDownloadState;
 
-  export let data: PageData;
   let query: string = "";
   let queryAge: Age = "";
   let queryType: Type = "";
   let queryDownloadState: DownloadState = "";
-  let queryOrderBy = ProductQueryOrderBy.PurchaseDateDesc;
+  let queryOrderBy = "desc";
   let products: Product[] = [];
-  let productDownloads: Map<string, number> = new Map();
+  let productDownloadedPaths: Map<string, string> = new Map();
+  let productDownloadProgresses: Map<string, number> = new Map();
   let updating: boolean = false;
   let progress: number = 0;
   let progressTotal: number = 0;
 
   onMount(async () => {
-    query = data.query.query.query ?? "";
-    queryAge = data.query.query.age ?? "";
-    queryType = data.query.query.ty ?? "";
-    queryDownloadState = data.query.download ?? "";
-    queryOrderBy =
-      data.query.query.order_by ?? ProductQueryOrderBy.PurchaseDateDesc;
-
     const unlistens = await Promise.all([
       appWindow.listen("refresh-begin", () => {
         updating = true;
@@ -69,41 +60,32 @@
         updating = false;
       }),
       appWindow.listen<string>("download-begin", (event) => {
-        productDownloads.set(event.payload, 0);
-        productDownloads = productDownloads;
+        productDownloadProgresses.set(event.payload, 0);
+        productDownloadProgresses = productDownloadProgresses;
         filterProducts(products);
       }),
       appWindow.listen<DownloadProgress>("download-progress", (event) => {
-        productDownloads.set(event.payload.product_id, event.payload.progress);
-        productDownloads = productDownloads;
-        filterProducts(products);
+        productDownloadProgresses.set(
+          event.payload.product_id,
+          event.payload.progress
+        );
+        productDownloadProgresses = productDownloadProgresses;
       }),
       appWindow.listen<DownloadComplete>("download-end", (event) => {
-        const index = products.findIndex(
-          (p) => p.product.id === event.payload.product_id
+        productDownloadedPaths.set(
+          event.payload.product_id,
+          event.payload.downloaded_path
         );
-
-        if (0 <= index) products[index].download = event.payload.download;
-
-        productDownloads.delete(event.payload.product_id);
-        productDownloads = productDownloads;
+        productDownloadedPaths = productDownloadedPaths;
+        productDownloadProgresses.delete(event.payload.product_id);
+        productDownloadProgresses = productDownloadProgresses;
         filterProducts(products);
       }),
       appWindow.listen<string>("download-invalid", (event) => {
-        const index = products.findIndex((p) => p.product.id === event.payload);
-
-        if (index < 0) return;
-
-        products[index].download = undefined;
+        productDownloadedPaths.delete(event.payload);
+        productDownloadedPaths = productDownloadedPaths;
         filterProducts(products);
       }),
-      appWindow.listen<DisplayLanguageSetting>(
-        "display-language-changed",
-        (event) => {
-          data.display_language_setting = event.payload;
-          products = products;
-        }
-      ),
     ]);
 
     await queryProducts();
@@ -136,8 +118,7 @@
     await queryProducts();
   }
   async function setQueryOrderBy(event: Event): Promise<void> {
-    queryOrderBy = (event.target as HTMLSelectElement)
-      .value as ProductQueryOrderBy;
+    queryOrderBy = (event.target as HTMLSelectElement).value;
     await queryProducts();
   }
 
@@ -146,21 +127,25 @@
       query,
       ...(queryAge ? { age: queryAge } : {}),
       ...(queryType ? { ty: queryType } : {}),
-      order_by: queryOrderBy,
+      order_by_asc: queryOrderBy === "asc",
     };
-
-    await invoke("latest_product_query_set", {
-      query: {
-        query: productQuery,
-        ...(queryDownloadState ? { download: queryDownloadState } : {}),
-      },
-    });
 
     const unfilteredProducts = await invoke<Product[]>(
       "product_list_products",
       {
         query: productQuery,
       }
+    );
+
+    const productDownloads = await invoke<ProductDownload[]>(
+      "product_list_product_downloads",
+      {
+        productIds: unfilteredProducts.map((product) => product.id),
+      }
+    );
+
+    productDownloadedPaths = new Map(
+      productDownloads.map((download) => [download.product_id, download.path])
     );
 
     filterProducts(unfilteredProducts);
@@ -171,21 +156,25 @@
       case DLsiteProductDownloadState.NotDownloaded:
         products = unfilteredProducts.filter(
           (product) =>
-            !product.download && !productDownloads.has(product.product.id)
+            !productDownloadedPaths.has(product.id) &&
+            !productDownloadProgresses.has(product.id)
         );
         break;
       case DLsiteProductDownloadState.Downloading:
         products = unfilteredProducts.filter((product) =>
-          productDownloads.has(product.product.id)
+          productDownloadProgresses.has(product.id)
         );
         break;
       case DLsiteProductDownloadState.Downloaded:
-        products = unfilteredProducts.filter((product) => product.download);
+        products = unfilteredProducts.filter((product) =>
+          productDownloadedPaths.has(product.id)
+        );
         break;
       case DLsiteProductDownloadState.DownloadingAndDownloaded:
         products = unfilteredProducts.filter(
           (product) =>
-            product.download || productDownloads.has(product.product.id)
+            productDownloadedPaths.has(product.id) ||
+            productDownloadProgresses.has(product.id)
         );
         break;
       default:
@@ -198,35 +187,26 @@
     product: Product,
     decompress: boolean
   ): Promise<void> {
-    if (productDownloads.has(product.product.id)) return;
+    if (productDownloadProgresses.has(product.id)) return;
 
-    productDownloads.set(product.product.id, 0);
+    productDownloadProgresses.set(product.id, 0);
     await invoke("product_download_product", {
-      accountId: product.account.id,
-      productId: product.product.id,
+      accountId: product.account_id,
+      productId: product.id,
       decompress,
     });
   }
 
   async function openDownloadedFolder(product: Product): Promise<void> {
     await invoke("product_open_downloaded_folder", {
-      productId: product.product.id,
+      productId: product.id,
     });
   }
 
   async function removeDownloadedFolder(product: Product): Promise<void> {
     await invoke("product_remove_downloaded_product", {
-      productId: product.product.id,
+      productId: product.id,
     });
-  }
-
-  function localize(text: DLsiteProductLocalizedString): string {
-    for (const language of data.display_language_setting.languages) {
-      const localized = text[language];
-      if (localized) return localized;
-    }
-
-    return text.japanese!;
   }
 </script>
 
@@ -321,20 +301,8 @@
       bind:value={queryOrderBy}
       on:change={setQueryOrderBy}
     >
-      <option value="IdAsc">Product Id [Ascending]</option>
-      <option value="IdDesc">Product Id [Descending]</option>
-      <option value="TitleAsc">Product Title [Ascending]</option>
-      <option value="TitleDesc">Product Title [Descending]</option>
-      <option value="GroupAsc">Product Group [Ascending]</option>
-      <option value="GroupDesc">Product Group [Descending]</option>
-      <option value="RegistrationDateAsc">Registration Date [Ascending]</option>
-      <option value="RegistrationDateDesc"
-        >Registration Date [Descending]</option
-      >
-      <option value="PurchaseDateAsc">Purchase Date [Ascending]</option>
-      <option value="PurchaseDateDesc" selected
-        >Purchase Date [Descending]</option
-      >
+      <option value="desc" selected>Descending</option>
+      <option value="asc">Ascending</option>
     </LabeledSelect>
   </div>
   <span class="block h-2" />
@@ -343,29 +311,29 @@
       <div class="p-2 border border-1/5 rounded">
         <div class="flex flex-row items-start justify-start">
           <img
-            src={product.product.icon.small}
+            src={product.thumbnail}
             width="64"
             height="64"
-            alt={localize(product.product.title)}
+            alt={product.title}
             class="rounded"
           />
           <span class="flex-none block w-4" />
           <div class="flex-1 min-w-0 flex flex-col items-start justify-start">
             <p
               class="text-4/5 text-lg min-w-0 max-w-full text-ellipsis overflow-hidden whitespace-nowrap"
-              title={localize(product.product.title)}
+              title={product.title}
             >
-              {localize(product.product.title)}
+              {product.title}
             </p>
             <span class="flex-none block h-1" />
             <a
-              href={`https://www.dlsite.com/maniax/circle/profile/=/maker_id/${product.product.group.id}.html`}
+              href={`https://www.dlsite.com/maniax/circle/profile/=/maker_id/${product.group_id}.html`}
               target="_blank"
               rel="noreferrer"
-              title={localize(product.product.group.name)}
+              title={product.group_name}
               class="text-3/5 text-sm min-w-0 max-w-full text-ellipsis overflow-hidden whitespace-nowrap hover:underline"
             >
-              {localize(product.product.group.name)}
+              {product.group_name}
             </a>
             <span class="flex-none block h-2" />
             <div
@@ -373,25 +341,24 @@
             >
               <span
                 class={`text-sm w-8 h-[1.5em] flex flex-row items-center justify-center ${
-                  BgCssAge[product.product.age] ?? BgCssAge.Unknown
-                } rounded`}>{product.product.age}</span
+                  BgCssAge[product.age] ?? BgCssAge.Unknown
+                } rounded`}>{product.age}</span
               >
               <span class="flex-none block w-1" />
               <span
                 class={`text-sm px-1 h-[1.5em] flex flex-row items-center justify-center ${
-                  BgCssType[product.product.ty] ?? BgCssType.Unknown
+                  BgCssType[product.ty] ?? BgCssType.Unknown
                 } rounded`}
-                >{DisplayTypeString[product.product.ty] ??
-                  `Other(${product.product.ty})`}</span
+                >{DisplayTypeString[product.ty] ?? `Other(${product.ty})`}</span
               >
               <span class="flex-1" />
               <SmallButtonLink
-                href={`https://www.dlsite.com/maniax/work/=/product_id/${product.product.id}.html`}
+                href={`https://www.dlsite.com/maniax/work/=/product_id/${product.id}.html`}
                 rel="noreferrer">Visit Product Page</SmallButtonLink
               >
               <span class="flex-none block w-1" />
-              {#if product.download}
-                <SmallFixedRedWithMenuButton
+              {#if productDownloadedPaths.has(product.id)}
+                <SmallFixedBrightRedWithMenuButton
                   on:click={() => openDownloadedFolder(product)}
                 >
                   Open Folder
@@ -409,11 +376,11 @@
                       >Remove Download</SmallMenuButton
                     >
                   </div>
-                </SmallFixedRedWithMenuButton>
-              {:else if productDownloads.has(product.product.id)}
+                </SmallFixedBrightRedWithMenuButton>
+              {:else if productDownloadProgresses.has(product.id)}
                 <SmallFixedRedButton disabled>
-                  {#if productDownloads.get(product.product.id)}
-                    Downloading... {productDownloads.get(product.product.id)}%
+                  {#if productDownloadProgresses.get(product.id)}
+                    Downloading... {productDownloadProgresses.get(product.id)}%
                   {:else}
                     Downloading...
                   {/if}

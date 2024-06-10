@@ -7,6 +7,8 @@ use crate::{
     dlsite::dto::{DLsiteProductAgeCategory, DLsiteProductType},
     use_application,
 };
+use anyhow::Context;
+use serde::Serialize;
 use serde_rusqlite::*;
 
 pub struct ProductTable;
@@ -24,7 +26,7 @@ CREATE TABLE IF NOT EXISTS v2_products (
     thumbnail TEXT NOT NULL,
     group_id TEXT NOT NULL,
     group_name TEXT NOT NULL,
-    registered_at INTEGER NOT NULL,
+    registered_at INTEGER NULL,
 
     FOREIGN KEY(account_id) REFERENCES v2_accounts(id) ON UPDATE CASCADE ON DELETE CASCADE
 );
@@ -85,7 +87,13 @@ INSERT INTO v2_products (
     registered_at = excluded.registered_at
 "#,
             )?;
-            let mut index_stmt = tx.prepare(
+            let mut index_remove_stmt = tx.prepare(
+                r#"
+DELETE FROM v2_indexed_products
+WHERE id = :id
+"#,
+            )?;
+            let mut index_insert_stmt = tx.prepare(
                 r#"
 INSERT INTO v2_indexed_products (
     id,
@@ -97,16 +105,17 @@ INSERT INTO v2_indexed_products (
     :title,
     :group_id,
     :group_name
-) ON CONFLICT (id) DO UPDATE SET
-    title = excluded.title,
-    group_id = excluded.group_id,
-    group_name = excluded.group_name;
-"#,
+)"#,
             )?;
 
             for product in products {
                 insert_stmt.execute(to_params_named(&product)?.to_slice().as_slice())?;
-                index_stmt.execute(
+                index_remove_stmt.execute(
+                    to_params_named_with_fields(&product, &["id"])?
+                        .to_slice()
+                        .as_slice(),
+                )?;
+                index_insert_stmt.execute(
                     to_params_named_with_fields(
                         &product,
                         &["id", "title", "group_id", "group_name"],
@@ -129,25 +138,47 @@ INSERT INTO v2_indexed_products (
     ) -> DBResult<Vec<Product>> {
         let mut where_clause = String::new();
         let mut params = vec![];
-        where_clause.push_str("WHERE TRUE");
+        where_clause.push_str("TRUE");
 
         if let Some(query) = query {
             let query = query.trim();
 
             if !query.is_empty() {
+                #[derive(Serialize)]
+                struct QueryParam<'a> {
+                    pub query: &'a str,
+                }
+
                 where_clause.push_str(" AND v2_indexed_products MATCH :query");
-                params.push(to_params_named(&query)?);
+                params.push(
+                    to_params_named(QueryParam { query })
+                        .with_context(|| format!("[query build] query"))?,
+                );
             }
         }
 
         if let Some(ty) = ty {
+            #[derive(Serialize)]
+            struct QueryTy {
+                pub ty: DLsiteProductType,
+            }
+
             where_clause.push_str(" AND product.ty = :ty");
-            params.push(to_params_named(&ty)?);
+            params.push(
+                to_params_named(QueryTy { ty }).with_context(|| format!("[query build] ty"))?,
+            );
         }
 
         if let Some(age) = age {
+            #[derive(Serialize)]
+            struct QueryAge {
+                pub age: DLsiteProductAgeCategory,
+            }
+
             where_clause.push_str(" AND product.age = :age");
-            params.push(to_params_named(&age)?);
+            params.push(
+                to_params_named(QueryAge { age }).with_context(|| format!("[query build] age"))?,
+            );
         }
 
         let params = params
@@ -157,9 +188,9 @@ INSERT INTO v2_indexed_products (
             .collect::<Vec<_>>();
 
         let order_by_clause = if order_by_asc {
-            "product.registered_at ASC, id ASC"
+            "product.registered_at ASC, product.id ASC"
         } else {
-            "product.registered_at DESC, id DESC"
+            "product.registered_at DESC, product.id DESC"
         };
 
         let connection = use_application().connection();

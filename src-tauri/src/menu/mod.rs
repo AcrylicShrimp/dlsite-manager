@@ -52,17 +52,17 @@ impl MenuProvider for ApplicationMenu {
                 "Product",
                 Menu::new()
                     .add_item(CustomMenuItem::new(
-                        "product/update-product-list",
-                        "Update Product",
+                        "product/fetch-new-products",
+                        "Fetch New Products",
                     ))
                     .add_native_item(MenuItem::Separator)
                     .add_item(CustomMenuItem::new(
-                        "product/refresh-product-list",
-                        "Refresh Product All",
+                        "product/refresh-products-all",
+                        "Refresh All Products (Drop Caches)",
                     ))
                     .add_item(CustomMenuItem::new(
                         "product/refresh-product-download",
-                        "Refresh Product Downloads",
+                        "Refresh Product Downloads (Drop Caches)",
                     )),
             ))
             .add_submenu(Submenu::new(
@@ -94,7 +94,7 @@ impl MenuProvider for ApplicationMenu {
                     result.unwrap();
                 })());
             }
-            "product/refresh-product-list" => {
+            "product/refresh-products-all" => {
                 spawn((|| async {
                     {
                         let mut is_updating_product = use_application().is_updating_product();

@@ -29,6 +29,7 @@ where
             account_management::account_management_remove_account,
             account_management::account_management_test_account,
             product::product_list_products,
+            product::product_list_product_downloads,
             product::product_download_product,
             product::product_open_downloaded_folder,
             product::product_remove_downloaded_product,

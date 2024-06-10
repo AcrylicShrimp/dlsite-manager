@@ -40,9 +40,12 @@ impl Application {
 
         create_dir_all(&app_dir).map_err(|err| Error::AppDirCreationError { io_error: err })?;
 
+        let mut database = Database::load(app_dir.join("database.db"))?;
+        rusqlite::vtab::array::load_module(database.connection_mut())?;
+
         Ok(Self {
             app_handle: app.handle(),
-            database: Mutex::new(Some(Database::load(app_dir.join("database.db"))?)),
+            database: Mutex::new(Some(database)),
             is_updating_product: Mutex::new(false),
         })
     }

@@ -79,8 +79,8 @@
       (isTesting || testResult === null
         ? " text-3/5"
         : testResult < 0
-        ? " text-error"
-        : " text-ok")}
+          ? " text-error"
+          : " text-ok")}
   >
     {#if isTesting}
       Testing...

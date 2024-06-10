@@ -16,6 +16,8 @@ pub enum DBError {
     RusqliteError(#[from] rusqlite::Error),
     #[error("{0:?}")]
     SerdeRusqliteError(#[from] serde_rusqlite::Error),
+    #[error("{0:?}")]
+    AnyError(#[from] anyhow::Error),
 }
 
 pub type DBResult<T> = Result<T, DBError>;

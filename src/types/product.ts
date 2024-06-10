@@ -1,14 +1,17 @@
-import type { Account } from "./account";
-
 export interface Product {
-  id: number;
-  account: Account;
-  product: DLsiteProduct;
-  download?: ProductDownload;
+  id: string;
+  account_id?: number;
+  ty: DLsiteProductType;
+  age: DLsiteProductAge;
+  title: string;
+  thumbnail: string;
+  group_id: string;
+  group_name: string;
+  registered_at?: string;
 }
 
 export interface ProductDownload {
-  id: number;
+  product_id: string;
   path: string;
 }
 
@@ -16,50 +19,7 @@ export interface ProductQuery {
   query?: string;
   age?: DLsiteProductAge;
   ty?: DLsiteProductType;
-  order_by?: ProductQueryOrderBy;
-}
-
-export enum ProductQueryOrderBy {
-  IdAsc = "IdAsc",
-  IdDesc = "IdDesc",
-  TitleAsc = "TitleAsc",
-  TitleDesc = "TitleDesc",
-  GroupAsc = "GroupAsc",
-  GroupDesc = "GroupDesc",
-  RegistrationDateAsc = "RegistrationDateAsc",
-  RegistrationDateDesc = "RegistrationDateDesc",
-  PurchaseDateAsc = "PurchaseDateAsc",
-  PurchaseDateDesc = "PurchaseDateDesc",
-}
-
-export interface DLsiteProduct {
-  id: string;
-  ty: DLsiteProductType;
-  age: DLsiteProductAge;
-  title: DLsiteProductLocalizedString;
-  group: DLsiteProductGroup;
-  icon: DLsiteProductIcon;
-  registered_at?: string;
-  upgraded_at?: string;
-  purchased_at: string;
-}
-
-export interface DLsiteProductLocalizedString {
-  japanese?: string;
-  english?: string;
-  korean?: string;
-  taiwanese?: string;
-  chinese?: string;
-}
-
-export interface DLsiteProductGroup {
-  id: string;
-  name: DLsiteProductLocalizedString;
-}
-
-export interface DLsiteProductIcon {
-  main: string;
-  small: string;
+  order_by_asc?: boolean;
 }
 
 export enum DLsiteProductType {

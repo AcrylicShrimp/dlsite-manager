@@ -14,7 +14,7 @@
   class="relative flex items-stretch justify-start text-sm text-4/5 disabled:text-4/5/50 disabled:bg-error/20"
 >
   <button
-    class="duration-200 py-1 w-[8.5rem] bg-error/20 hover:bg-error rounded-l"
+    class="duration-200 py-1 w-[8.5rem] bg-error/70 hover:bg-error rounded-l"
     on:click><slot /></button
   >
   <button

@@ -53,9 +53,7 @@ INSERT INTO v2_product_downloads (
 SELECT
     product_id,
     path
-FROM v2_product_downloads WHERE product_id IN (
-    SELECT value FROM rarray(?)
-)
+FROM v2_product_downloads WHERE product_id IN rarray(?)
 "#,
         )?;
 

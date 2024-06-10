@@ -53,8 +53,6 @@ impl DLsiteService {
             }
         };
 
-        info!("[get_cookie_store] account: {:#?}", account);
-
         match CookieStore::load_json(account.cookie_json.as_bytes()) {
             Ok(cookies) => {
                 info!("[get_cookie_store] successfully parsed cookie_json of the account");
@@ -172,7 +170,7 @@ impl DLsiteService {
 
         on_progress(progress, total_progress);
 
-        for mut detail in account_details {
+        'outter: for mut detail in account_details {
             const PAGE_LIMIT: u32 = 50;
 
             // The first page may contain some products that are already fetched before.
@@ -184,8 +182,8 @@ impl DLsiteService {
                 let products = match get_products(detail.cookie_store.clone(), page).await {
                     Ok(products) => products,
                     Err(err) => {
-                        warn!("[fetch_new_products] failed to fetch products of {} page of the account id `{}`: {:?}", page, detail.account_id, err);
-                        break;
+                        error!("[fetch_new_products] failed to fetch products of {} page of the account id `{}`: {:?}", page, detail.account_id, err);
+                        continue 'outter;
                     }
                 };
                 let products = &products[already_fetched_product_count..];
@@ -198,8 +196,8 @@ impl DLsiteService {
                         .into_iter()
                         .map(|product| make_creating_product(detail.account_id, product)),
                 ) {
-                    warn!("[fetch_new_products] failed to update the products from the account id `{}` to the database: {:?}", detail.account_id, err);
-                    break;
+                    error!("[fetch_new_products] failed to update the products from the account id `{}` to the database: {:?}", detail.account_id, err);
+                    continue 'outter;
                 }
 
                 on_progress(progress, total_progress);
@@ -212,12 +210,11 @@ impl DLsiteService {
                 detail.account_id,
                 detail.prev_product_count as i32,
             ) {
-                warn!(
-                        "[fetch_new_products] failed to update the product count of the account id `{}` to the database: {:?}",
-                        detail.account_id,
-                        err
-                    );
-                break;
+                error!(
+                    "[fetch_new_products] failed to update the product count of the account id `{}` to the database: {:?}",
+                    detail.account_id,
+                    err
+                );
             }
         }
 
@@ -282,7 +279,7 @@ impl DLsiteService {
 
         on_progress(progress, total_progress);
 
-        for detail in account_details {
+        'outter: for detail in account_details {
             const PAGE_LIMIT: u32 = 50;
 
             let mut prev_product_count = 0;
@@ -292,8 +289,8 @@ impl DLsiteService {
                 let products = match get_products(detail.cookie_store.clone(), page).await {
                     Ok(products) => products,
                     Err(err) => {
-                        warn!("[refresh_products_all] failed to fetch products of {} page of the account id `{}`: {:?}", page, detail.account_id, err);
-                        break;
+                        error!("[refresh_products_all] failed to fetch products of {} page of the account id `{}`: {:?}", page, detail.account_id, err);
+                        continue 'outter;
                     }
                 };
 
@@ -305,8 +302,8 @@ impl DLsiteService {
                         .iter()
                         .map(|product| make_creating_product(detail.account_id, product)),
                 ) {
-                    warn!("[refresh_products_all] failed to update the products from the account id `{}` to the database: {:?}", detail.account_id, err);
-                    break;
+                    error!("[refresh_products_all] failed to update the products from the account id `{}` to the database: {:?}", detail.account_id, err);
+                    continue 'outter;
                 }
 
                 on_progress(progress, total_progress);
@@ -315,12 +312,11 @@ impl DLsiteService {
             if let Err(err) =
                 AccountTable::update_one_product_count(detail.account_id, prev_product_count as i32)
             {
-                warn!(
-                        "[refresh_products_all] failed to update the product count of the account id `{}` to the database: {:?}",
-                        detail.account_id,
-                        err
-                    );
-                break;
+                error!(
+                    "[refresh_products_all] failed to update the product count of the account id `{}` to the database: {:?}",
+                    detail.account_id,
+                    err
+                );
             }
         }
 
