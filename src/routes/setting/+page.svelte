@@ -1,24 +1,17 @@
 <script lang="ts">
-  import type { PageData } from "./$types";
+  import type { Setting } from "@app/types/setting";
 
-  import DragDropList from "@app/lib/lists/DragDropList.svelte";
   import PrimaryButton from "@app/lib/buttons/PrimaryButton.svelte";
   import SecondaryButton from "@app/lib/buttons/SecondaryButton.svelte";
 
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
 
-  interface Language {
-    id: string;
-    text: string;
-  }
-
-  export let data: PageData;
   let defaultRootDir: string;
-  let languages: Language[] = [];
 
   onMount(async () => {
-    defaultRootDir = data.setting.download_root_dir;
+    const setting = await invoke<Setting>("setting_get");
+    defaultRootDir = setting.download_root_dir;
 
     await invoke("show_window");
   });
@@ -66,13 +59,3 @@
     <PrimaryButton on:click={save}>Save</PrimaryButton>
   </div>
 </section>
-
-<style lang="postcss">
-  :global(.dragdroplist > div.item) {
-    @apply !border !border-4/5 !text-1/5 !bg-3/5 !rounded;
-  }
-
-  :global(.dragdroplist > .list > div.item) {
-    @apply border border-4/5 text-0/5 bg-4/5 rounded;
-  }
-</style>

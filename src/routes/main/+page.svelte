@@ -12,8 +12,6 @@
   } from "@app/types/download-event";
   import type { RefreshProgress } from "@app/types/refresh-event";
 
-  import throttle from "lodash/throttle";
-
   import Input from "@app/lib/inputs/Input.svelte";
   import LabeledSelect from "@app/lib/selects/LabeledSelect.svelte";
   import SmallButtonLink from "@app/lib/buttons/SmallButtonLink.svelte";
@@ -25,6 +23,7 @@
 
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrent } from "@tauri-apps/api/window";
+  import throttle from "lodash/throttle";
   import { onMount } from "svelte";
 
   import { BgCssAge, BgCssType, DisplayTypeString } from "./product-values";
@@ -48,56 +47,50 @@
 
   onMount(async () => {
     const appWindow = getCurrent();
-    const unlistens = await Promise.all([
-      appWindow.listen("refresh-begin", (event) => {
-        updating = true;
-        showProgress = event.payload !== "no-progress";
-        progress = 0;
-        progressTotal = 0;
-      }),
-      appWindow.listen<RefreshProgress>("refresh-progress", (event) => {
-        progress = event.payload.progress;
-        progressTotal = event.payload.total_progress;
-      }),
-      appWindow.listen("refresh-end", async () => {
-        await queryProducts();
-        updating = false;
-      }),
-      appWindow.listen<string>("download-begin", (event) => {
-        productDownloadProgresses.set(event.payload, [0, false]);
-        productDownloadProgresses = productDownloadProgresses;
-        filterProducts(products);
-      }),
-      appWindow.listen<DownloadProgress>("download-progress", (event) => {
-        productDownloadProgresses.set(event.payload.product_id, [
-          event.payload.progress,
-          event.payload.decompressing,
-        ]);
-        productDownloadProgresses = productDownloadProgresses;
-      }),
-      appWindow.listen<DownloadComplete>("download-end", (event) => {
-        productDownloadedPaths.set(
-          event.payload.product_id,
-          event.payload.downloaded_path
-        );
-        productDownloadedPaths = productDownloadedPaths;
-        productDownloadProgresses.delete(event.payload.product_id);
-        productDownloadProgresses = productDownloadProgresses;
-        filterProducts(products);
-      }),
-      appWindow.listen<string>("download-invalid", (event) => {
-        productDownloadedPaths.delete(event.payload);
-        productDownloadedPaths = productDownloadedPaths;
-        filterProducts(products);
-      }),
-    ]);
+    await appWindow.listen("refresh-begin", (event) => {
+      updating = true;
+      showProgress = event.payload !== "no-progress";
+      progress = 0;
+      progressTotal = 0;
+    });
+    await appWindow.listen<RefreshProgress>("refresh-progress", (event) => {
+      progress = event.payload.progress;
+      progressTotal = event.payload.total_progress;
+    });
+    await appWindow.listen("refresh-end", async () => {
+      await queryProducts();
+      updating = false;
+    });
+    await appWindow.listen<string>("download-begin", (event) => {
+      productDownloadProgresses.set(event.payload, [0, false]);
+      productDownloadProgresses = productDownloadProgresses;
+      filterProducts(products);
+    });
+    await appWindow.listen<DownloadProgress>("download-progress", (event) => {
+      productDownloadProgresses.set(event.payload.product_id, [
+        event.payload.progress,
+        event.payload.decompressing,
+      ]);
+      productDownloadProgresses = productDownloadProgresses;
+    });
+    await appWindow.listen<DownloadComplete>("download-end", (event) => {
+      productDownloadedPaths.set(
+        event.payload.product_id,
+        event.payload.downloaded_path
+      );
+      productDownloadedPaths = productDownloadedPaths;
+      productDownloadProgresses.delete(event.payload.product_id);
+      productDownloadProgresses = productDownloadProgresses;
+      filterProducts(products);
+    });
+    await appWindow.listen<string>("download-invalid", (event) => {
+      productDownloadedPaths.delete(event.payload);
+      productDownloadedPaths = productDownloadedPaths;
+      filterProducts(products);
+    });
 
     await queryProducts();
     await invoke("show_window");
-
-    return () => {
-      for (const unlisten of unlistens) unlisten();
-    };
   });
 
   const throttledSearch = throttle(search, 250, {

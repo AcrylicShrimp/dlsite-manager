@@ -1,5 +1,4 @@
 <script lang="ts">
-  import type { PageData } from "./$types";
   import type { Account } from "@app/types/account";
 
   import SmallButton from "@app/lib/buttons/SmallButton.svelte";
@@ -9,45 +8,38 @@
   import { getCurrent } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
 
-  export let data: PageData;
   let accounts: Account[] = [];
 
   onMount(async () => {
-    accounts = data.accounts;
+    accounts = await invoke<Account[]>("account_management_list_accounts");
 
     const appWindow = getCurrent();
-    const unlistens = await Promise.all([
-      appWindow.listen<Account>("add-account", (event) => {
-        accounts = [...accounts, event.payload];
-      }),
-      appWindow.listen<Account>("edit-account", (event) => {
-        for (const account of accounts) {
-          if (account.id !== event.payload.id) continue;
-          account.username = event.payload.username;
-          account.password = event.payload.password;
-          account.memo = event.payload.memo;
-          break;
-        }
+    await appWindow.listen<Account>("add-account", (event) => {
+      accounts = [...accounts, event.payload];
+    });
+    await appWindow.listen<Account>("edit-account", (event) => {
+      for (const account of accounts) {
+        if (account.id !== event.payload.id) continue;
+        account.username = event.payload.username;
+        account.password = event.payload.password;
+        account.memo = event.payload.memo;
+        break;
+      }
 
-        accounts = [...accounts];
-      }),
-      appWindow.listen<number>("remove-account", (event) => {
-        const index = accounts.findIndex(
-          (account) => account.id === event.payload
-        );
+      accounts = [...accounts];
+    });
+    await appWindow.listen<number>("remove-account", (event) => {
+      const index = accounts.findIndex(
+        (account) => account.id === event.payload
+      );
 
-        if (index < 0) return;
+      if (index < 0) return;
 
-        accounts.splice(index, 1);
-        accounts = [...accounts];
-      }),
-    ]);
+      accounts.splice(index, 1);
+      accounts = [...accounts];
+    });
 
     await invoke("show_window");
-
-    return () => {
-      for (const unlisten of unlistens) unlisten();
-    };
   });
 
   async function add(): Promise<void> {

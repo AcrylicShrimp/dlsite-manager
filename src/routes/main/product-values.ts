@@ -1,4 +1,4 @@
-import type { DLsiteProductAge, DLsiteProductType } from "src/types/product";
+import type { DLsiteProductAge, DLsiteProductType } from "@app/types/product";
 
 export const DisplayTypeString: Record<DLsiteProductType, string> = {
   Adult: "Adult",
