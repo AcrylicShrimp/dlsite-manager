@@ -4,10 +4,6 @@ Easies way to enjoy the DLsite!
 
 ![main-image](./docs/img-list.png)
 
-## 🚧 Major changes on `main` branch
-
-This project is preparing a **major update** on 'main' branch. So it may **not compile**.
-
 ## Key Features
 
 - List, search and download your products.
@@ -21,9 +17,9 @@ To start download, just press the `Download` button. You don't need to decompres
 
 ## Renew product list
 
-The products are cached on your machine, so newly purchased things will not be shown. To refresh it, click the menu `Product > Update Product`.
+The products are cached on your machine, so newly purchased things will not be shown. To refresh it, click the menu `Product > Fetch New Products`.
 
-> **NOTE**: If you want to drop caches and update products entirely, click the menu `Product > Refresh Product All` instead.
+> **NOTE**: If you want to drop caches and update products entirely, click the menu `Product > Refresh All Products (Drop Caches)` instead.
 
 ![update-product-image](./docs/img-update-product.png)
 
@@ -32,3 +28,7 @@ The products are cached on your machine, so newly purchased things will not be s
 Do you have multiple accounts? Don't worry! The `dlsite-manager` will manage them, so you don't need to care. _Also, never forget to test your account!_
 
 ![account-management-image](./docs/img-account-management.png)
+
+## Managing not-owned products
+
+You can manage products that are not owned by any account! Use `Product > Scan Downloaded Products` to scan all downloaded products at once. It can also be used to restore download state of your products, too!
