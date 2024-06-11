@@ -23,8 +23,8 @@
   import SmallFixedBrightRedWithMenuButton from "@app/lib/buttons/SmallFixedBrightRedWithMenuButton.svelte";
   import SmallMenuButton from "@app/lib/buttons/SmallMenuButton.svelte";
 
-  import { invoke } from "@tauri-apps/api/tauri";
-  import { appWindow } from "@tauri-apps/api/window";
+  import { invoke } from "@tauri-apps/api/core";
+  import { getCurrent } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
 
   import { BgCssAge, BgCssType, DisplayTypeString } from "./product-values";
@@ -47,6 +47,7 @@
   let progressTotal: number = 0;
 
   onMount(async () => {
+    const appWindow = getCurrent();
     const unlistens = await Promise.all([
       appWindow.listen("refresh-begin", (event) => {
         updating = true;

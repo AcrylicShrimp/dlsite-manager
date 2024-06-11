@@ -2,33 +2,26 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
-    "devPath": "http://localhost:1420",
-    "distDir": "../build",
-    "withGlobalTauri": false
+    "frontendDist": "../build",
+    "devUrl": "http://localhost:1420"
   },
-  "package": {
-    "productName": "DLsite Manager",
-    "version": "1.5.0"
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Utility",
+    "icon": [
+      "icons/icon.ico"
+    ]
   },
-  "tauri": {
-    "allowlist": {
-      "shell": {
-        "open": ""
-      }
-    },
-    "bundle": {
-      "active": true,
-      "targets": "all",
-      "category": "Utility",
-      "identifier": "dev.ashrimp.dlsite-manager",
-      "icon": ["icons/icon.ico"]
-    },
+  "productName": "DLsite Manager",
+  "version": "2.0.0",
+  "identifier": "dev.ashrimp.dlsite-manager",
+  "plugins": {},
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [],
     "security": {
       "csp": null
-    },
-    "updater": {
-      "active": false
-    },
-    "windows": []
+    }
   }
 }

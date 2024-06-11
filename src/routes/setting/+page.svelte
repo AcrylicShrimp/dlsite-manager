@@ -5,7 +5,7 @@
   import PrimaryButton from "@app/lib/buttons/PrimaryButton.svelte";
   import SecondaryButton from "@app/lib/buttons/SecondaryButton.svelte";
 
-  import { invoke } from "@tauri-apps/api/tauri";
+  import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
 
   interface Language {

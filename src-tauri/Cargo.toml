@@ -1,6 +1,6 @@
 [package]
 name = "dlsite-manager"
-version = "1.5.0"
+version = "2.0.0"
 description = "manage your DLsite accounts and products at once"
 authors = ["AcrylicShrimp"]
 license = "MIT"
@@ -11,12 +11,15 @@ rust-version = "1.57"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [build-dependencies]
-tauri-build = { version = "1.5", features = [] }
+tauri-build = { version = "2.0.0-beta", features = [] }
 
 [dependencies]
 anyhow = { version = "1" }
 chrono = { version = "0.4", features = ["serde"] }
+flexi_logger = "0.28"
+futures = { version = "0.3" }
 lazy_static = { version = "1" }
+log = "0.4"
 parking_lot = { version = "0.12" }
 reqwest = { version = "0.11", features = ["cookies", "json"] }
 reqwest_cookie_store = { version = "0.6" }
@@ -25,16 +28,13 @@ serde_json = { version = "1.0" }
 serde_rusqlite = { version = "0.35" }
 serde = { version = "1.0", features = ["derive"] }
 scraper = { version = "0.19" }
-strum = { version = "0.26" }
-strum_macros = { version = "0.26" }
-tauri = { version = "1.5", features = ["dialog", "shell-open"] }
+tauri = { version = "2.0.0-beta", features = ["tray-icon"] }
+tauri-plugin-dialog = "2.0.0-beta"
+tauri-plugin-shell = "2.0.0-beta"
 thiserror = { version = "1" }
-zip-extract = { git = "https://github.com/AcrylicShrimp/zip-extract", tag="v1.3.0" }
-unrar = { version = "0.5" }
 tokio = { version = "1", features = ["full"] }
-futures = { version = "0.3" }
-log = "0.4"
-flexi_logger = "0.28"
+unrar = { version = "0.5" }
+zip-extract = { git = "https://github.com/AcrylicShrimp/zip-extract", tag="v1.3.0" }
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

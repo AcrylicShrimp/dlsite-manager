@@ -5,7 +5,7 @@
   import SecondaryButton from "@app/lib/buttons/SecondaryButton.svelte";
   import LabeledInput from "@app/lib/inputs/LabeledInput.svelte";
 
-  import { invoke } from "@tauri-apps/api/tauri";
+  import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
 
   let id: number;

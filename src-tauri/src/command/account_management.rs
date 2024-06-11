@@ -28,7 +28,7 @@ pub fn account_management_add_account<R: Runtime>(
 ) -> CommandResult<()> {
     let account_id = AccountTable::insert_one(account.clone())?;
 
-    if let Some(window) = app_handle.get_window(&AccountManagementWindow.label()) {
+    if let Some(window) = app_handle.get_webview_window(&AccountManagementWindow.label()) {
         window.emit(
             "add-account",
             SimpleAccount {
@@ -52,7 +52,7 @@ pub fn account_management_update_account<R: Runtime>(
 ) -> CommandResult<()> {
     AccountTable::update_one(account.clone())?;
 
-    if let Some(window) = app_handle.get_window(&AccountManagementWindow.label()) {
+    if let Some(window) = app_handle.get_webview_window(&AccountManagementWindow.label()) {
         window.emit(
             "edit-account",
             SimpleAccount {
@@ -75,11 +75,11 @@ pub fn account_management_remove_account<R: Runtime>(
 ) -> CommandResult<()> {
     AccountTable::remove_one(account_id)?;
 
-    if let Some(window) = app_handle.get_window(&AccountManagementWindow.label()) {
+    if let Some(window) = app_handle.get_webview_window(&AccountManagementWindow.label()) {
         window.emit("remove-account", account_id)?;
     }
 
-    if let Some(window) = app_handle.get_window(&AccountEditWindow { account_id }.label()) {
+    if let Some(window) = app_handle.get_webview_window(&AccountEditWindow { account_id }.label()) {
         window.close()?;
     }
 

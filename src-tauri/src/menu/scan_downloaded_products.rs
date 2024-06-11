@@ -16,7 +16,7 @@ use tauri::Manager;
 pub async fn scan_downloaded_products() -> Result<(), AnyError> {
     if let Some(window) = use_application()
         .app_handle()
-        .get_window(&MainWindow.label())
+        .get_webview_window(&MainWindow.label())
     {
         window.emit("refresh-begin", "no-progress")?;
     }
@@ -125,7 +125,7 @@ pub async fn scan_downloaded_products() -> Result<(), AnyError> {
 
     if let Some(window) = use_application()
         .app_handle()
-        .get_window(&MainWindow.label())
+        .get_webview_window(&MainWindow.label())
     {
         window.emit("refresh-end", ())?;
     }

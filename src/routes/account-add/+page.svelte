@@ -3,7 +3,7 @@
   import SecondaryButton from "@app/lib/buttons/SecondaryButton.svelte";
   import LabeledInput from "@app/lib/inputs/LabeledInput.svelte";
 
-  import { invoke } from "@tauri-apps/api/tauri";
+  import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
 
   let username: string;
@@ -67,8 +67,8 @@
       (isTesting || testResult === null
         ? " text-3/5"
         : testResult < 0
-        ? " text-error"
-        : " text-ok")}
+          ? " text-error"
+          : " text-ok")}
   >
     {#if isTesting}
       Testing...

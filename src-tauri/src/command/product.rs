@@ -11,7 +11,8 @@ use crate::{
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tauri::{api::shell, Manager, Runtime};
+use tauri::{Manager, Runtime};
+use tauri_plugin_shell::ShellExt;
 
 #[derive(Default, Debug, Clone, Deserialize)]
 pub struct ProductQuery<'a> {
@@ -61,7 +62,7 @@ pub async fn product_download_product<R: Runtime>(
     product_id: String,
     decompress: Option<bool>,
 ) -> CommandResult<()> {
-    if let Some(window) = app_handle.get_window(&MainWindow.label()) {
+    if let Some(window) = app_handle.get_webview_window(&MainWindow.label()) {
         window.emit("download-begin", &product_id)?;
     }
 
@@ -73,7 +74,7 @@ pub async fn product_download_product<R: Runtime>(
                 &product_id,
                 &path,
                 |progress, total_progress, decompressing| {
-                    if let Some(window) = app_handle.get_window(&MainWindow.label()) {
+                    if let Some(window) = app_handle.get_webview_window(&MainWindow.label()) {
                         window
                             .emit(
                                 "download-progress",
@@ -97,7 +98,7 @@ pub async fn product_download_product<R: Runtime>(
                 &product_id,
                 &path,
                 |progress, total_progress| {
-                    if let Some(window) = app_handle.get_window(&MainWindow.label()) {
+                    if let Some(window) = app_handle.get_webview_window(&MainWindow.label()) {
                         window
                             .emit(
                                 "download-progress",
@@ -116,7 +117,7 @@ pub async fn product_download_product<R: Runtime>(
             .await
     };
 
-    if let Some(window) = app_handle.get_window(&MainWindow.label()) {
+    if let Some(window) = app_handle.get_webview_window(&MainWindow.label()) {
         window.emit(
             "download-end",
             ProductDownloadEndEvent {
@@ -140,7 +141,7 @@ pub async fn product_open_downloaded_folder<R: Runtime>(
     let path = if let Some(download) = ProductDownloadTable::get_one(&product_id)? {
         download.path
     } else {
-        if let Some(window) = app_handle.get_window(&MainWindow.label()) {
+        if let Some(window) = app_handle.get_webview_window(&MainWindow.label()) {
             window.emit("download-invalid", &product_id)?;
         }
 
@@ -150,14 +151,14 @@ pub async fn product_open_downloaded_folder<R: Runtime>(
     if !path.is_dir() {
         ProductDownloadTable::remove_one(&product_id)?;
 
-        if let Some(window) = app_handle.get_window(&MainWindow.label()) {
+        if let Some(window) = app_handle.get_webview_window(&MainWindow.label()) {
             window.emit("download-invalid", &product_id)?;
         }
 
         return Ok(());
     }
 
-    shell::open(&app_handle.shell_scope(), path.to_str().unwrap(), None)?;
+    app_handle.shell().open(path.to_str().unwrap(), None)?;
 
     Ok(())
 }
@@ -173,7 +174,7 @@ pub async fn product_remove_downloaded_product<R: Runtime>(
         .remove_downloaded(&product_id, path)
         .ok();
 
-    if let Some(window) = app_handle.get_window(&MainWindow.label()) {
+    if let Some(window) = app_handle.get_webview_window(&MainWindow.label()) {
         window.emit("download-invalid", &product_id)?;
     }
 

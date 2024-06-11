@@ -7,7 +7,7 @@ mod window;
 use crate::database::tables::v2::SettingTable;
 use anyhow::Error as AnyError;
 use std::path::PathBuf;
-use tauri::{api::path::download_dir, generate_handler, Builder, Runtime};
+use tauri::{generate_handler, Builder, Manager, Runtime};
 
 pub trait CommandProvider<R>
 where
@@ -51,8 +51,10 @@ pub fn get_product_download_path<R: Runtime>(
     let setting = setting.unwrap_or_default();
 
     let path = setting.download_root_dir.unwrap_or_else(|| {
-        download_dir()
-            .unwrap_or_else(|| app_handle.path_resolver().app_local_data_dir().unwrap())
+        app_handle
+            .path()
+            .download_dir()
+            .unwrap_or_else(|_| app_handle.path().app_local_data_dir().unwrap())
             .join("DLsite")
     });
 

@@ -1,4 +1,4 @@
-use tauri::{Manager, Runtime, Window, WindowBuilder, WindowUrl};
+use tauri::{Manager, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 pub trait WindowInfoProvider {
     fn label(&self) -> String;
@@ -15,8 +15,8 @@ pub trait BuildableWindow<R>
 where
     R: Runtime,
 {
-    fn build<'m, M: Manager<R>>(&self, manager: &'m M) -> Result<Window<R>>;
-    fn build_or_focus<'m, M: Manager<R>>(&self, manager: &'m M) -> Result<Window<R>>;
+    fn build<'m, M: Manager<R>>(&self, manager: &'m M) -> Result<WebviewWindow<R>>;
+    fn build_or_focus<'m, M: Manager<R>>(&self, manager: &'m M) -> Result<WebviewWindow<R>>;
 }
 
 impl<R, T> BuildableWindow<R> for T
@@ -24,13 +24,12 @@ where
     R: Runtime,
     T: WindowInfoProvider,
 {
-    fn build<'m, M: Manager<R>>(&self, manager: &'m M) -> Result<Window<R>> {
+    fn build<'m, M: Manager<R>>(&self, manager: &'m M) -> Result<WebviewWindow<R>> {
         let (width, height) = self.size();
-
-        let mut builder = WindowBuilder::new(
+        let mut builder = WebviewWindowBuilder::new(
             manager,
             &self.label(),
-            WindowUrl::App(<_>::from(&self.entry())),
+            WebviewUrl::App(<_>::from(&self.entry())),
         )
         .title(self.title())
         .inner_size(width, height)
@@ -45,8 +44,8 @@ where
         Ok(window)
     }
 
-    fn build_or_focus<'m, M: Manager<R>>(&self, manager: &'m M) -> Result<Window<R>> {
-        if let Some(window) = manager.get_window(&self.label()) {
+    fn build_or_focus<'m, M: Manager<R>>(&self, manager: &'m M) -> Result<WebviewWindow<R>> {
+        if let Some(window) = manager.get_webview_window(&self.label()) {
             window.set_focus()?;
             Ok(window)
         } else {

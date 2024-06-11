@@ -8,152 +8,143 @@ use self::{
 };
 use crate::{
     application::use_application,
-    application_error::Result,
     window::{AccountManagementWindow, BuildableWindow, SettingWindow},
 };
+use anyhow::Error as AnyError;
 use tauri::{
-    api::shell, async_runtime::spawn, CustomMenuItem, Manager, Menu, MenuItem, Submenu,
-    WindowMenuEvent,
+    async_runtime::spawn,
+    menu::{Menu, MenuEvent, SubmenuBuilder},
+    Manager, Runtime,
 };
+use tauri_plugin_shell::ShellExt;
 
-pub struct ApplicationMenu;
+pub fn create_menu<R: Runtime>(manager: &impl Manager<R>) -> Result<Menu<R>, tauri::Error> {
+    let menu = Menu::new(manager)?;
 
-pub trait MenuProvider {
-    fn create_menu() -> Menu;
-    fn handle_menu(event: WindowMenuEvent) -> Result<()>;
+    menu.append(
+        &SubmenuBuilder::new(manager, "Window")
+            .fullscreen()
+            .minimize()
+            .maximize()
+            .close_window()
+            .separator()
+            .quit()
+            .build()?,
+    )?;
+    menu.append(
+        &SubmenuBuilder::new(manager, "Edit")
+            .undo()
+            .redo()
+            .cut()
+            .copy()
+            .paste()
+            .select_all()
+            .build()?,
+    )?;
+    menu.append(
+        &SubmenuBuilder::new(manager, "Account")
+            .text("account/open-account-management", "Open Account Management")
+            .build()?,
+    )?;
+    menu.append(
+        &SubmenuBuilder::new(manager, "Product")
+            .text("product/fetch-new-products", "Fetch New Products")
+            .text(
+                "product/scan-downloaded-products",
+                "Scan Downloaded Products",
+            )
+            .separator()
+            .text(
+                "product/refresh-products-all",
+                "Refresh All Products (Drop Caches)",
+            )
+            .build()?,
+    )?;
+    menu.append(
+        &SubmenuBuilder::new(manager, "Setting")
+            .text("setting/open-setting", "Open Settings")
+            .build()?,
+    )?;
+    menu.append(
+        &SubmenuBuilder::new(manager, "Log")
+            .text("log/open-log-directory", "Open Log Directory")
+            .build()?,
+    )?;
+
+    Ok(menu)
 }
 
-impl MenuProvider for ApplicationMenu {
-    fn create_menu() -> Menu {
-        Menu::new()
-            .add_submenu(Submenu::new(
-                "Window",
-                Menu::new()
-                    .add_native_item(MenuItem::EnterFullScreen)
-                    .add_native_item(MenuItem::Minimize)
-                    .add_native_item(MenuItem::CloseWindow)
-                    .add_native_item(MenuItem::Separator)
-                    .add_native_item(MenuItem::Quit),
-            ))
-            .add_submenu(Submenu::new(
-                "Edit",
-                Menu::new()
-                    .add_native_item(MenuItem::Undo)
-                    .add_native_item(MenuItem::Redo)
-                    .add_native_item(MenuItem::Cut)
-                    .add_native_item(MenuItem::Copy)
-                    .add_native_item(MenuItem::Paste)
-                    .add_native_item(MenuItem::SelectAll),
-            ))
-            .add_submenu(Submenu::new(
-                "Account",
-                Menu::new().add_item(CustomMenuItem::new(
-                    "account/open-account-management",
-                    "Open Account Management",
-                )),
-            ))
-            .add_submenu(Submenu::new(
-                "Product",
-                Menu::new()
-                    .add_item(CustomMenuItem::new(
-                        "product/fetch-new-products",
-                        "Fetch New Products",
-                    ))
-                    .add_item(CustomMenuItem::new(
-                        "product/scan-downloaded-products",
-                        "Scan Downloaded Products",
-                    ))
-                    .add_native_item(MenuItem::Separator)
-                    .add_item(CustomMenuItem::new(
-                        "product/refresh-products-all",
-                        "Refresh All Products (Drop Caches)",
-                    )),
-            ))
-            .add_submenu(Submenu::new(
-                "Setting",
-                Menu::new().add_item(CustomMenuItem::new("setting/open-setting", "Open Settings")),
-            ))
-            .add_submenu(Submenu::new(
-                "Log",
-                Menu::new().add_item(CustomMenuItem::new(
-                    "log/open-log-directory",
-                    "Open Log Directory",
-                )),
-            ))
-    }
-
-    fn handle_menu(event: WindowMenuEvent) -> Result<()> {
-        match event.menu_item_id() {
-            "account/open-account-management" => {
-                AccountManagementWindow.build_or_focus(use_application().app_handle())?;
-            }
-            "product/fetch-new-products" => {
-                spawn((|| async {
-                    {
-                        let mut is_updating_product = use_application().is_updating_product();
-
-                        if *is_updating_product {
-                            return ();
-                        }
-
-                        *is_updating_product = true;
-                    }
-
-                    let result = fetch_new_products().await;
-                    *use_application().is_updating_product() = false;
-
-                    result.unwrap();
-                })());
-            }
-            "product/refresh-products-all" => {
-                spawn((|| async {
-                    {
-                        let mut is_updating_product = use_application().is_updating_product();
-
-                        if *is_updating_product {
-                            return ();
-                        }
-
-                        *is_updating_product = true;
-                    }
-
-                    let result = refresh_products_all().await;
-                    *use_application().is_updating_product() = false;
-
-                    result.unwrap();
-                })());
-            }
-            "product/scan-downloaded-products" => {
-                spawn((|| async {
-                    {
-                        let mut is_updating_product = use_application().is_updating_product();
-
-                        if *is_updating_product {
-                            return ();
-                        }
-
-                        *is_updating_product = true;
-                    }
-
-                    let result = scan_downloaded_products().await;
-                    *use_application().is_updating_product() = false;
-
-                    result.unwrap();
-                })());
-            }
-            "setting/open-setting" => {
-                SettingWindow.build_or_focus(use_application().app_handle())?;
-            }
-            "log/open-log-directory" => {
-                let app_handle = use_application().app_handle();
-
-                if let Some(dir) = app_handle.path_resolver().app_log_dir() {
-                    shell::open(&app_handle.shell_scope(), dir.to_str().unwrap(), None).unwrap();
-                }
-            }
-            _ => {}
+pub fn handle_menu(event: MenuEvent) -> Result<(), AnyError> {
+    match event.id.as_ref() {
+        "account/open-account-management" => {
+            AccountManagementWindow.build_or_focus(use_application().app_handle())?;
         }
+        "product/fetch-new-products" => {
+            spawn((|| async {
+                {
+                    let mut is_updating_product = use_application().is_updating_product();
 
-        Ok(())
+                    if *is_updating_product {
+                        return ();
+                    }
+
+                    *is_updating_product = true;
+                }
+
+                let result = fetch_new_products().await;
+                *use_application().is_updating_product() = false;
+
+                result.unwrap();
+            })());
+        }
+        "product/refresh-products-all" => {
+            spawn((|| async {
+                {
+                    let mut is_updating_product = use_application().is_updating_product();
+
+                    if *is_updating_product {
+                        return ();
+                    }
+
+                    *is_updating_product = true;
+                }
+
+                let result = refresh_products_all().await;
+                *use_application().is_updating_product() = false;
+
+                result.unwrap();
+            })());
+        }
+        "product/scan-downloaded-products" => {
+            spawn((|| async {
+                {
+                    let mut is_updating_product = use_application().is_updating_product();
+
+                    if *is_updating_product {
+                        return ();
+                    }
+
+                    *is_updating_product = true;
+                }
+
+                let result = scan_downloaded_products().await;
+                *use_application().is_updating_product() = false;
+
+                result.unwrap();
+            })());
+        }
+        "setting/open-setting" => {
+            SettingWindow.build_or_focus(use_application().app_handle())?;
+        }
+        "log/open-log-directory" => {
+            let app_handle = use_application().app_handle();
+
+            if let Ok(dir) = app_handle.path().app_log_dir() {
+                app_handle.shell().open(dir.to_str().unwrap(), None)?;
+            }
+        }
+        _ => {}
     }
+
+    Ok(())
 }

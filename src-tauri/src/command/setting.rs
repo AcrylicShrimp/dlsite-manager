@@ -1,6 +1,10 @@
 use super::error::CommandResult;
-use crate::database::{models::v2::Setting, tables::v2::SettingTable};
-use tauri::{api::dialog::blocking::FileDialogBuilder, Runtime, Window};
+use crate::{
+    application::use_application,
+    database::{models::v2::Setting, tables::v2::SettingTable},
+};
+use tauri::{Runtime, Window};
+use tauri_plugin_dialog::DialogExt;
 
 #[tauri::command]
 pub async fn setting_get() -> CommandResult<Setting> {
@@ -9,9 +13,12 @@ pub async fn setting_get() -> CommandResult<Setting> {
 
 #[tauri::command]
 pub async fn setting_browse_default_root_directory() -> CommandResult<Option<String>> {
-    Ok(FileDialogBuilder::new()
+    Ok(use_application()
+        .app_handle()
+        .dialog()
+        .file()
         .set_title("Pick a default root directory")
-        .pick_folder()
+        .blocking_pick_folder()
         .map(|err| err.to_str().unwrap().to_owned()))
 }
 

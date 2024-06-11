@@ -3,8 +3,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ApplicationError {
-    #[error("app directory doesn't exists")]
-    AppDirNotExist,
     #[error("cannot create app directory due to: {io_error}")]
     AppDirCreationError { io_error: std::io::Error },
     #[error("database error: {rusqlite_error}")]

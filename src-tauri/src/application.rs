@@ -6,7 +6,7 @@ use crate::{
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use rusqlite::Connection;
 use std::{fs::create_dir_all, mem::MaybeUninit, sync::Arc};
-use tauri::{App, AppHandle};
+use tauri::{App, AppHandle, Manager};
 
 static mut APPLICATION: MaybeUninit<Arc<Application>> = MaybeUninit::uninit();
 
@@ -32,19 +32,14 @@ pub struct Application {
 
 impl Application {
     pub fn new(app: &App) -> Result<Self> {
-        let app_dir = if let Some(app_dir) = app.path_resolver().app_config_dir() {
-            app_dir
-        } else {
-            return Err(Error::AppDirNotExist);
-        };
-
+        let app_dir = app.path().app_config_dir()?;
         create_dir_all(&app_dir).map_err(|err| Error::AppDirCreationError { io_error: err })?;
 
         let mut database = Database::load(app_dir.join("database.db"))?;
         rusqlite::vtab::array::load_module(database.connection_mut())?;
 
         Ok(Self {
-            app_handle: app.handle(),
+            app_handle: app.handle().clone(),
             database: Mutex::new(Some(database)),
             is_updating_product: Mutex::new(false),
         })

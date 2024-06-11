@@ -1,7 +1,7 @@
 {
   "name": "dlsite-manager",
   "private": true,
-  "version": "1.5.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
@@ -12,12 +12,12 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@tauri-apps/api": "^1.5"
+    "@tauri-apps/api": "^2.0.0-beta.13"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^2.0",
     "@sveltejs/kit": "^1.27",
-    "@tauri-apps/cli": "^1.5",
+    "@tauri-apps/cli": "^2.0.0-beta.20",
     "@types/lodash": "^4.14",
     "autoprefixer": "^10.4",
     "lodash": "^4.17.21",

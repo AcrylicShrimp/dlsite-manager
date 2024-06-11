@@ -16,7 +16,7 @@ pub struct RefreshProductsAllProgressEvent {
 pub async fn refresh_products_all() -> Result<(), AnyError> {
     if let Some(window) = use_application()
         .app_handle()
-        .get_window(&MainWindow.label())
+        .get_webview_window(&MainWindow.label())
     {
         window.emit("refresh-begin", ())?;
     }
@@ -25,7 +25,7 @@ pub async fn refresh_products_all() -> Result<(), AnyError> {
         .refresh_products_all(|progress, total_progress| {
             if let Some(window) = use_application()
                 .app_handle()
-                .get_window(&MainWindow.label())
+                .get_webview_window(&MainWindow.label())
             {
                 window
                     .emit(
@@ -42,7 +42,7 @@ pub async fn refresh_products_all() -> Result<(), AnyError> {
 
     if let Some(window) = use_application()
         .app_handle()
-        .get_window(&MainWindow.label())
+        .get_webview_window(&MainWindow.label())
     {
         window.emit("refresh-end", ())?;
     }

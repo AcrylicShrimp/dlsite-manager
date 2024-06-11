@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "core";
 import type { Account } from "src/types/account";
 
 import type { PageLoad } from "./$types";

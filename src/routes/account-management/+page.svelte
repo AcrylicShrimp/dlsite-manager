@@ -5,8 +5,8 @@
   import SmallButton from "@app/lib/buttons/SmallButton.svelte";
   import SmallRedButton from "@app/lib/buttons/SmallRedButton.svelte";
 
-  import { invoke } from "@tauri-apps/api/tauri";
-  import { appWindow } from "@tauri-apps/api/window";
+  import { invoke } from "@tauri-apps/api/core";
+  import { getCurrent } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
 
   export let data: PageData;
@@ -15,6 +15,7 @@
   onMount(async () => {
     accounts = data.accounts;
 
+    const appWindow = getCurrent();
     const unlistens = await Promise.all([
       appWindow.listen<Account>("add-account", (event) => {
         accounts = [...accounts, event.payload];
