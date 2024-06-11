@@ -1,10 +1,10 @@
 mod fetch_new_products;
-mod refresh_product_download;
 mod refresh_products_all;
+mod scan_downloaded_products;
 
 use self::{
-    fetch_new_products::fetch_new_products, refresh_product_download::refresh_product_download,
-    refresh_products_all::refresh_products_all,
+    fetch_new_products::fetch_new_products, refresh_products_all::refresh_products_all,
+    scan_downloaded_products::scan_downloaded_products,
 };
 use crate::{
     application::use_application,
@@ -55,14 +55,14 @@ impl MenuProvider for ApplicationMenu {
                         "product/fetch-new-products",
                         "Fetch New Products",
                     ))
+                    .add_item(CustomMenuItem::new(
+                        "product/scan-downloaded-products",
+                        "Scan Downloaded Products",
+                    ))
                     .add_native_item(MenuItem::Separator)
                     .add_item(CustomMenuItem::new(
                         "product/refresh-products-all",
                         "Refresh All Products (Drop Caches)",
-                    ))
-                    .add_item(CustomMenuItem::new(
-                        "product/refresh-product-download",
-                        "Refresh Product Downloads (Drop Caches)",
                     )),
             ))
             .add_submenu(Submenu::new(
@@ -112,7 +112,7 @@ impl MenuProvider for ApplicationMenu {
                     result.unwrap();
                 })());
             }
-            "product/refresh-product-download" => {
+            "product/scan-downloaded-products" => {
                 spawn((|| async {
                     {
                         let mut is_updating_product = use_application().is_updating_product();
@@ -124,14 +124,7 @@ impl MenuProvider for ApplicationMenu {
                         *is_updating_product = true;
                     }
 
-                    let result = refresh_products_all().await;
-
-                    if result.is_err() {
-                        *use_application().is_updating_product() = false;
-                        return result.unwrap();
-                    }
-
-                    let result = refresh_product_download().await;
+                    let result = scan_downloaded_products().await;
                     *use_application().is_updating_product() = false;
 
                     result.unwrap();

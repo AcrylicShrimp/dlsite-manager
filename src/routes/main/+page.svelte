@@ -19,6 +19,7 @@
   import SmallButtonLink from "@app/lib/buttons/SmallButtonLink.svelte";
   import SmallFixedRedButton from "@app/lib/buttons/SmallFixedRedButton.svelte";
   import SmallFixedRedWithMenuButton from "@app/lib/buttons/SmallFixedRedWithMenuButton.svelte";
+  import SmallFixedBrightRedButton from "@app/lib/buttons/SmallFixedBrightRedButton.svelte";
   import SmallFixedBrightRedWithMenuButton from "@app/lib/buttons/SmallFixedBrightRedWithMenuButton.svelte";
   import SmallMenuButton from "@app/lib/buttons/SmallMenuButton.svelte";
 
@@ -41,13 +42,15 @@
   let productDownloadedPaths: Map<string, string> = new Map();
   let productDownloadProgresses: Map<string, number> = new Map();
   let updating: boolean = false;
+  let showProgress: boolean = false;
   let progress: number = 0;
   let progressTotal: number = 0;
 
   onMount(async () => {
     const unlistens = await Promise.all([
-      appWindow.listen("refresh-begin", () => {
+      appWindow.listen("refresh-begin", (event) => {
         updating = true;
+        showProgress = event.payload !== "no-progress";
         progress = 0;
         progressTotal = 0;
       }),
@@ -351,6 +354,20 @@
                 } rounded`}
                 >{DisplayTypeString[product.ty] ?? `Other(${product.ty})`}</span
               >
+              {#if product.account_id === null}
+                <span class="flex-none block w-1" />
+                <span
+                  class={`text-sm px-1 h-[1.5em] flex flex-row items-center justify-center ${BgCssType.Unknown} rounded`}
+                  >Not Owned</span
+                >
+              {/if}
+              {#if product.registered_at === null}
+                <span class="flex-none block w-1" />
+                <span
+                  class={`text-sm px-1 h-[1.5em] flex flex-row items-center justify-center ${BgCssType.Unknown} rounded`}
+                  >Discontinued</span
+                >
+              {/if}
               <span class="flex-1" />
               <SmallButtonLink
                 href={`https://www.dlsite.com/maniax/work/=/product_id/${product.id}.html`}
@@ -358,25 +375,33 @@
               >
               <span class="flex-none block w-1" />
               {#if productDownloadedPaths.has(product.id)}
-                <SmallFixedBrightRedWithMenuButton
-                  on:click={() => openDownloadedFolder(product)}
-                >
-                  Open Folder
-                  <span slot="right">...</span>
-                  <div
-                    slot="menu"
-                    class="flex flex-col items-stretch justify-start"
+                {#if product.account_id === null}
+                  <SmallFixedBrightRedButton
+                    on:click={() => openDownloadedFolder(product)}
                   >
-                    <SmallMenuButton
-                      on:click={() => openDownloadedFolder(product)}
-                      >Open Folder</SmallMenuButton
+                    Open Folder
+                  </SmallFixedBrightRedButton>
+                {:else}
+                  <SmallFixedBrightRedWithMenuButton
+                    on:click={() => openDownloadedFolder(product)}
+                  >
+                    Open Folder
+                    <span slot="right">...</span>
+                    <div
+                      slot="menu"
+                      class="flex flex-col items-stretch justify-start"
                     >
-                    <SmallMenuButton
-                      on:click={() => removeDownloadedFolder(product)}
-                      >Remove Download</SmallMenuButton
-                    >
-                  </div>
-                </SmallFixedBrightRedWithMenuButton>
+                      <SmallMenuButton
+                        on:click={() => openDownloadedFolder(product)}
+                        >Open Folder</SmallMenuButton
+                      >
+                      <SmallMenuButton
+                        on:click={() => removeDownloadedFolder(product)}
+                        >Remove Download</SmallMenuButton
+                      >
+                    </div>
+                  </SmallFixedBrightRedWithMenuButton>
+                {/if}
               {:else if productDownloadProgresses.has(product.id)}
                 <SmallFixedRedButton disabled>
                   {#if productDownloadProgresses.get(product.id)}
@@ -429,6 +454,8 @@
     class="fixed inset-0 bg-1/5/90 flex flex-col items-center justify-center"
   >
     <p class="text-4/5 text-xl">Updating...</p>
-    <p class="text-4/5 text-xl">{progress}/{progressTotal}</p>
+    {#if showProgress}
+      <p class="text-4/5 text-xl">{progress}/{progressTotal}</p>
+    {/if}
   </div>
 {/if}

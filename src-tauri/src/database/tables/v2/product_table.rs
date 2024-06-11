@@ -49,7 +49,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS v2_indexed_products USING fts5 (
 }
 
 impl ProductTable {
-    /// Inserts many products into the database.
+    /// Inserts many products into the database. Note that the account will not be overwritten.
     pub fn insert_many<'a>(products: impl Iterator<Item = CreatingProduct<'a>>) -> DBResult<()> {
         let mut connection = use_application().connection();
         let tx = connection.transaction()?;
@@ -77,7 +77,6 @@ INSERT INTO v2_products (
     :group_name,
     :registered_at
 ) ON CONFLICT (id) DO UPDATE SET
-    account_id = excluded.account_id,
     ty = excluded.ty,
     age = excluded.age,
     title = excluded.title,
@@ -234,6 +233,21 @@ ORDER BY {}
             r#"
 DELETE FROM v2_products
 WHERE account_id IS NOT NULL
+"#,
+        )?;
+
+        stmt.execute([])?;
+        Ok(())
+    }
+
+    /// Removes many products from the database.
+    /// It does not remove the product which is owned by any account.
+    pub fn remove_many_not_owned() -> DBResult<()> {
+        let connection = use_application().connection();
+        let mut stmt = connection.prepare(
+            r#"
+DELETE FROM v2_products
+WHERE account_id IS NULL
 "#,
         )?;
 
