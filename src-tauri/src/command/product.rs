@@ -25,6 +25,7 @@ pub struct ProductQuery<'a> {
 pub struct ProductDownloadProgressEvent<'a> {
     pub product_id: &'a str,
     pub progress: usize,
+    pub decompressing: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -71,7 +72,7 @@ pub async fn product_download_product<R: Runtime>(
                 account_id,
                 &product_id,
                 &path,
-                |progress, total_progress| {
+                |progress, total_progress, decompressing| {
                     if let Some(window) = app_handle.get_window(&MainWindow.label()) {
                         window
                             .emit(
@@ -81,6 +82,7 @@ pub async fn product_download_product<R: Runtime>(
                                     progress: (progress as f64 / total_progress as f64 * 100f64)
                                         .round()
                                         as usize,
+                                    decompressing,
                                 },
                             )
                             .ok();
@@ -104,6 +106,7 @@ pub async fn product_download_product<R: Runtime>(
                                     progress: (progress as f64 / total_progress as f64 * 100f64)
                                         .round()
                                         as usize,
+                                    decompressing: false,
                                 },
                             )
                             .ok();

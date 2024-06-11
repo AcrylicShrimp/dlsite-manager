@@ -11,7 +11,10 @@ use crate::{
     application_error::Result,
     window::{AccountManagementWindow, BuildableWindow, SettingWindow},
 };
-use tauri::{async_runtime::spawn, CustomMenuItem, Menu, MenuItem, Submenu, WindowMenuEvent};
+use tauri::{
+    api::shell, async_runtime::spawn, CustomMenuItem, Manager, Menu, MenuItem, Submenu,
+    WindowMenuEvent,
+};
 
 pub struct ApplicationMenu;
 
@@ -29,6 +32,7 @@ impl MenuProvider for ApplicationMenu {
                     .add_native_item(MenuItem::EnterFullScreen)
                     .add_native_item(MenuItem::Minimize)
                     .add_native_item(MenuItem::CloseWindow)
+                    .add_native_item(MenuItem::Separator)
                     .add_native_item(MenuItem::Quit),
             ))
             .add_submenu(Submenu::new(
@@ -68,6 +72,13 @@ impl MenuProvider for ApplicationMenu {
             .add_submenu(Submenu::new(
                 "Setting",
                 Menu::new().add_item(CustomMenuItem::new("setting/open-setting", "Open Settings")),
+            ))
+            .add_submenu(Submenu::new(
+                "Log",
+                Menu::new().add_item(CustomMenuItem::new(
+                    "log/open-log-directory",
+                    "Open Log Directory",
+                )),
             ))
     }
 
@@ -132,6 +143,13 @@ impl MenuProvider for ApplicationMenu {
             }
             "setting/open-setting" => {
                 SettingWindow.build_or_focus(use_application().app_handle())?;
+            }
+            "log/open-log-directory" => {
+                let app_handle = use_application().app_handle();
+
+                if let Some(dir) = app_handle.path_resolver().app_log_dir() {
+                    shell::open(&app_handle.shell_scope(), dir.to_str().unwrap(), None).unwrap();
+                }
             }
             _ => {}
         }

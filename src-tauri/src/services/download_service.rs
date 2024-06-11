@@ -55,10 +55,13 @@ impl DownloadService {
         account_id: i64,
         product_id: impl AsRef<str>,
         base_path: impl AsRef<Path>,
-        on_progress: impl Fn(u64, u64),
+        on_progress: impl Fn(u64, u64, bool),
     ) -> Result<PathBuf, DownloadServiceError> {
         let product_id = product_id.as_ref();
-        let downloaded = download(account_id, product_id, base_path, on_progress).await?;
+        let downloaded = download(account_id, product_id, base_path, |progress, total| {
+            on_progress(progress, total, false);
+        })
+        .await?;
 
         if downloaded.product_files.files.len() == 1
             && downloaded.product_files.files[0]
@@ -66,6 +69,8 @@ impl DownloadService {
                 .to_ascii_lowercase()
                 .ends_with(".zip")
         {
+            on_progress(1, 1, true);
+
             if let Err(err) =
                 decompress_single(&downloaded.product_files, &downloaded.base_path).await
             {
@@ -82,6 +87,8 @@ impl DownloadService {
                 .to_ascii_lowercase()
                 .ends_with(".exe")
         {
+            on_progress(1, 1, true);
+
             if let Err(err) =
                 decompress_multiple(&downloaded.product_files, &downloaded.base_path).await
             {

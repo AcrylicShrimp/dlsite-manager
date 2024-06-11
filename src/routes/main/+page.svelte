@@ -40,7 +40,7 @@
   let queryOrderBy = "desc";
   let products: Product[] = [];
   let productDownloadedPaths: Map<string, string> = new Map();
-  let productDownloadProgresses: Map<string, number> = new Map();
+  let productDownloadProgresses: Map<string, [number, boolean]> = new Map();
   let updating: boolean = false;
   let showProgress: boolean = false;
   let progress: number = 0;
@@ -63,15 +63,15 @@
         updating = false;
       }),
       appWindow.listen<string>("download-begin", (event) => {
-        productDownloadProgresses.set(event.payload, 0);
+        productDownloadProgresses.set(event.payload, [0, false]);
         productDownloadProgresses = productDownloadProgresses;
         filterProducts(products);
       }),
       appWindow.listen<DownloadProgress>("download-progress", (event) => {
-        productDownloadProgresses.set(
-          event.payload.product_id,
-          event.payload.progress
-        );
+        productDownloadProgresses.set(event.payload.product_id, [
+          event.payload.progress,
+          event.payload.decompressing,
+        ]);
         productDownloadProgresses = productDownloadProgresses;
       }),
       appWindow.listen<DownloadComplete>("download-end", (event) => {
@@ -192,7 +192,9 @@
   ): Promise<void> {
     if (productDownloadProgresses.has(product.id)) return;
 
-    productDownloadProgresses.set(product.id, 0);
+    productDownloadProgresses.set(product.id, [0, false]);
+    productDownloadProgresses = productDownloadProgresses;
+
     await invoke("product_download_product", {
       accountId: product.account_id,
       productId: product.id,
@@ -404,10 +406,12 @@
                 {/if}
               {:else if productDownloadProgresses.has(product.id)}
                 <SmallFixedRedButton disabled>
-                  {#if productDownloadProgresses.get(product.id)}
-                    Downloading... {productDownloadProgresses.get(product.id)}%
+                  {#if productDownloadProgresses.get(product.id)?.[1]}
+                    Decompressing...
                   {:else}
-                    Downloading...
+                    Downloading... {productDownloadProgresses.get(
+                      product.id
+                    )?.[0] ?? 0}%
                   {/if}
                 </SmallFixedRedButton>
               {:else}

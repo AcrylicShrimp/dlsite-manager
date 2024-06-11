@@ -1,6 +1,7 @@
 export interface DownloadProgress {
   product_id: string;
   progress: number;
+  decompressing: boolean;
 }
 
 export interface DownloadComplete {
