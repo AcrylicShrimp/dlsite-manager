@@ -9,9 +9,7 @@
     "active": true,
     "targets": "all",
     "category": "Utility",
-    "icon": [
-      "icons/icon.ico"
-    ]
+    "icon": ["icons/icon.ico"]
   },
   "productName": "DLsite Manager",
   "version": "2.0.0",
