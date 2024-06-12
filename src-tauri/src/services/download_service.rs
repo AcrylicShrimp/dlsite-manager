@@ -102,6 +102,16 @@ impl DownloadService {
         Ok(downloaded.base_path)
     }
 
+    // pub async fn download_voice_comic(
+    //     &self,
+    //     account_id: i64,
+    //     product_id: impl AsRef<str>,
+    //     base_path: impl AsRef<Path>,
+    //     on_progress: impl Fn(u64, u64, bool),
+    // ) -> Result<PathBuf, DownloadServiceError> {
+
+    // }
+
     pub fn remove_downloaded(
         &self,
         product_id: impl AsRef<str>,

@@ -1,12 +1,12 @@
 use super::dto::{
     DLsiteProduct, DLsiteProductFiles, DLsiteProductFromNonOwnerApi, DLsiteProductI18nString,
-    DLsiteProductListFromOwnerApi,
+    DLsiteProductListFromOwnerApi, DLsiteVoiceComicRequestInfo, DLsiteVoiceComicZipTree,
 };
 use anyhow::{anyhow, Context, Error};
 use chrono::{FixedOffset, NaiveDateTime, TimeZone};
 use lazy_static::lazy_static;
 use reqwest::{Client, ClientBuilder};
-use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
+use reqwest_cookie_store::{CookieStore, CookieStoreMutex, RawCookie};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -21,6 +21,7 @@ use tokio::{
     fs::{create_dir_all, remove_dir_all, OpenOptions},
     io::{AsyncWriteExt, BufWriter},
 };
+use url::Url;
 
 lazy_static! {
     static ref GROUP_NAME_SELECTOR_STR: &'static str = "#work_maker>tbody>tr>td>span>a";
@@ -273,6 +274,85 @@ pub async fn get_product_files(id: &str) -> Result<DLsiteProductFiles, Error> {
 
     Ok(product_details_list.into_iter().next().unwrap())
 }
+
+pub async fn get_voice_comic_request_info(
+    cookie_store: Arc<CookieStoreMutex>,
+    id: &str,
+) -> Result<DLsiteVoiceComicRequestInfo, Error> {
+    let client = ClientBuilder::new()
+        .cookie_store(true)
+        .cookie_provider(cookie_store)
+        .build()
+        .with_context(|| format!("[get_voice_comic_request_info]"))
+        .with_context(|| format!("failed to create HTTP client for id `{}`", id))?;
+    let url = format!(
+        "https://play.dl.dlsite.com/api/download/sign/cookie?workno={}",
+        id
+    );
+    let res = client
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| format!("[get_voice_comic_request_info]"))
+        .with_context(|| format!("request failed for id `{}` with url: `{}`", id, url))?;
+    let request_info = res
+        .json::<DLsiteVoiceComicRequestInfo>()
+        .await
+        .with_context(|| format!("[get_voice_comic_request_info]"))
+        .with_context(|| format!("parse failed for id `{}`", id))?;
+
+    Ok(request_info)
+}
+
+pub async fn get_voice_comic_zip_tree(
+    cookie_store: Arc<CookieStoreMutex>,
+    request_info: &DLsiteVoiceComicRequestInfo,
+) -> Result<DLsiteVoiceComicZipTree, Error> {
+    let cookie_url = Url::parse("https://play.dl.dlsite.com").unwrap();
+    let mut cookie_store_guard = cookie_store.lock().unwrap();
+
+    for (key, value) in &request_info.cookies {
+        cookie_store_guard
+            .insert_raw(&RawCookie::new(key, value), &cookie_url)
+            .unwrap();
+    }
+
+    drop(cookie_store_guard);
+
+    let client = ClientBuilder::new()
+        .cookie_store(true)
+        .cookie_provider(cookie_store)
+        .build()
+        .with_context(|| format!("[get_voice_comic_zip_tree]"))
+        .with_context(|| {
+            format!(
+                "failed to create HTTP client for request_info url `{}`",
+                &request_info.url
+            )
+        })?;
+    let url = format!("{}ziptree.json", &request_info.url);
+    let res = client
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| format!("[get_voice_comic_zip_tree]"))
+        .with_context(|| {
+            format!(
+                "request failed for request_info url `{}` with url: `{}`",
+                &request_info.url, url
+            )
+        })?;
+    let zip_tree = res
+        .json::<DLsiteVoiceComicZipTree>()
+        .await
+        .with_context(|| format!("[get_voice_comic_zip_tree]"))
+        .with_context(|| format!("parse failed for request_info url `{}`", &request_info.url))?;
+
+    Ok(zip_tree)
+}
+
+// download vtt from: https://play.dlsite.fun/work/<PRODUCT-ID>/<HASH>.vtt
+// download mp4 from: https://play.dlsite.fun/work/<PRODUCT-ID>/<HASH>.mp4
 
 pub async fn download_product_files(
     cookie_store: Arc<CookieStoreMutex>,

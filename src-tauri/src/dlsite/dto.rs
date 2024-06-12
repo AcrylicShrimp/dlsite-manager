@@ -1,6 +1,9 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::fmt::{Debug, Display};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt::{Debug, Display},
+};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DLsiteProduct {
@@ -331,4 +334,45 @@ pub struct DLsiteProductFiles {
 pub struct DLsiteProductFile {
     pub file_name: String,
     pub file_size: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DLsiteVoiceComicRequestInfo {
+    pub url: String,
+    pub cookies: BTreeMap<String, String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DLsiteVoiceComicZipTree {
+    #[serde(rename = "tree")]
+    pub items: Vec<DLsiteVoiceComicZipTreeItem>,
+    #[serde(rename = "playfile")]
+    pub play_files: BTreeMap<String, DLsiteVoiceComicZipTreePlayFile>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DLsiteVoiceComicZipTreeItem {
+    #[serde(rename = "type")]
+    pub ty: String,
+    pub name: String,
+    #[serde(rename = "hashname")]
+    pub play_file_key: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DLsiteVoiceComicZipTreePlayFile {
+    #[serde(rename = "type")]
+    pub ty: String,
+    #[serde(flatten)]
+    pub items: HashMap<String, DLsiteVoiceComicZipTreePlayFileItemOptimized>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DLsiteVoiceComicZipTreePlayFileItemOptimized {
+    pub optimized: DLsiteVoiceComicZipTreePlayFileItemOptimizedName,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DLsiteVoiceComicZipTreePlayFileItemOptimizedName {
+    pub name: String,
 }
