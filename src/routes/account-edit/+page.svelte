@@ -48,27 +48,27 @@
   }
 </script>
 
-<h1 class="text-center">Edit Account</h1>
+<h1 class="text-center">アカウントを編集</h1>
 <span class="block h-4" />
 <section>
   <div>
     <LabeledInput
-      label="Username"
-      placeholder="Username"
+      label="ユーザー名"
+      placeholder="ユーザー名"
       bind:value={username}
       disabled={isTesting}
     />
     <span class="block h-4" />
     <LabeledInput
-      label="Password"
-      placeholder="Password"
+      label="パスワード"
+      placeholder="パスワード"
       bind:value={password}
       disabled={isTesting}
     />
     <span class="block h-4" />
     <LabeledInput
-      label="Memo (optional)"
-      placeholder="Memo"
+      label="メモ (任意)"
+      placeholder="メモ"
       bind:value={memo}
       disabled={isTesting}
     />
@@ -89,13 +89,13 @@
     {:else if testResult < 0}
       Test failed
     {:else}
-      Test success, {testResult} product(s) detected.
+      テストが成功しました。{testResult}件の商品が検出されました。
     {/if}
   </p>
   <span class="block h-4" />
   <div class="flex flex-row items-center justify-center">
-    <SecondaryButton on:click={test} disabled={isTesting}>Test</SecondaryButton>
+    <SecondaryButton on:click={test} disabled={isTesting}>テスト</SecondaryButton>
     <span class="inline-block w-4" />
-    <PrimaryButton on:click={save} disabled={isTesting}>Save</PrimaryButton>
+    <PrimaryButton on:click={save} disabled={isTesting}>保存</PrimaryButton>
   </div>
 </section>
