@@ -59,11 +59,11 @@
   }
 </script>
 
-<h1 class="text-center">Account Management</h1>
+<h1 class="text-center">アカウントの管理</h1>
 <span class="block h-8" />
 <section>
   <div class="flex flex-row items-center justify-end">
-    <SmallRedButton on:click={add}>Add</SmallRedButton>
+    <SmallRedButton on:click={add}>追加</SmallRedButton>
   </div>
   <span class="block h-2" />
   <div>
@@ -79,9 +79,9 @@
           {/if}
         </p>
         <span class="flex-1" />
-        <SmallButton on:click={() => edit(account)}>Edit</SmallButton>
+        <SmallButton on:click={() => edit(account)}>編集</SmallButton>
         <span class="flex-none block w-1" />
-        <SmallRedButton on:click={() => remove(account)}>Remove</SmallRedButton>
+        <SmallRedButton on:click={() => remove(account)}>削除</SmallRedButton>
       </div>
       {#if index < accounts.length - 1}
         <span class="block h-2" />
@@ -89,7 +89,7 @@
     {:else}
       <div class="h-[200px] flex flex-col items-center justify-center">
         <p class="text-xl text-2/5 select-none">
-          It seems that you haven't any account.
+          アカウントを登録していないようですね。
         </p>
       </div>
     {/each}
