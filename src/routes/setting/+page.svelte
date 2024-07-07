@@ -34,28 +34,28 @@
   }
 </script>
 
-<h1 class="text-center">Settings</h1>
+<h1 class="text-center">設定</h1>
 <span class="block h-8" />
 <section>
   <div>
     <label>
-      <p>Default Root Directory</p>
+      <p>既定のルートディレクトリ</p>
       <div class="pl-2 pt-1 flex flex-row items-center justify-stretch">
         <input
           type="text"
-          placeholder="Path"
+          placeholder="パス"
           bind:value={defaultRootDir}
           class="px-2 py-1 w-full text-0/5 disabled:text-3/5 bg-4/5 disabled:bg-4/5/20 rounded"
         />
         <span class="inline-block w-4" />
-        <SecondaryButton on:click={browse}>Browse</SecondaryButton>
+        <SecondaryButton on:click={browse}>参照</SecondaryButton>
       </div>
     </label>
   </div>
   <span class="block h-16" />
   <div class="flex flex-row items-center justify-center">
-    <SecondaryButton on:click={close}>Cancel</SecondaryButton>
+    <SecondaryButton on:click={close}></SecondaryButton>
     <span class="inline-block w-4" />
-    <PrimaryButton on:click={save}>Save</PrimaryButton>
+    <PrimaryButton on:click={save}>保存</PrimaryButton>
   </div>
 </section>
