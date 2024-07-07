@@ -217,14 +217,14 @@
       href="https://github.com/AcrylicShrimp/dlsite-manager"
       target="_blank"
       rel="noreferrer"
-      class="underline text-4/5">Visit Github</a
+      class="underline text-4/5">GitHubを開く</a
     >
     <span class="w-4" />
     <a
       href="https://www.dlsite.com/index.html"
       target="_blank"
       rel="noreferrer"
-      class="underline text-4/5">Visit DLsite</a
+      class="underline text-4/5">DLsiteを開く</a
     >
   </div>
 </nav>
@@ -241,67 +241,65 @@
   <div class="px-3 py-2 bg-1/5 rounded-lg">
     <LabeledSelect label="Age" bind:value={queryAge} on:change={setQueryAge}>
       <option value="" selected>-</option>
-      <option value="All">All</option>
+      <option value="All">すべて</option>
       <option value="R15">R15</option>
       <option value="R18">R18</option>
     </LabeledSelect>
     <span class="block h-2" />
     <LabeledSelect label="Type" bind:value={queryType} on:change={setQueryType}>
       <option value="" selected>-</option>
-      <option value="Adult">Adult</option>
-      <option value="Doujinsji">Doujinsji</option>
-      <option value="Software">Software</option>
-      <option value="Game">Game</option>
-      <option value="Action">Action</option>
-      <option value="Adventure">Adventure</option>
-      <option value="AudioMaterial">AudioMaterial</option>
-      <option value="Comic">Comic</option>
-      <option value="DigitalNovel">DigitalNovel</option>
-      <option value="Other">Other</option>
-      <option value="OtherGame">OtherGame</option>
-      <option value="Illust">Illust</option>
-      <option value="ImageMaterial">ImageMaterial</option>
-      <option value="Manga">Manga</option>
-      <option value="Anime">Anime</option>
-      <option value="Music">Music</option>
-      <option value="Novel">Novel</option>
-      <option value="Puzzle">Puzzle</option>
-      <option value="Quiz">Quiz</option>
-      <option value="RolePlaying">RolePlaying</option>
-      <option value="Gekiga">Gekiga</option>
-      <option value="Simulation">Simulation</option>
-      <option value="Voice">Voice</option>
-      <option value="Shooter">Shooter</option>
-      <option value="Tabletop">Tabletop</option>
-      <option value="Utility">Utility</option>
-      <option value="Typing">Typing</option>
-      <option value="SexualNovel">SexualNovel</option>
-      <option value="VoiceComic">VoiceComic</option>
+      <option value="Adult">アダルト</option>
+      <option value="Doujinsji">同人誌</option>
+      <option value="Software">ソフトウェア</option>
+      <option value="Game">ゲーム</option>
+      <option value="Action">アクション</option>
+      <option value="Adventure">アドベンチャー</option>
+      <option value="AudioMaterial">音声作品</option>
+      <option value="Comic">コミック</option>
+      <option value="DigitalNovel">デジタルノベル</option>
+      <option value="Other">その他</option>
+      <option value="OtherGame">その他のゲーム</option>
+      <option value="Illust">イラスト</option>
+      <option value="ImageMaterial">画像作品</option>
+      <option value="Manga">マンガ</option>
+      <option value="Anime">アニメ</option>
+      <option value="Music">音楽</option>
+      <option value="Novel">ノベル</option>
+      <option value="Puzzle">パズル</option>
+      <option value="Quiz">クイズ</option>
+      <option value="RolePlaying">ロールプレイング</option>
+      <option value="Gekiga">劇画</option>
+      <option value="Simulation">シミュレーション</option>
+      <option value="Voice">音声</option>
+      <option value="Shooter">シューティング</option>
+      <option value="Tabletop">テーブルトップ</option>
+      <option value="Utility">ユーティリティ</option>
+      <option value="Typing">タイピング</option>
+      <option value="SexualNovel">成人向けノベル</option>
+      <option value="VoiceComic">ボイスドラマ</option>
     </LabeledSelect>
     <span class="block h-2" />
     <LabeledSelect
-      label="Download"
+      label="ダウンロード"
       bind:value={queryDownloadState}
       on:change={setQueryDownloadState}
     >
       <option value="" selected>-</option>
-      <option value="NotDownloaded">Not Downloaded</option>
-      <option value="Downloading">Downloading</option>
-      <option value="Downloaded">Downloaded</option>
-      <option value="DownloadingAndDownloaded"
-        >Downloading and Downloaded</option
-      >
+      <option value="NotDownloaded">未ダウンロード</option>
+      <option value="Downloading">ダウンロード中</option>
+      <option value="Downloaded">ダウンロード済み</option>
+      <option value="DownloadingAndDownloaded">ダウンロード中とダウンロード済み</option>
     </LabeledSelect>
   </div>
   <span class="block h-2" />
   <div class="px-3 py-2 bg-1/5 rounded-lg">
     <LabeledSelect
-      label="Order By"
+      label="並び順"
       bind:value={queryOrderBy}
       on:change={setQueryOrderBy}
     >
-      <option value="desc" selected>Descending</option>
-      <option value="asc">Ascending</option>
+      <option value="desc" selected>降順</option>
+      <option value="asc">昇順</option>
     </LabeledSelect>
   </div>
   <span class="block h-2" />
@@ -367,7 +365,7 @@
               <span class="flex-1" />
               <SmallButtonLink
                 href={`https://www.dlsite.com/maniax/work/=/product_id/${product.id}.html`}
-                rel="noreferrer">Visit Product Page</SmallButtonLink
+                rel="noreferrer">商品のページを開く</SmallButtonLink
               >
               <span class="flex-none block w-1" />
               {#if productDownloadedPaths.has(product.id)}
@@ -401,9 +399,9 @@
               {:else if productDownloadProgresses.has(product.id)}
                 <SmallFixedRedButton disabled>
                   {#if productDownloadProgresses.get(product.id)?.[1]}
-                    Decompressing...
+                    展開中...
                   {:else}
-                    Downloading... {productDownloadProgresses.get(
+                    ダウンロード中... {productDownloadProgresses.get(
                       product.id
                     )?.[0] ?? 0}%
                   {/if}
@@ -438,10 +436,10 @@
       {/if}
     {:else}
       <div class="h-[200px] flex flex-col items-center justify-center">
-        <p class="text-xl text-2/5 select-none">There's no product.</p>
+        <p class="text-xl text-2/5 select-none">商品がありません。</p>
         <span class="block h-4" />
         <p class="text-xl text-2/5 select-none">
-          You can fetch products from the menu.
+          メニューから商品情報を取得できます。
         </p>
       </div>
     {/each}
@@ -451,7 +449,7 @@
   <div
     class="fixed inset-0 bg-1/5/90 flex flex-col items-center justify-center"
   >
-    <p class="text-4/5 text-xl">Updating...</p>
+    <p class="text-4/5 text-xl">更新中...</p>
     {#if showProgress}
       <p class="text-4/5 text-xl">{progress}/{progressTotal}</p>
     {/if}
