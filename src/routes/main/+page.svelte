@@ -239,7 +239,7 @@
   </div>
   <span class="block h-2" />
   <div class="px-3 py-2 bg-1/5 rounded-lg">
-    <LabeledSelect label="Age" bind:value={queryAge} on:change={setQueryAge}>
+    <LabeledSelect label="対象年齢" bind:value={queryAge} on:change={setQueryAge}>
       <option value="" selected>-</option>
       <option value="All">すべて</option>
       <option value="R15">R15</option>
