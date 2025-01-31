@@ -80,12 +80,12 @@ pub fn handle_menu(event: MenuEvent) -> Result<(), AnyError> {
             AccountManagementWindow.build_or_focus(use_application().app_handle())?;
         }
         "product/fetch-new-products" => {
-            spawn((|| async {
+            spawn(async {
                 {
                     let mut is_updating_product = use_application().is_updating_product();
 
                     if *is_updating_product {
-                        return ();
+                        return;
                     }
 
                     *is_updating_product = true;
@@ -94,16 +94,18 @@ pub fn handle_menu(event: MenuEvent) -> Result<(), AnyError> {
                 let result = fetch_new_products().await;
                 *use_application().is_updating_product() = false;
 
-                result.unwrap();
-            })());
+                if let Err(err) = result {
+                    log::error!("Failed to fetch new products due to: {err:#?}");
+                }
+            });
         }
         "product/refresh-products-all" => {
-            spawn((|| async {
+            spawn(async {
                 {
                     let mut is_updating_product = use_application().is_updating_product();
 
                     if *is_updating_product {
-                        return ();
+                        return;
                     }
 
                     *is_updating_product = true;
@@ -112,16 +114,18 @@ pub fn handle_menu(event: MenuEvent) -> Result<(), AnyError> {
                 let result = refresh_products_all().await;
                 *use_application().is_updating_product() = false;
 
-                result.unwrap();
-            })());
+                if let Err(err) = result {
+                    log::error!("Failed to refresh products due to: {err:#?}");
+                }
+            });
         }
         "product/scan-downloaded-products" => {
-            spawn((|| async {
+            spawn(async {
                 {
                     let mut is_updating_product = use_application().is_updating_product();
 
                     if *is_updating_product {
-                        return ();
+                        return;
                     }
 
                     *is_updating_product = true;
@@ -130,8 +134,10 @@ pub fn handle_menu(event: MenuEvent) -> Result<(), AnyError> {
                 let result = scan_downloaded_products().await;
                 *use_application().is_updating_product() = false;
 
-                result.unwrap();
-            })());
+                if let Err(err) = result {
+                    log::error!("Failed to scan downloaded products due to: {err:#?}");
+                }
+            });
         }
         "setting/open-setting" => {
             SettingWindow.build_or_focus(use_application().app_handle())?;
