@@ -1,6 +1,6 @@
 [package]
 name = "dlsite-manager"
-version = "2.0.1"
+version = "2.0.2"
 description = "DLsite Manager"
 authors = ["AcrylicShrimp"]
 license = "MIT"
