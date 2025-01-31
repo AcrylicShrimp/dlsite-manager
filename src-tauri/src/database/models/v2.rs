@@ -76,15 +76,7 @@ pub struct CreatingProductDownload<'a> {
     pub path: &'a Path,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Default, Serialize, Deserialize, Debug, Clone)]
 pub struct Setting {
     pub download_root_dir: Option<PathBuf>,
-}
-
-impl Default for Setting {
-    fn default() -> Self {
-        Self {
-            download_root_dir: None,
-        }
-    }
 }

@@ -11,13 +11,18 @@ use tauri::{App, AppHandle, Manager};
 static mut APPLICATION: MaybeUninit<Arc<Application>> = MaybeUninit::uninit();
 
 pub fn use_application() -> &'static Application {
-    unsafe { APPLICATION.assume_init_ref() }.as_ref()
+    unsafe {
+        #[allow(static_mut_refs)]
+        APPLICATION.assume_init_ref()
+    }
+    .as_ref()
 }
 
 pub fn create_application(app: &App) -> Result<Arc<Application>> {
     let application = Arc::new(Application::new(app)?);
 
     unsafe {
+        #[allow(static_mut_refs)]
         APPLICATION.write(application.clone());
     }
 
@@ -33,7 +38,7 @@ pub struct Application {
 impl Application {
     pub fn new(app: &App) -> Result<Self> {
         let app_dir = app.path().app_config_dir()?;
-        create_dir_all(&app_dir).map_err(|err| Error::AppDirCreationError { io_error: err })?;
+        create_dir_all(&app_dir).map_err(|err| Error::AppDirCreationFailure { io_error: err })?;
 
         let mut database = Database::load(app_dir.join("database.db"))?;
         rusqlite::vtab::array::load_module(database.connection_mut())?;

@@ -36,12 +36,10 @@ pub struct ProductDownloadEndEvent<'a> {
 }
 
 #[tauri::command]
-pub async fn product_list_products<'a>(
-    query: Option<ProductQuery<'a>>,
-) -> CommandResult<Vec<Product>> {
+pub async fn product_list_products(query: Option<ProductQuery<'_>>) -> CommandResult<Vec<Product>> {
     let query = query.unwrap_or_default();
     let results = ProductTable::get_many(query.query, query.ty, query.age, query.order_by_asc)
-        .with_context(|| format!("[command/product_list_products] ProductTable::get_many"))?;
+        .with_context(|| "[command/product_list_products] ProductTable::get_many")?;
     Ok(results)
 }
 
@@ -50,7 +48,7 @@ pub async fn product_list_product_downloads(
     product_ids: Vec<String>,
 ) -> CommandResult<Vec<ProductDownload>> {
     let results = ProductDownloadTable::get_many(product_ids.into_iter()).with_context(|| {
-        format!("[command/product_list_product_downloads] ProductDownloadTable::get_many")
+        "[command/product_list_product_downloads] ProductDownloadTable::get_many"
     })?;
     Ok(results)
 }

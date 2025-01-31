@@ -151,28 +151,28 @@ pub async fn get_products(
         .cookie_store(true)
         .cookie_provider(cookie_store)
         .build()
-        .with_context(|| format!("[get_products]"))
+        .with_context(|| "[get_products]")
         .with_context(|| format!("failed to create HTTP client for page `{}`", page))?;
     let url = format!("https://play.dlsite.com/api/purchases?page={}", page);
     let res = client
         .get(&url)
         .send()
         .await
-        .with_context(|| format!("[get_products]"))
+        .with_context(|| "[get_products]")
         .with_context(|| format!("request failed for page `{}` with url: `{}`", page, url))?;
     let product_list = res
         .json::<DLsiteProductListFromOwnerApi>()
         .await
-        .with_context(|| format!("[get_products]"))
+        .with_context(|| "[get_products]")
         .with_context(|| format!("parse failed for page `{}`", page))?;
 
     fn get_localized_string(i18n: &DLsiteProductI18nString) -> Result<String, Error> {
         i18n.japanese
             .as_ref()
-            .or_else(|| i18n.english.as_ref())
-            .or_else(|| i18n.korean.as_ref())
-            .or_else(|| i18n.taiwanese.as_ref())
-            .or_else(|| i18n.chinese.as_ref())
+            .or(i18n.english.as_ref())
+            .or(i18n.korean.as_ref())
+            .or(i18n.taiwanese.as_ref())
+            .or(i18n.chinese.as_ref())
             .cloned()
             .ok_or_else(|| anyhow!("localized string is empty"))
     }
@@ -196,7 +196,7 @@ pub async fn get_products(
             })
         })
         .collect::<Result<Vec<_>, Error>>()
-        .with_context(|| format!("[get_products]"))
+        .with_context(|| "[get_products]")
         .with_context(|| format!("mapping failed for page `{}`", page))?;
 
     Ok(product_list)
@@ -209,12 +209,12 @@ pub async fn get_product_from_non_owner_api(id: &str) -> Result<DLsiteProduct, E
     );
     let res = reqwest::get(&url)
         .await
-        .with_context(|| format!("[get_product_from_non_owner_api]"))
+        .with_context(|| "[get_product_from_non_owner_api]")
         .with_context(|| format!("request failed for product id `{}` with url: `{}`", id, url))?;
     let products = res
         .json::<Vec<DLsiteProductFromNonOwnerApi>>()
         .await
-        .with_context(|| format!("[get_product_from_non_owner_api]"))
+        .with_context(|| "[get_product_from_non_owner_api]")
         .with_context(|| format!("parse failed for product id `{}`", id))?;
 
     if products.is_empty() {
@@ -259,13 +259,13 @@ pub async fn get_product_files(id: &str) -> Result<DLsiteProductFiles, Error> {
     );
     let res = reqwest::get(&url)
         .await
-        .with_context(|| format!("[get_product_files]"))
+        .with_context(|| "[get_product_files]")
         .with_context(|| format!("request failed for product id `{}` with url: `{}`", id, url))?;
 
     let product_details_list = res
         .json::<Vec<DLsiteProductFiles>>()
         .await
-        .with_context(|| format!("[get_product_files]"))
+        .with_context(|| "[get_product_files]")
         .with_context(|| format!("parse failed for product id `{}`", id))?;
 
     if product_details_list.is_empty() {
@@ -283,7 +283,7 @@ pub async fn get_voice_comic_request_info(
         .cookie_store(true)
         .cookie_provider(cookie_store)
         .build()
-        .with_context(|| format!("[get_voice_comic_request_info]"))
+        .with_context(|| "[get_voice_comic_request_info]")
         .with_context(|| format!("failed to create HTTP client for id `{}`", id))?;
     let url = format!(
         "https://play.dl.dlsite.com/api/download/sign/cookie?workno={}",
@@ -293,17 +293,18 @@ pub async fn get_voice_comic_request_info(
         .get(&url)
         .send()
         .await
-        .with_context(|| format!("[get_voice_comic_request_info]"))
+        .with_context(|| "[get_voice_comic_request_info]")
         .with_context(|| format!("request failed for id `{}` with url: `{}`", id, url))?;
     let request_info = res
         .json::<DLsiteVoiceComicRequestInfo>()
         .await
-        .with_context(|| format!("[get_voice_comic_request_info]"))
+        .with_context(|| "[get_voice_comic_request_info]")
         .with_context(|| format!("parse failed for id `{}`", id))?;
 
     Ok(request_info)
 }
 
+#[allow(clippy::await_holding_lock)]
 pub async fn get_voice_comic_zip_tree(
     cookie_store: Arc<CookieStoreMutex>,
     request_info: &DLsiteVoiceComicRequestInfo,
@@ -323,7 +324,7 @@ pub async fn get_voice_comic_zip_tree(
         .cookie_store(true)
         .cookie_provider(cookie_store)
         .build()
-        .with_context(|| format!("[get_voice_comic_zip_tree]"))
+        .with_context(|| "[get_voice_comic_zip_tree]")
         .with_context(|| {
             format!(
                 "failed to create HTTP client for request_info url `{}`",
@@ -335,7 +336,7 @@ pub async fn get_voice_comic_zip_tree(
         .get(&url)
         .send()
         .await
-        .with_context(|| format!("[get_voice_comic_zip_tree]"))
+        .with_context(|| "[get_voice_comic_zip_tree]")
         .with_context(|| {
             format!(
                 "request failed for request_info url `{}` with url: `{}`",
@@ -345,7 +346,7 @@ pub async fn get_voice_comic_zip_tree(
     let zip_tree = res
         .json::<DLsiteVoiceComicZipTree>()
         .await
-        .with_context(|| format!("[get_voice_comic_zip_tree]"))
+        .with_context(|| "[get_voice_comic_zip_tree]")
         .with_context(|| format!("parse failed for request_info url `{}`", &request_info.url))?;
 
     Ok(zip_tree)
@@ -403,7 +404,7 @@ pub async fn download_product_files(
         remove_dir_all(&target_path).await.ok();
 
         return Err(err)
-            .with_context(|| format!("[download_product_files]"))
+            .with_context(|| "[download_product_files]")
             .with_context(|| {
                 format!("failed to download product files for product id `{}`", id)
             })?;
@@ -436,7 +437,7 @@ async fn prepare_target_path(id: &str, base_path: impl AsRef<Path>) -> Result<Pa
     if target_path.exists() {
         remove_dir_all(&target_path)
             .await
-            .with_context(|| format!("[prepare_target_path]"))
+            .with_context(|| "[prepare_target_path]")
             .with_context(|| {
                 format!(
                     "failed to cleanup existing target path `{}`",
@@ -447,7 +448,7 @@ async fn prepare_target_path(id: &str, base_path: impl AsRef<Path>) -> Result<Pa
 
     create_dir_all(&target_path)
         .await
-        .with_context(|| format!("[prepare_target_path]"))
+        .with_context(|| "[prepare_target_path]")
         .with_context(|| format!("failed to create target path `{}`", target_path.display()))?;
 
     Ok(target_path)
@@ -466,10 +467,10 @@ async fn download_single_file(
         .create_new(true)
         .open(&file_path)
         .await
-        .with_context(|| format!("[download_single_file]"))
+        .with_context(|| "[download_single_file]")
         .with_context(|| format!("failed to open file `{}`", file_path.display()))?;
 
-    let mut writer = BufWriter::with_capacity(1 * 1024 * 1024, file);
+    let mut writer = BufWriter::with_capacity(1024 * 1024, file);
     let mut total_chunk_received: u64 = 0;
     let mut retry_count = 0;
     const MAX_RETRY_COUNT: u32 = 3;
@@ -487,7 +488,7 @@ async fn download_single_file(
 
                 if MAX_RETRY_COUNT < retry_count {
                     return Err(anyhow!("max retry count reached").context(err))
-                        .with_context(|| format!("[download_single_file]"))
+                        .with_context(|| "[download_single_file]")
                         .with_context(|| {
                             format!("failed to download file `{}`", file_path.display())
                         })?;
@@ -509,7 +510,7 @@ async fn download_single_file(
             writer
                 .write_all(&chunk)
                 .await
-                .with_context(|| format!("[download_single_file]"))
+                .with_context(|| "[download_single_file]")
                 .with_context(|| {
                     format!("failed to write chunk to file `{}`", file_path.display())
                 })?;
@@ -520,7 +521,7 @@ async fn download_single_file(
         writer
             .flush()
             .await
-            .with_context(|| format!("[download_single_file]"))
+            .with_context(|| "[download_single_file]")
             .with_context(|| format!("failed to flush file `{}`", file_path.display()))?;
 
         break;

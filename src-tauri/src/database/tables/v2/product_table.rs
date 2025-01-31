@@ -150,8 +150,7 @@ INSERT INTO v2_indexed_products (
 
                 where_clause.push_str(" AND v2_indexed_products MATCH :query");
                 params.push(
-                    to_params_named(QueryParam { query })
-                        .with_context(|| format!("[query build] query"))?,
+                    to_params_named(QueryParam { query }).with_context(|| "[query build] query")?,
                 );
             }
         }
@@ -163,9 +162,7 @@ INSERT INTO v2_indexed_products (
             }
 
             where_clause.push_str(" AND product.ty = :ty");
-            params.push(
-                to_params_named(QueryTy { ty }).with_context(|| format!("[query build] ty"))?,
-            );
+            params.push(to_params_named(QueryTy { ty }).with_context(|| "[query build] ty")?);
         }
 
         if let Some(age) = age {
@@ -175,15 +172,12 @@ INSERT INTO v2_indexed_products (
             }
 
             where_clause.push_str(" AND product.age = :age");
-            params.push(
-                to_params_named(QueryAge { age }).with_context(|| format!("[query build] age"))?,
-            );
+            params.push(to_params_named(QueryAge { age }).with_context(|| "[query build] age")?);
         }
 
         let params = params
             .iter()
-            .map(|param| param.to_slice())
-            .flatten()
+            .flat_map(|param| param.to_slice())
             .collect::<Vec<_>>();
 
         let order_by_clause = if order_by_asc {

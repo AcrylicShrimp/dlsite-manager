@@ -13,11 +13,11 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum DBError {
     #[error("{0:?}")]
-    RusqliteError(#[from] rusqlite::Error),
+    Rusqlite(#[from] rusqlite::Error),
     #[error("{0:?}")]
-    SerdeRusqliteError(#[from] serde_rusqlite::Error),
+    SerdeRusqlite(#[from] serde_rusqlite::Error),
     #[error("{0:?}")]
-    AnyError(#[from] anyhow::Error),
+    Any(#[from] anyhow::Error),
 }
 
 pub type DBResult<T> = Result<T, DBError>;

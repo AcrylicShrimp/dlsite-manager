@@ -18,17 +18,17 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum DownloadServiceError {
     #[error("{0:?}")]
-    DBError(#[from] DBError),
+    DB(#[from] DBError),
     #[error("{0:?}")]
-    IOError(#[from] std::io::Error),
+    IO(#[from] std::io::Error),
     #[error("{0:?}")]
-    ZipExtractError(#[from] zip_extract::ZipExtractError),
+    ZipExtract(#[from] zip_extract::ZipExtractError),
     #[error("{0:?}")]
-    UnrarError(#[from] unrar::error::UnrarError),
+    Unrar(#[from] unrar::error::UnrarError),
     #[error("{0:?}")]
-    AnyError(#[from] AnyError),
+    Any(#[from] AnyError),
     #[error("{0:?}")]
-    DLsiteServiceError(#[from] DLsiteServiceError),
+    DLsiteServiceFailure(#[from] DLsiteServiceError),
 }
 
 pub struct DownloadService;
@@ -81,7 +81,7 @@ impl DownloadService {
             }
         }
 
-        if downloaded.product_files.files.len() != 0
+        if !downloaded.product_files.files.is_empty()
             && downloaded.product_files.files[0]
                 .file_name
                 .to_ascii_lowercase()
@@ -177,7 +177,7 @@ async fn download(
                     path.display(),
                     err
                 );
-            return Err(DownloadServiceError::AnyError(err));
+            return Err(DownloadServiceError::Any(err));
         }
     };
 
@@ -197,7 +197,7 @@ async fn download(
             path.display(),
             err
         );
-        return Err(DownloadServiceError::AnyError(err));
+        return Err(DownloadServiceError::Any(err));
     }
 
     if let Err(err) = ProductDownloadTable::insert_one(CreatingProductDownload {
@@ -231,12 +231,12 @@ async fn decompress_single(
     let file = OpenOptions::new()
         .read(true)
         .open(&file_path)
-        .with_context(|| format!("[decompress_single]"))
+        .with_context(|| "[decompress_single]")
         .with_context(|| format!("opening file `{}`", file_path.display()))?;
     let reader = BufReader::new(file);
 
     zip_extract::extract(reader, &tmp_path, true)
-        .with_context(|| format!("[decompress_single]"))
+        .with_context(|| "[decompress_single]")
         .with_context(|| {
             format!(
                 "extracting file `{}` to `{}`",
@@ -306,7 +306,7 @@ async fn decompress_multiple(
     remove_dir_all(&tmp_path).ok();
 
     for file in &product_files.files {
-        remove_file(&path.join(&file.file_name)).ok();
+        remove_file(path.join(&file.file_name)).ok();
     }
 
     Ok(())

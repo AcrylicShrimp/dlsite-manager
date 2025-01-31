@@ -83,14 +83,14 @@ impl DLsiteService {
             Err(err) => match err {
                 LoginError::WrongCredentials => {
                     info!("[get_cookie_store] invalid credentials: {:?}", account);
-                    return Err(DLsiteServiceError::InvalidCredentials {
+                    Err(DLsiteServiceError::InvalidCredentials {
                         username: account.username.clone(),
                         password: account.password.clone(),
-                    });
+                    })
                 }
                 LoginError::Other(err) => {
                     warn!("[get_cookie_store] error occurred: {:?}", err);
-                    return Err(DLsiteServiceError::AnyError(err));
+                    Err(DLsiteServiceError::AnyError(err))
                 }
             },
         }
@@ -193,7 +193,7 @@ impl DLsiteService {
 
                 if let Err(err) = ProductTable::insert_many(
                     products
-                        .into_iter()
+                        .iter()
                         .map(|product| make_creating_product(detail.account_id, product)),
                 ) {
                     error!("[fetch_new_products] failed to update the products from the account id `{}` to the database: {:?}", detail.account_id, err);
@@ -330,7 +330,7 @@ fn update_cookie_json(account_id: i64, cookie_store: &CookieStoreMutex) {
         account_id
     );
 
-    match serialize_cookie_store(&cookie_store) {
+    match serialize_cookie_store(cookie_store) {
         Ok(serialized) => {
             if let Err(err) = AccountTable::update_one_cookie_json(account_id, &serialized) {
                 warn!(

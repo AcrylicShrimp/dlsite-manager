@@ -15,8 +15,8 @@ pub trait BuildableWindow<R>
 where
     R: Runtime,
 {
-    fn build<'m, M: Manager<R>>(&self, manager: &'m M) -> Result<WebviewWindow<R>>;
-    fn build_or_focus<'m, M: Manager<R>>(&self, manager: &'m M) -> Result<WebviewWindow<R>>;
+    fn build<M: Manager<R>>(&self, manager: &M) -> Result<WebviewWindow<R>>;
+    fn build_or_focus<M: Manager<R>>(&self, manager: &M) -> Result<WebviewWindow<R>>;
 }
 
 impl<R, T> BuildableWindow<R> for T
@@ -24,11 +24,11 @@ where
     R: Runtime,
     T: WindowInfoProvider,
 {
-    fn build<'m, M: Manager<R>>(&self, manager: &'m M) -> Result<WebviewWindow<R>> {
+    fn build<M: Manager<R>>(&self, manager: &M) -> Result<WebviewWindow<R>> {
         let (width, height) = self.size();
         let mut builder = WebviewWindowBuilder::new(
             manager,
-            &self.label(),
+            self.label(),
             WebviewUrl::App(<_>::from(&self.entry())),
         )
         .title(self.title())
@@ -44,7 +44,7 @@ where
         Ok(window)
     }
 
-    fn build_or_focus<'m, M: Manager<R>>(&self, manager: &'m M) -> Result<WebviewWindow<R>> {
+    fn build_or_focus<M: Manager<R>>(&self, manager: &M) -> Result<WebviewWindow<R>> {
         if let Some(window) = manager.get_webview_window(&self.label()) {
             window.set_focus()?;
             Ok(window)

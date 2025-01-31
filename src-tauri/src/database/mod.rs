@@ -16,7 +16,7 @@ pub struct Database {
 impl Database {
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         Ok(Self {
-            connection: Connection::open(path)?.into(),
+            connection: Connection::open(path)?,
         })
     }
 

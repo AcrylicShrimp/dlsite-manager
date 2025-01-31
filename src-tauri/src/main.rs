@@ -22,7 +22,7 @@ fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
-        .menu(|app| create_menu(app))
+        .menu(create_menu)
         .setup(|app| {
             app.on_menu_event(|_, event| {
                 handle_menu(event).unwrap();
@@ -55,6 +55,7 @@ fn main() {
             .expect("failed to init logger");
     }
 
+    #[allow(clippy::single_match)]
     app.run(|_, event| match event {
         RunEvent::Exit => {
             use_application().drop_storage().ok();
