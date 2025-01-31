@@ -11,7 +11,7 @@ rust-version = "1.57"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [build-dependencies]
-tauri-build = { version = "2.0.0-beta", features = [] }
+tauri-build = { version = "2.0.5", features = [] }
 
 [dependencies]
 anyhow = { version = "1" }
@@ -29,9 +29,9 @@ serde_json = { version = "1.0" }
 serde_rusqlite = { version = "0.35" }
 serde = { version = "1.0", features = ["derive"] }
 scraper = { version = "0.19" }
-tauri = { version = "2.0.0-beta", features = ["tray-icon"] }
-tauri-plugin-dialog = "2.0.0-beta"
-tauri-plugin-shell = "2.0.0-beta"
+tauri = { version = "2.2.5", features = ["tray-icon"] }
+tauri-plugin-dialog = "2.2.0"
+tauri-plugin-opener = "2.2.5"
 thiserror = { version = "1" }
 tokio = { version = "1", features = ["full"] }
 url = "2"

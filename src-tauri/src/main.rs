@@ -21,7 +21,7 @@ use tauri::{Manager, RunEvent};
 fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .menu(create_menu)
         .setup(|app| {
             app.on_menu_event(|_, event| {

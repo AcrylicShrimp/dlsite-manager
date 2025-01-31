@@ -5,7 +5,7 @@
   import SmallRedButton from "@app/lib/buttons/SmallRedButton.svelte";
 
   import { invoke } from "@tauri-apps/api/core";
-  import { getCurrent } from "@tauri-apps/api/window";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
 
   let accounts: Account[] = [];
@@ -13,7 +13,7 @@
   onMount(async () => {
     accounts = await invoke<Account[]>("account_management_list_accounts");
 
-    const appWindow = getCurrent();
+    const appWindow = getCurrentWindow();
     await appWindow.listen<Account>("add-account", (event) => {
       accounts = [...accounts, event.payload];
     });

@@ -12,12 +12,12 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.0.0-beta.13"
+    "@tauri-apps/api": "^2.2.0"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^2.0",
     "@sveltejs/kit": "^1.27",
-    "@tauri-apps/cli": "^2.0.0-beta.20",
+    "@tauri-apps/cli": "^2.2.7",
     "@types/lodash": "^4.14",
     "autoprefixer": "^10.4",
     "lodash": "^4.17.21",

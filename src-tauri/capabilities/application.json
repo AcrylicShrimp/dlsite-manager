@@ -4,13 +4,23 @@
   "description": "Capability for the application",
   "windows": ["*"],
   "permissions": [
-    "shell:allow-open",
-    "path:default",
-    "event:default",
-    "window:default",
-    "app:default",
-    "resources:default",
-    "menu:default",
-    "tray:default"
+    "core:path:default",
+    "core:event:default",
+    "core:window:default",
+    "core:app:default",
+    "core:resources:default",
+    "core:menu:default",
+    "core:tray:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {
+          "url": "https://*.github.com/*"
+        },
+        {
+          "url": "https://*.dlsite.com/*"
+        }
+      ]
+    }
   ]
 }

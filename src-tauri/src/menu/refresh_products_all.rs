@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::Error as AnyError;
 use serde::Serialize;
-use tauri::Manager;
+use tauri::{Emitter as _, Manager};
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct RefreshProductsAllProgressEvent {

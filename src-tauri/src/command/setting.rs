@@ -19,7 +19,7 @@ pub async fn setting_browse_default_root_directory() -> CommandResult<Option<Str
         .file()
         .set_title("Pick a default root directory")
         .blocking_pick_folder()
-        .map(|err| err.to_str().unwrap().to_owned()))
+        .map(|path| path.to_string()))
 }
 
 #[tauri::command]

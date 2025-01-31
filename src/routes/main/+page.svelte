@@ -22,7 +22,7 @@
   import SmallMenuButton from "@app/lib/buttons/SmallMenuButton.svelte";
 
   import { invoke } from "@tauri-apps/api/core";
-  import { getCurrent } from "@tauri-apps/api/window";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import throttle from "lodash/throttle";
   import { onMount } from "svelte";
 
@@ -46,7 +46,7 @@
   let progressTotal: number = 0;
 
   onMount(async () => {
-    const appWindow = getCurrent();
+    const appWindow = getCurrentWindow();
     await appWindow.listen("refresh-begin", (event) => {
       updating = true;
       showProgress = event.payload !== "no-progress";

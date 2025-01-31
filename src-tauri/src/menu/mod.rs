@@ -16,7 +16,7 @@ use tauri::{
     menu::{Menu, MenuEvent, SubmenuBuilder},
     Manager, Runtime,
 };
-use tauri_plugin_shell::ShellExt;
+use tauri_plugin_opener::OpenerExt;
 
 pub fn create_menu<R: Runtime>(manager: &impl Manager<R>) -> Result<Menu<R>, tauri::Error> {
     let menu = Menu::new(manager)?;
@@ -146,7 +146,9 @@ pub fn handle_menu(event: MenuEvent) -> Result<(), AnyError> {
             let app_handle = use_application().app_handle();
 
             if let Ok(dir) = app_handle.path().app_log_dir() {
-                app_handle.shell().open(dir.to_str().unwrap(), None)?;
+                app_handle
+                    .opener()
+                    .open_path(dir.to_str().unwrap(), None::<&str>)?;
             }
         }
         _ => {}

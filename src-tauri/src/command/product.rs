@@ -11,8 +11,8 @@ use crate::{
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tauri::{Manager, Runtime};
-use tauri_plugin_shell::ShellExt;
+use tauri::{Emitter as _, Manager, Runtime};
+use tauri_plugin_opener::OpenerExt;
 
 #[derive(Default, Debug, Clone, Deserialize)]
 pub struct ProductQuery<'a> {
@@ -156,7 +156,9 @@ pub async fn product_open_downloaded_folder<R: Runtime>(
         return Ok(());
     }
 
-    app_handle.shell().open(path.to_str().unwrap(), None)?;
+    app_handle
+        .opener()
+        .open_path(path.to_str().unwrap(), None::<&str>)?;
 
     Ok(())
 }

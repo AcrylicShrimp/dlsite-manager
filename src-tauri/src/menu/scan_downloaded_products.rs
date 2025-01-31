@@ -11,7 +11,7 @@ use crate::{
 use anyhow::Error as AnyError;
 use log::error;
 use std::{fs::read_dir, path::PathBuf};
-use tauri::Manager;
+use tauri::{Emitter as _, Manager};
 
 pub async fn scan_downloaded_products() -> Result<(), AnyError> {
     if let Some(window) = use_application()

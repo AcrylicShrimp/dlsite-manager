@@ -8,7 +8,7 @@ use crate::{
     window::{AccountEditWindow, AccountManagementWindow, WindowInfoProvider},
 };
 use log::warn;
-use tauri::{Manager, Runtime, Window};
+use tauri::{Emitter as _, Manager, Runtime, Window};
 
 #[tauri::command]
 pub fn account_management_list_accounts() -> CommandResult<Vec<Account>> {
