@@ -83,8 +83,7 @@ pub async fn scan_downloaded_products() -> Result<(), AnyError> {
             })
         }))
         .await;
-
-    if let Err(err) = ProductTable::insert_many(products.iter().filter_map(|product| {
+    let inserting_products = products.iter().filter_map(|product| {
         let product = match product {
             Some(product) => product,
             None => return None,
@@ -101,7 +100,9 @@ pub async fn scan_downloaded_products() -> Result<(), AnyError> {
             group_name: &product.product.group_name,
             registered_at: Some(product.ctime),
         })
-    })) {
+    });
+
+    if let Err(err) = ProductTable::insert_many(inserting_products, false) {
         error!(
             "[scan_downloaded_products] failed to update the products to the database: {:?}",
             err

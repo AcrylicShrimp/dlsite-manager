@@ -50,11 +50,14 @@ CREATE VIRTUAL TABLE IF NOT EXISTS v2_indexed_products USING fts5 (
 
 impl ProductTable {
     /// Inserts many products into the database. Note that the account will not be overwritten.
-    pub fn insert_many<'a>(products: impl Iterator<Item = CreatingProduct<'a>>) -> DBResult<()> {
+    pub fn insert_many<'a>(
+        products: impl Iterator<Item = CreatingProduct<'a>>,
+        override_registered_at: bool,
+    ) -> DBResult<()> {
         let mut connection = use_application().connection();
         let tx = connection.transaction()?;
         {
-            let mut insert_stmt = tx.prepare(
+            let mut insert_stmt = tx.prepare(if override_registered_at {
                 r#"
 INSERT INTO v2_products (
     id,
@@ -84,8 +87,38 @@ INSERT INTO v2_products (
     group_id = excluded.group_id,
     group_name = excluded.group_name,
     registered_at = excluded.registered_at
-"#,
-            )?;
+"#
+            } else {
+                r#"
+INSERT INTO v2_products (
+    id,
+    account_id,
+    ty,
+    age,
+    title,
+    thumbnail,
+    group_id,
+    group_name,
+    registered_at
+) VALUES (
+    :id,
+    :account_id,
+    :ty,
+    :age,
+    :title,
+    :thumbnail,
+    :group_id,
+    :group_name,
+    :registered_at
+) ON CONFLICT (id) DO UPDATE SET
+    ty = excluded.ty,
+    age = excluded.age,
+    title = excluded.title,
+    thumbnail = excluded.thumbnail,
+    group_id = excluded.group_id,
+    group_name = excluded.group_name
+"#
+            })?;
             let mut index_remove_stmt = tx.prepare(
                 r#"
 DELETE FROM v2_indexed_products

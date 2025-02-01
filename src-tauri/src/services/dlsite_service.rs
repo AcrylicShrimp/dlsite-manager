@@ -195,6 +195,7 @@ impl DLsiteService {
                     products
                         .iter()
                         .map(|product| make_creating_product(detail.account_id, product)),
+                    true,
                 ) {
                     error!("[fetch_new_products] failed to update the products from the account id `{}` to the database: {:?}", detail.account_id, err);
                     continue 'outter;
@@ -301,6 +302,7 @@ impl DLsiteService {
                     products
                         .iter()
                         .map(|product| make_creating_product(detail.account_id, product)),
+                    true,
                 ) {
                     error!("[refresh_products_all] failed to update the products from the account id `{}` to the database: {:?}", detail.account_id, err);
                     continue 'outter;
