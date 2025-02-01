@@ -1,8 +1,8 @@
 <script lang="ts">
   import {
     DLsiteProductDownloadState,
+    DLsiteProductType,
     type DLsiteProductAge,
-    type DLsiteProductType,
     type Product,
     type ProductDownload,
   } from "@app/types/product";
@@ -193,6 +193,7 @@
       accountId: product.account_id,
       productId: product.id,
       decompress,
+      isVoiceComic: product.ty === DLsiteProductType.VoiceComic,
     });
   }
 

@@ -5,7 +5,10 @@ use crate::{
         tables::v2::{DBError, ProductDownloadTable},
     },
     dlsite::{
-        api::{download_product_files, get_product_files},
+        api::{
+            download_product_files, download_voice_comic, get_product_files,
+            get_voice_comic_request_info, get_voice_comic_zip_tree,
+        },
         dto::DLsiteProductFiles,
     },
     services::dlsite_service::DLsiteService,
@@ -102,15 +105,93 @@ impl DownloadService {
         Ok(downloaded.base_path)
     }
 
-    // pub async fn download_voice_comic(
-    //     &self,
-    //     account_id: i64,
-    //     product_id: impl AsRef<str>,
-    //     base_path: impl AsRef<Path>,
-    //     on_progress: impl Fn(u64, u64, bool),
-    // ) -> Result<PathBuf, DownloadServiceError> {
+    pub async fn download_voice_comic(
+        &self,
+        account_id: i64,
+        product_id: impl AsRef<str>,
+        base_path: impl AsRef<Path>,
+        on_progress: impl Fn(u64, u64),
+    ) -> Result<PathBuf, DownloadServiceError> {
+        let product_id = product_id.as_ref();
+        let path = base_path.as_ref().join(product_id);
 
-    // }
+        info!(
+            "[download_voice_comic] downloading product `{}` of the account id `{}` at path `{}`",
+            product_id,
+            account_id,
+            path.display()
+        );
+
+        let cookie_store = DLsiteService::new().get_cookie_store(account_id).await?;
+        let voice_comic_request_info = match get_voice_comic_request_info(
+            cookie_store.clone(),
+            product_id,
+        )
+        .await
+        {
+            Ok(request_info) => request_info,
+            Err(err) => {
+                error!("[download_voice_comic] failed to download product `{}` of the account id `{}` at path `{}`: {:?}",
+                product_id,
+                    account_id,
+                    path.display(),
+                    err
+                );
+                return Err(DownloadServiceError::AnyError(err));
+            }
+        };
+        let voice_comic_zip_tree = match get_voice_comic_zip_tree(
+            cookie_store.clone(),
+            &voice_comic_request_info,
+        )
+        .await
+        {
+            Ok(request_info) => request_info,
+            Err(err) => {
+                error!("[download_voice_comic] failed to download product `{}` of the account id `{}` at path `{}`: {:?}",
+                product_id,
+                    account_id,
+                    path.display(),
+                    err
+                );
+                return Err(DownloadServiceError::AnyError(err));
+            }
+        };
+
+        if let Err(err) = download_voice_comic(
+            cookie_store,
+            product_id,
+            &voice_comic_request_info,
+            &voice_comic_zip_tree,
+            base_path.as_ref(),
+            on_progress,
+        )
+        .await
+        {
+            error!(
+            "[download_voice_comic] failed to download product `{}` of the account id `{}` at path `{}`: {:?}",
+                product_id,
+                account_id,
+                path.display(),
+                err
+            );
+            return Err(DownloadServiceError::AnyError(err));
+        }
+
+        if let Err(err) = ProductDownloadTable::insert_one(CreatingProductDownload {
+            product_id,
+            path: &path,
+        }) {
+            warn!(
+            "[download_voice_comic] failed to insert the downloaded product `{}` to the database at path `{}`: {:?}",
+                product_id,
+                path.display(),
+                err
+            );
+        }
+
+        Ok(base_path.as_ref().to_owned())
+    }
 
     pub fn remove_downloaded(
         &self,

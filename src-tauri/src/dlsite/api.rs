@@ -6,7 +6,7 @@ use anyhow::{anyhow, Context, Error};
 use chrono::{FixedOffset, NaiveDateTime, TimeZone};
 use lazy_static::lazy_static;
 use reqwest::{Client, ClientBuilder};
-use reqwest_cookie_store::{CookieStore, CookieStoreMutex, RawCookie};
+use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -21,7 +21,6 @@ use tokio::{
     fs::{create_dir_all, remove_dir_all, OpenOptions},
     io::{AsyncWriteExt, BufWriter},
 };
-use url::Url;
 
 lazy_static! {
     static ref GROUP_NAME_SELECTOR_STR: &'static str = "#work_maker>tbody>tr>td>span>a";
@@ -308,16 +307,7 @@ pub async fn get_voice_comic_zip_tree(
     cookie_store: Arc<CookieStoreMutex>,
     request_info: &DLsiteVoiceComicRequestInfo,
 ) -> Result<DLsiteVoiceComicZipTree, Error> {
-    let cookie_url = Url::parse("https://play.dl.dlsite.com").unwrap();
-    let mut cookie_store_guard = cookie_store.lock().unwrap();
-
-    for (key, value) in &request_info.cookies {
-        cookie_store_guard
-            .insert_raw(&RawCookie::new(key, value), &cookie_url)
-            .unwrap();
-    }
-
-    drop(cookie_store_guard);
+    request_info.apply_cookies("https://play.dl.dlsite.com", cookie_store.clone());
 
     let client = ClientBuilder::new()
         .cookie_store(true)
@@ -346,7 +336,12 @@ pub async fn get_voice_comic_zip_tree(
         .json::<DLsiteVoiceComicZipTree>()
         .await
         .with_context(|| format!("[get_voice_comic_zip_tree]"))
-        .with_context(|| format!("parse failed for request_info url `{}`", &request_info.url))?;
+        .with_context(|| {
+            format!(
+                "parse failed for request_info url `{}` with url: `{}`",
+                &request_info.url, url
+            )
+        })?;
 
     Ok(zip_tree)
 }
@@ -428,6 +423,110 @@ fn resolve_file_urls(id: &str, product_files: &DLsiteProductFiles) -> Vec<String
             })
             .collect(),
     }
+}
+
+pub async fn download_voice_comic(
+    cookie_store: Arc<CookieStoreMutex>,
+    id: &str,
+    request_info: &DLsiteVoiceComicRequestInfo,
+    zip_tree: &DLsiteVoiceComicZipTree,
+    base_path: impl AsRef<Path>,
+    on_progress: impl Fn(u64, u64),
+) -> Result<(), Error> {
+    request_info.apply_cookies("https://play.dlsite.fun", cookie_store.clone());
+
+    struct VoiceComicFile {
+        pub name: String,
+        pub file_name: String,
+    }
+
+    let mut files = Vec::new();
+
+    for item in &zip_tree.items {
+        if item.ty != "file" {
+            continue;
+        }
+
+        let voice_comic = match zip_tree.play_files.get(&item.play_file_key) {
+            Some(voice_comic) => voice_comic,
+            None => {
+                continue;
+            }
+        };
+        let voice_comic = match voice_comic.items.get(&voice_comic.ty) {
+            Some(voice_comic) => voice_comic,
+            None => {
+                continue;
+            }
+        };
+        let name = &voice_comic.optimized.name;
+        let (is_mp4, file_name) = match name.rsplit_once('.') {
+            Some((_, extension)) => {
+                let is_mp4 = extension.eq_ignore_ascii_case("mp4");
+
+                match item.name.rsplit_once(".") {
+                    Some((file_name, _)) => (is_mp4, format!("{}.{}", file_name, extension)),
+                    None => (is_mp4, item.name.to_owned()),
+                }
+            }
+            None => (false, item.name.to_owned()),
+        };
+
+        files.push(VoiceComicFile {
+            name: name.clone(),
+            file_name,
+        });
+
+        if is_mp4 {
+            if let Some((hash, _)) = name.rsplit_once(".") {
+                let name = format!("{}.vtt", hash);
+                let file_name = match item.name.rsplit_once(".") {
+                    Some((file_name, _)) => format!("{}.vtt", file_name),
+                    None => item.name.clone(),
+                };
+                files.push(VoiceComicFile { name, file_name });
+            }
+        }
+    }
+
+    let file_urls = files
+        .iter()
+        .map(|file| format!("https://play.dlsite.fun/work/{}/{}", id, &file.name))
+        .collect::<Vec<_>>();
+
+    let target_path = prepare_target_path(id, base_path).await?;
+
+    let client = ClientBuilder::new()
+        .cookie_store(true)
+        .cookie_provider(cookie_store)
+        .build()?;
+
+    on_progress(1, 2);
+
+    let results =
+        futures::future::try_join_all(file_urls.iter().enumerate().map(|(index, file_url)| {
+            download_single_file(
+                &client,
+                file_url,
+                &target_path,
+                &files[index].file_name,
+                |_| {},
+            )
+        }))
+        .await;
+
+    if let Err(err) = results {
+        // ignore errors occurred during cleanup
+        remove_dir_all(&target_path).await.ok();
+
+        return Err(err)
+            .with_context(|| format!("[download_product_files]"))
+            .with_context(|| {
+                format!("failed to download product files for product id `{}`", id)
+            })?;
+    }
+
+    Ok(())
 }
 
 async fn prepare_target_path(id: &str, base_path: impl AsRef<Path>) -> Result<PathBuf, Error> {

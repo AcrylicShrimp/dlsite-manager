@@ -1,9 +1,12 @@
 use chrono::{DateTime, Utc};
+use reqwest_cookie_store::{CookieStoreMutex, RawCookie};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fmt::{Debug, Display},
+    sync::Arc,
 };
+use url::Url;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DLsiteProduct {
@@ -342,6 +345,21 @@ pub struct DLsiteVoiceComicRequestInfo {
     pub cookies: BTreeMap<String, String>,
 }
 
+impl DLsiteVoiceComicRequestInfo {
+    pub fn apply_cookies(&self, url: &str, cookie_store: Arc<CookieStoreMutex>) {
+        let cookie_url = Url::parse(url).unwrap();
+        let mut cookie_store_guard = cookie_store.lock().unwrap();
+
+        for (key, value) in &self.cookies {
+            cookie_store_guard.remove(".play.dlsite.fun", "/", key);
+            cookie_store_guard.remove(".play.dl.dlsite.com", "/", key);
+            cookie_store_guard
+                .insert_raw(&RawCookie::new(key, value), &cookie_url)
+                .unwrap();
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DLsiteVoiceComicZipTree {
     #[serde(rename = "tree")]
@@ -363,8 +381,10 @@ pub struct DLsiteVoiceComicZipTreeItem {
 pub struct DLsiteVoiceComicZipTreePlayFile {
     #[serde(rename = "type")]
     pub ty: String,
+    pub length: u64,
+    pub size: String,
     #[serde(flatten)]
-    pub items: HashMap<String, DLsiteVoiceComicZipTreePlayFileItemOptimized>,
+    pub items: BTreeMap<String, DLsiteVoiceComicZipTreePlayFileItemOptimized>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
