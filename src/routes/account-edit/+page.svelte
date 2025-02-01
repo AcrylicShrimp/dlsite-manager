@@ -40,11 +40,16 @@
 
   async function test() {
     isTesting = true;
-    testResult = await invoke<number>("account_management_test_account", {
-      username,
-      password,
-    });
-    isTesting = false;
+    try {
+      testResult = await invoke<number>("account_management_test_account", {
+        username,
+        password,
+      });
+    } catch {
+      testResult = -1;
+    } finally {
+      isTesting = false;
+    }
   }
 </script>
 
