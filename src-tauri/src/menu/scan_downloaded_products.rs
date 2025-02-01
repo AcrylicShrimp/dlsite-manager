@@ -9,6 +9,7 @@ use crate::{
     window::{MainWindow, WindowInfoProvider},
 };
 use anyhow::Error as AnyError;
+use chrono::{DateTime, Utc};
 use log::error;
 use std::{fs::read_dir, path::PathBuf};
 use tauri::{Emitter as _, Manager};
@@ -30,6 +31,7 @@ pub async fn scan_downloaded_products() -> Result<(), AnyError> {
     struct ScannedProductDownload {
         pub id: String,
         pub path: PathBuf,
+        pub ctime: DateTime<Utc>,
     }
 
     let mut scanned_products = Vec::new();
@@ -48,34 +50,39 @@ pub async fn scan_downloaded_products() -> Result<(), AnyError> {
             }
         };
         let path = entry.path();
+        let ctime = entry.metadata()?.created()?;
 
         scanned_products.push(ScannedProductDownload {
             id: file_name,
             path,
+            ctime: ctime.into(),
         });
     }
 
     struct ScannedProduct {
         pub id: String,
         pub path: PathBuf,
+        pub ctime: DateTime<Utc>,
         pub product: DLsiteProduct,
     }
 
-    let products = futures::future::join_all(scanned_products.into_iter().map(|product| async {
-        let fetched_product = match get_product_from_non_owner_api(&product.id).await {
-            Ok(product) => product,
-            Err(_) => {
-                return None;
-            }
-        };
+    let products =
+        futures::future::join_all(scanned_products.into_iter().map(|product| async move {
+            let fetched_product = match get_product_from_non_owner_api(&product.id).await {
+                Ok(product) => product,
+                Err(_) => {
+                    return None;
+                }
+            };
 
-        Some(ScannedProduct {
-            id: product.id,
-            path: product.path,
-            product: fetched_product,
-        })
-    }))
-    .await;
+            Some(ScannedProduct {
+                id: product.id,
+                path: product.path,
+                ctime: product.ctime,
+                product: fetched_product,
+            })
+        }))
+        .await;
 
     if let Err(err) = ProductTable::insert_many(products.iter().filter_map(|product| {
         let product = match product {
@@ -92,7 +99,7 @@ pub async fn scan_downloaded_products() -> Result<(), AnyError> {
             thumbnail: &product.product.thumbnail,
             group_id: &product.product.group_id,
             group_name: &product.product.group_name,
-            registered_at: product.product.registered_at,
+            registered_at: Some(product.ctime),
         })
     })) {
         error!(

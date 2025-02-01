@@ -381,6 +381,6 @@ fn make_creating_product(account_id: i64, product: &DLsiteProduct) -> CreatingPr
         thumbnail: &product.thumbnail,
         group_id: &product.group_id,
         group_name: &product.group_name,
-        registered_at: product.registered_at,
+        registered_at: product.purchased_at,
     }
 }

@@ -14,7 +14,7 @@ pub struct DLsiteProduct {
     pub thumbnail: String,
     pub group_id: String,
     pub group_name: String,
-    pub registered_at: Option<DateTime<Utc>>,
+    pub purchased_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -38,8 +38,8 @@ pub struct DLsiteProductFromOwnerApi {
     pub icon: DLsiteProductIcon,
     #[serde(alias = "maker")]
     pub group: DLsiteProductGroup,
-    #[serde(rename = "regist_date")]
-    pub registered_at: Option<DateTime<Utc>>,
+    #[serde(rename = "sales_date")]
+    pub purchased_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -81,11 +81,6 @@ pub struct DLsiteProductFromNonOwnerApi {
     pub group_id: String,
     #[serde(rename = "maker_name")]
     pub group_name: String,
-    #[serde(rename = "regist_date")]
-    /// NOTE: `regist_date` from DLsite response has wrong format `YYYY-MM-DD HH:MM:SS`, so it's unable to parse as `DateTime<Utc>` directly.
-    /// Since this struct is only used for parsing JSON, it's okay to keep it as `String` here.
-    /// This field will be parsed and converted to `DateTime<Utc>` later in `get_product` function.
-    pub registered_at: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

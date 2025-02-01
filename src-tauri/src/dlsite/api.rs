@@ -3,7 +3,6 @@ use super::dto::{
     DLsiteProductListFromOwnerApi, DLsiteVoiceComicRequestInfo, DLsiteVoiceComicZipTree,
 };
 use anyhow::{anyhow, Context, Error};
-use chrono::{FixedOffset, NaiveDateTime, TimeZone};
 use lazy_static::lazy_static;
 use reqwest::{Client, ClientBuilder};
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex, RawCookie};
@@ -192,7 +191,7 @@ pub async fn get_products(
                 group_name: get_localized_string(&product.group.name).with_context(|| {
                     format!("mapping `group_name` of product id `{}`", product.id)
                 })?,
-                registered_at: product.registered_at,
+                purchased_at: product.purchased_at,
             })
         })
         .collect::<Result<Vec<_>, Error>>()
@@ -222,19 +221,6 @@ pub async fn get_product_from_non_owner_api(id: &str) -> Result<DLsiteProduct, E
     }
 
     let product = products.into_iter().next().unwrap();
-    let utc_registered_at = match product.registered_at {
-        Some(registered_at) => {
-            let naive_registered_at =
-                NaiveDateTime::parse_from_str(&registered_at, "%Y-%m-%d %H:%M:%S")?;
-            let jst_offset = FixedOffset::east_opt(9 * 3600).unwrap();
-            let jst_registered_at = jst_offset
-                .from_local_datetime(&naive_registered_at)
-                .single()
-                .unwrap();
-            Some(jst_registered_at.to_utc())
-        }
-        None => None,
-    };
 
     Ok(DLsiteProduct {
         id: id.to_owned(),
@@ -248,7 +234,7 @@ pub async fn get_product_from_non_owner_api(id: &str) -> Result<DLsiteProduct, E
         },
         group_id: product.group_id,
         group_name: product.group_name,
-        registered_at: utc_registered_at,
+        purchased_at: None,
     })
 }
 
