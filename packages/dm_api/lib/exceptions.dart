@@ -22,3 +22,21 @@ class DmApiCredentialsIncorrectException implements Exception {
     return 'credentials are incorrect';
   }
 }
+
+class DmApiNotAuthorizedException implements Exception {
+  @override
+  String toString() {
+    return 'not authorized';
+  }
+}
+
+class DmApiFailure implements Exception {
+  final String context;
+
+  DmApiFailure(this.context);
+
+  @override
+  String toString() {
+    return 'the API does not respond as expected: $context';
+  }
+}

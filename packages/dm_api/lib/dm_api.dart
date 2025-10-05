@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:dio_cookie_manager/dio_cookie_manager.dart';
 import 'package:dm_api/dm_api_cookie_jar.dart';
+import 'package:dm_api/dm_api_purchased_product.dart';
 import 'package:dm_api/exceptions.dart';
 
 class DmApi {
@@ -100,7 +101,53 @@ class DmApi {
     if (countRes.statusCode == 401) {
       throw DmApiCredentialsIncorrectException();
     }
+  }
 
-    print(countRes.data);
+  Future<int> getProductCount() async {
+    final countRes = await dio.get<Map<String, dynamic>>(
+      "https://play.dlsite.com/api/v3/content/count",
+      options: Options(
+        responseType: ResponseType.json,
+        validateStatus: (status) => status == 200 || status == 401,
+      ),
+    );
+
+    if (countRes.statusCode == 401) {
+      throw DmApiNotAuthorizedException();
+    }
+
+    final count = countRes.data?["user"];
+
+    if (count is! int) {
+      throw DmApiFailure("'user' is not an integer (user=$count)");
+    }
+
+    return count;
+  }
+
+  Future<List<DmApiPurchasedProduct>> getPurchasedProducts() async {
+    final purchasedProductsRes = await dio.get<List<dynamic>>(
+      "https://play.dlsite.com/api/v3/content/sales",
+      options: Options(
+        responseType: ResponseType.json,
+        validateStatus: (status) => status == 200 || status == 401,
+      ),
+    );
+
+    if (purchasedProductsRes.statusCode == 401) {
+      throw DmApiNotAuthorizedException();
+    }
+
+    if (purchasedProductsRes.data is! List<dynamic>) {
+      throw DmApiFailure(
+        "'data' is not a list (data=${purchasedProductsRes.data})",
+      );
+    }
+
+    final purchasedProducts = purchasedProductsRes.data!
+        .map((e) => DmApiPurchasedProduct.fromJson(e))
+        .toList();
+
+    return purchasedProducts;
   }
 }
