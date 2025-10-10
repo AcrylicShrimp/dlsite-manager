@@ -45,10 +45,10 @@ class DmApiProduct {
   @JsonKey(name: 'regist_date')
   final DateTime registeredAt;
   @JsonKey(name: 'sales_date')
-  final DateTime publishedAt;
+  final DateTime? publishedAt;
   @JsonKey(name: 'upgrade_date')
-  final DateTime updatedAt;
-  @JsonKey(name: 'tags')
+  final DateTime? updatedAt;
+  @JsonKey(name: 'tags', defaultValue: [])
   final List<DmApiProductTag> tags;
 
   DmApiProduct({

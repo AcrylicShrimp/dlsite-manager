@@ -21,11 +21,17 @@ DmApiProduct _$DmApiProductFromJson(Map<String, dynamic> json) => DmApiProduct(
     json['work_files'] as Map<String, dynamic>,
   ),
   registeredAt: DateTime.parse(json['regist_date'] as String),
-  publishedAt: DateTime.parse(json['sales_date'] as String),
-  updatedAt: DateTime.parse(json['upgrade_date'] as String),
-  tags: (json['tags'] as List<dynamic>)
-      .map((e) => DmApiProductTag.fromJson(e as Map<String, dynamic>))
-      .toList(),
+  publishedAt: json['sales_date'] == null
+      ? null
+      : DateTime.parse(json['sales_date'] as String),
+  updatedAt: json['upgrade_date'] == null
+      ? null
+      : DateTime.parse(json['upgrade_date'] as String),
+  tags:
+      (json['tags'] as List<dynamic>?)
+          ?.map((e) => DmApiProductTag.fromJson(e as Map<String, dynamic>))
+          .toList() ??
+      [],
 );
 
 Map<String, dynamic> _$DmApiProductToJson(
@@ -39,8 +45,8 @@ Map<String, dynamic> _$DmApiProductToJson(
   'genre_ids': instance.genreIds,
   'work_files': instance.thumbnail,
   'regist_date': instance.registeredAt.toIso8601String(),
-  'sales_date': instance.publishedAt.toIso8601String(),
-  'upgrade_date': instance.updatedAt.toIso8601String(),
+  'sales_date': instance.publishedAt?.toIso8601String(),
+  'upgrade_date': instance.updatedAt?.toIso8601String(),
   'tags': instance.tags,
 };
 
