@@ -7,9 +7,9 @@ class DmApiPurchasedProduct {
   @JsonKey(name: 'workno')
   final String id;
   @JsonKey(name: 'sales_date')
-  final DateTime purchasedDate;
+  final DateTime purchasedAt;
 
-  DmApiPurchasedProduct({required this.id, required this.purchasedDate});
+  DmApiPurchasedProduct({required this.id, required this.purchasedAt});
 
   factory DmApiPurchasedProduct.fromJson(Map<String, dynamic> json) =>
       _$DmApiPurchasedProductFromJson(json);

@@ -1,3 +1,5 @@
+import 'package:json_annotation/json_annotation.dart';
+
 class DmApiXsrfTokenNotFoundException implements Exception {
   @override
   String toString() {
@@ -30,13 +32,16 @@ class DmApiNotAuthorizedException implements Exception {
   }
 }
 
-class DmApiFailure implements Exception {
-  final String context;
+class DmApiUnexpectedApiResponse implements Exception {
+  final String method;
+  final String uri;
+  final Object? body;
+  final CheckedFromJsonException reason;
 
-  DmApiFailure(this.context);
+  DmApiUnexpectedApiResponse(this.method, this.uri, this.body, this.reason);
 
   @override
   String toString() {
-    return 'the API does not respond as expected: $context';
+    return 'the API does not respond as expected:\nmethod: $method\nuri: $uri\nbody: $body\nreason: $reason';
   }
 }

@@ -1,8 +1,11 @@
 import 'package:dio/dio.dart';
 import 'package:dio_cookie_manager/dio_cookie_manager.dart';
+import 'package:dm_api/api_dto.dart';
 import 'package:dm_api/dm_api_cookie_jar.dart';
+import 'package:dm_api/dm_api_product.dart';
 import 'package:dm_api/dm_api_purchased_product.dart';
 import 'package:dm_api/exceptions.dart';
+import 'package:json_annotation/json_annotation.dart';
 
 class DmApi {
   final Dio dio;
@@ -103,51 +106,64 @@ class DmApi {
     }
   }
 
-  Future<int> getProductCount() async {
-    final countRes = await dio.get<Map<String, dynamic>>(
-      "https://play.dlsite.com/api/v3/content/count",
+  Future<T> _request<T>(
+    String method,
+    String uri,
+    Object? data, {
+    required T Function(Map<String, dynamic> json) fromJson,
+  }) async {
+    final res = await dio.request(
+      uri,
+      data: data,
       options: Options(
+        method: method,
+        contentType: data == null ? null : "application/json",
         responseType: ResponseType.json,
         validateStatus: (status) => status == 200 || status == 401,
       ),
     );
 
-    if (countRes.statusCode == 401) {
+    if (res.statusCode == 401) {
       throw DmApiNotAuthorizedException();
     }
 
-    final count = countRes.data?["user"];
-
-    if (count is! int) {
-      throw DmApiFailure("'user' is not an integer (user=$count)");
+    try {
+      return fromJson(res.data is List ? {"inlinedList": res.data} : res.data);
+    } on CheckedFromJsonException catch (e) {
+      throw DmApiUnexpectedApiResponse(uri, method, data, e);
     }
+  }
 
-    return count;
+  Future<int> getProductCount() async {
+    final res = await _request(
+      "GET",
+      "https://play.dlsite.com/api/v3/content/count",
+      null,
+      fromJson: DmApiGetProductCountResponse.fromJson,
+    );
+
+    return res.user;
   }
 
   Future<List<DmApiPurchasedProduct>> getPurchasedProducts() async {
-    final purchasedProductsRes = await dio.get<List<dynamic>>(
+    final res = await _request(
+      "GET",
       "https://play.dlsite.com/api/v3/content/sales",
-      options: Options(
-        responseType: ResponseType.json,
-        validateStatus: (status) => status == 200 || status == 401,
-      ),
+      null,
+      fromJson: DmApiGetPurchasedProductsResponse.fromJson,
     );
 
-    if (purchasedProductsRes.statusCode == 401) {
-      throw DmApiNotAuthorizedException();
-    }
+    return res.inlinedList;
+  }
 
-    if (purchasedProductsRes.data is! List<dynamic>) {
-      throw DmApiFailure(
-        "'data' is not a list (data=${purchasedProductsRes.data})",
-      );
-    }
+  Future<List<DmApiProduct>> getProducts(List<String> ids) async {
+    final res = await _request(
+      "POST",
+      "https://play.dlsite.com/api/v3/content/works",
+      ids,
+      fromJson: DmApiGetProductsResponse.fromJson,
+    );
 
-    final purchasedProducts = purchasedProductsRes.data!
-        .map((e) => DmApiPurchasedProduct.fromJson(e))
-        .toList();
-
-    return purchasedProducts;
+    return res.works;
   }
 }
