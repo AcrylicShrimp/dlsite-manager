@@ -2,6 +2,7 @@ use dm_api::{
     DlsiteClient, DownloadByteRange, DownloadFile, DownloadFileKind, DownloadPlan, DownloadStream,
     DownloadStreamRequest, WorkId,
 };
+use dm_archive::{ArchiveExtractOptions, ArchiveExtraction, ArchivePlan};
 use std::{
     collections::BTreeMap,
     future::Future,
@@ -118,6 +119,7 @@ pub struct DownloadedWork {
     pub work_id: WorkId,
     pub target_dir: PathBuf,
     pub files: Vec<DownloadedFile>,
+    pub archive_extraction: Option<ArchiveExtraction>,
 }
 
 pub type DownloadOpenFuture<'a> = Pin<
@@ -239,6 +241,8 @@ pub enum DownloadError {
     Stream(String),
     #[error("dlsite api error")]
     Api(#[from] dm_api::DmApiError),
+    #[error("archive error")]
+    Archive(#[from] dm_archive::ArchiveError),
     #[error("I/O error")]
     Io(#[from] std::io::Error),
 }
@@ -285,11 +289,46 @@ where
         downloaded_files.push(downloaded);
     }
 
+    let archive_extraction = unpack_downloaded_files(
+        &downloaded_files,
+        &target_dir,
+        job.unpack_policy,
+        ArchiveExtractOptions::default(),
+    )?;
+
     Ok(DownloadedWork {
         work_id: job.work_id.clone(),
         target_dir,
         files: downloaded_files,
+        archive_extraction,
     })
+}
+
+pub fn unpack_downloaded_files(
+    files: &[DownloadedFile],
+    target_dir: impl AsRef<Path>,
+    unpack_policy: UnpackPolicy,
+    options: ArchiveExtractOptions,
+) -> Result<Option<ArchiveExtraction>, DownloadError> {
+    if unpack_policy == UnpackPolicy::KeepArchives {
+        return Ok(None);
+    }
+
+    let archive_plan = dm_archive::plan_archive_handling(
+        files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect::<Vec<_>>(),
+    );
+
+    match archive_plan {
+        ArchivePlan::SingleZip { .. } => {
+            dm_archive::extract_archive_plan(&archive_plan, target_dir, options)
+                .map(Some)
+                .map_err(Into::into)
+        }
+        ArchivePlan::KeepArchives { .. } | ArchivePlan::LegacySplitRar { .. } => Ok(None),
+    }
 }
 
 pub async fn probe_download_file_metadata(
@@ -527,6 +566,7 @@ mod tests {
     use super::*;
     use std::{
         collections::VecDeque,
+        io::Write,
         sync::{Arc, Mutex},
         time::{SystemTime, UNIX_EPOCH},
     };
@@ -751,6 +791,71 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    #[test]
+    fn unpacks_single_zip_when_policy_requests_it() {
+        let dir = test_dir("unpack-zip");
+        let archive = dir.join("RJ123456.zip");
+        write_zip(&archive, &[("RJ123456/readme.txt", b"hello".as_slice())]);
+        let downloaded = DownloadedFile {
+            file_name: "RJ123456.zip".to_owned(),
+            path: archive.clone(),
+            bytes_written: std::fs::metadata(&archive).unwrap().len(),
+            resumed_from: 0,
+        };
+
+        let extraction = unpack_downloaded_files(
+            &[downloaded],
+            &dir,
+            UnpackPolicy::UnpackWhenRecognized,
+            ArchiveExtractOptions::default(),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(std::fs::read(dir.join("readme.txt")).unwrap(), b"hello");
+        assert_eq!(extraction.removed_sources, vec![archive.clone()]);
+        assert!(!archive.exists());
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn keeps_legacy_split_rar_until_supported() {
+        let dir = test_dir("keep-split-rar");
+        let first_part = dir.join("RJ123456.part1.exe");
+        let second_part = dir.join("RJ123456.part2.rar");
+        std::fs::write(&first_part, b"part1").unwrap();
+        std::fs::write(&second_part, b"part2").unwrap();
+        let files = [
+            DownloadedFile {
+                file_name: "RJ123456.part1.exe".to_owned(),
+                path: first_part.clone(),
+                bytes_written: 5,
+                resumed_from: 0,
+            },
+            DownloadedFile {
+                file_name: "RJ123456.part2.rar".to_owned(),
+                path: second_part.clone(),
+                bytes_written: 5,
+                resumed_from: 0,
+            },
+        ];
+
+        let extraction = unpack_downloaded_files(
+            &files,
+            &dir,
+            UnpackPolicy::UnpackWhenRecognized,
+            ArchiveExtractOptions::default(),
+        )
+        .unwrap();
+
+        assert!(extraction.is_none());
+        assert!(first_part.exists());
+        assert!(second_part.exists());
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     fn request(dir: &Path, file_name: &str, expected_size: Option<u64>) -> DownloadFileRequest {
         let mut request =
             DownloadFileRequest::new(0, DownloadFileKind::Direct, dir, file_name.to_owned());
@@ -770,6 +875,20 @@ mod tests {
 
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
+        let file = std::fs::File::create(path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+
+        for (name, content) in entries {
+            zip.start_file(name, options).unwrap();
+            zip.write_all(content).unwrap();
+        }
+
+        zip.finish().unwrap();
     }
 
     struct ScriptedSource {
