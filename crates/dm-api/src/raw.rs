@@ -1,4 +1,4 @@
-use crate::{client::text_snippet, DmApiError, Result};
+use crate::{client::limited_text_snippet, DmApiError, Result};
 use reqwest::{header::LOCATION, Response};
 use std::collections::BTreeMap;
 use url::Url;
@@ -15,6 +15,10 @@ pub struct RawResponse {
 
 impl RawResponse {
     pub async fn from_response(res: Response) -> Result<Self> {
+        Self::from_response_with_body_limit(res, 2048).await
+    }
+
+    pub async fn from_response_with_body_limit(res: Response, body_limit: usize) -> Result<Self> {
         let url = res.url().clone();
         let status = res.status();
         let headers = res
@@ -42,7 +46,10 @@ impl RawResponse {
         let body_snippet = if status.is_redirection() {
             None
         } else {
-            res.text().await.ok().map(|body| text_snippet(&body))
+            res.text()
+                .await
+                .ok()
+                .map(|body| limited_text_snippet(&body, body_limit))
         };
 
         Ok(Self {

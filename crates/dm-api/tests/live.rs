@@ -178,8 +178,17 @@ async fn live_download_resolution_pinned_cases() -> TestResult {
             panic!("expected {work_id} to resolve to a split download, got {resolution:?}");
         };
 
-        let raw = client.raw_get(location.clone()).await?;
-        assert_ne!(raw.status, 0);
+        let page = client.split_download_page(location.clone()).await?;
+        assert!(!page.parts.is_empty());
+
+        let mut stream = client
+            .open_download_stream(
+                &page.parts[0].stream_request,
+                Some(DownloadByteRange::first_byte()),
+            )
+            .await?;
+        assert!(stream.status().is_success());
+        assert!(stream.next_chunk().await?.is_some());
     }
 
     if let Some(work_id) = env.serial_required_work_id {
@@ -188,8 +197,12 @@ async fn live_download_resolution_pinned_cases() -> TestResult {
             panic!("expected {work_id} to require a serial number, got {resolution:?}");
         };
 
-        let raw = client.raw_get(location.clone()).await?;
-        assert_ne!(raw.status, 0);
+        let page = client.serial_download_page(location.clone()).await?;
+        let mut stream = client
+            .open_download_stream(&page.stream_request, Some(DownloadByteRange::first_byte()))
+            .await?;
+        assert!(stream.status().is_success());
+        assert!(stream.next_chunk().await?.is_some());
     }
 
     Ok(())

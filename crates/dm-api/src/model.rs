@@ -313,6 +313,24 @@ pub struct DownloadStreamRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SplitDownloadPage {
+    pub page_url: Url,
+    pub parts: Vec<SplitDownloadPart>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SplitDownloadPart {
+    pub number: u32,
+    pub stream_request: DownloadStreamRequest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SerialDownloadPage {
+    pub page_url: Url,
+    pub stream_request: DownloadStreamRequest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DownloadUnavailableReason {
     NotAuthorized,
     NotFound,

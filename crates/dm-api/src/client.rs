@@ -1,7 +1,8 @@
 use crate::{
     raw::RawResponse, ContentCount, ContentQuery, Credentials, DmApiError, DownloadByteRange,
     DownloadResolution, DownloadStreamRequest, DownloadUnavailableReason, Purchase, Result,
-    SessionSnapshot, SessionStatus, Work, WorkId, WorksResponse, DEFAULT_WORKS_BATCH_LIMIT,
+    SerialDownloadPage, SessionSnapshot, SessionStatus, SplitDownloadPage, SplitDownloadPart, Work,
+    WorkId, WorksResponse, DEFAULT_WORKS_BATCH_LIMIT,
 };
 use bytes::Bytes;
 use cookie_store::CookieStore;
@@ -26,6 +27,7 @@ const CONTENT_SALES_URL: &str = "https://play.dlsite.com/api/v3/content/sales";
 const CONTENT_WORKS_URL: &str = "https://play.dlsite.com/api/v3/content/works";
 const DOWNLOAD_URL: &str = "https://play.dlsite.com/api/v3/download";
 const MAX_DOWNLOAD_REDIRECTS: usize = 8;
+const DOWNLOAD_PAGE_BODY_LIMIT: usize = 512 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct DlsiteClientConfig {
@@ -345,7 +347,54 @@ impl DlsiteClient {
         })
     }
 
+    pub async fn split_download_page(&self, location: Url) -> Result<SplitDownloadPage> {
+        let raw = self
+            .raw_get_with_body_limit(location.clone(), DOWNLOAD_PAGE_BODY_LIMIT)
+            .await?;
+        let body = raw.body_snippet.as_deref().unwrap_or_default();
+        let parts = parse_split_download_parts(&location, body);
+
+        if parts.is_empty() {
+            return Err(DmApiError::DownloadPageLinkNotFound {
+                page: location,
+                kind: "split",
+            });
+        }
+
+        Ok(SplitDownloadPage {
+            page_url: raw.url,
+            parts,
+        })
+    }
+
+    pub async fn serial_download_page(&self, location: Url) -> Result<SerialDownloadPage> {
+        let raw = self
+            .raw_get_with_body_limit(location.clone(), DOWNLOAD_PAGE_BODY_LIMIT)
+            .await?;
+        let body = raw.body_snippet.as_deref().unwrap_or_default();
+
+        if let Some(stream_request) = parse_serial_download_link(&location, body) {
+            return Ok(SerialDownloadPage {
+                page_url: raw.url,
+                stream_request,
+            });
+        }
+
+        Err(DmApiError::DownloadPageLinkNotFound {
+            page: location,
+            kind: "serial",
+        })
+    }
+
     pub async fn raw_download_probe(&self, work_id: &WorkId) -> Result<RawResponse> {
+        self.raw_download_probe_with_body_limit(work_id, 2048).await
+    }
+
+    pub async fn raw_download_probe_with_body_limit(
+        &self,
+        work_id: &WorkId,
+        body_limit: usize,
+    ) -> Result<RawResponse> {
         let res = self
             .http
             .get(DOWNLOAD_URL)
@@ -353,13 +402,21 @@ impl DlsiteClient {
             .send()
             .await?;
 
-        RawResponse::from_response(res).await
+        RawResponse::from_response_with_body_limit(res, body_limit).await
     }
 
     pub async fn raw_get(&self, url: Url) -> Result<RawResponse> {
+        self.raw_get_with_body_limit(url, 2048).await
+    }
+
+    pub async fn raw_get_with_body_limit(
+        &self,
+        url: Url,
+        body_limit: usize,
+    ) -> Result<RawResponse> {
         let res = self.http.get(url).send().await?;
 
-        RawResponse::from_response(res).await
+        RawResponse::from_response_with_body_limit(res, body_limit).await
     }
 
     async fn works_batch_limit(&self) -> usize {
@@ -479,6 +536,93 @@ fn download_resolution_from_raw_response(raw: &RawResponse) -> DownloadResolutio
     }
 }
 
+fn parse_split_download_parts(page_url: &Url, body: &str) -> Vec<SplitDownloadPart> {
+    let mut parts = extract_download_links(page_url, body)
+        .into_iter()
+        .filter_map(|url| {
+            let number = download_part_number(&url)?;
+            Some(SplitDownloadPart {
+                number,
+                stream_request: DownloadStreamRequest { url },
+            })
+        })
+        .collect::<Vec<_>>();
+
+    parts.sort_by(|left, right| {
+        left.number
+            .cmp(&right.number)
+            .then_with(|| left.stream_request.url.cmp(&right.stream_request.url))
+    });
+    parts.dedup_by(|left, right| {
+        left.number == right.number && left.stream_request.url == right.stream_request.url
+    });
+    parts
+}
+
+fn parse_serial_download_link(page_url: &Url, body: &str) -> Option<DownloadStreamRequest> {
+    extract_download_links(page_url, body)
+        .into_iter()
+        .find(|url| {
+            matches!(
+                DownloadResolution::from_redirect_location(url.clone()),
+                DownloadResolution::Direct { .. }
+            )
+        })
+        .map(|url| DownloadStreamRequest { url })
+}
+
+fn extract_download_links(page_url: &Url, body: &str) -> Vec<Url> {
+    let mut links = extract_quoted_values(body)
+        .into_iter()
+        .filter_map(|value| page_url.join(&value).ok())
+        .filter(|url| {
+            let host = url.host_str().unwrap_or_default();
+            let path = url.path();
+            host == "www.dlsite.com"
+                && path.starts_with("/home/download")
+                && path.contains("product_id")
+        })
+        .collect::<Vec<_>>();
+
+    links.sort();
+    links.dedup();
+    links
+}
+
+fn extract_quoted_values(body: &str) -> Vec<String> {
+    let mut values = Vec::new();
+
+    for quote in ['"', '\''] {
+        let mut start = None;
+
+        for (index, value) in body.char_indices() {
+            if value != quote {
+                continue;
+            }
+
+            if let Some(open) = start.take() {
+                values.push(body[open..index].to_owned());
+            } else {
+                start = Some(index + value.len_utf8());
+            }
+        }
+    }
+
+    values
+}
+
+fn download_part_number(url: &Url) -> Option<u32> {
+    let mut segments = url.path_segments()?;
+
+    while let Some(segment) = segments.next() {
+        if segment == "number" {
+            return segments.next()?.parse().ok();
+        }
+    }
+
+    None
+}
+
 async fn parse_json_response<T>(res: Response) -> Result<T>
 where
     T: DeserializeOwned,
@@ -596,8 +740,11 @@ pub(crate) fn redirect_location(res: &Response) -> Result<Url> {
 }
 
 pub(crate) fn text_snippet(value: &str) -> String {
-    const MAX_CHARS: usize = 2048;
-    value.chars().take(MAX_CHARS).collect()
+    limited_text_snippet(value, 2048)
+}
+
+pub(crate) fn limited_text_snippet(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
 }
 
 async fn response_text_snippet(res: Response) -> Option<String> {
@@ -679,6 +826,42 @@ mod tests {
                 reason: DownloadUnavailableReason::NotAuthorized
             }
         ));
+    }
+
+    #[test]
+    fn parses_split_download_links() {
+        let page_url =
+            Url::parse("https://www.dlsite.com/home/download/split/=/product_id/RJ123456.html")
+                .unwrap();
+        let body = r#"
+            <a href="https://www.dlsite.com/home/download/=/number/2/product_id/RJ123456.html">2</a>
+            <a href="https://www.dlsite.com/home/download/=/number/1/product_id/RJ123456.html">1</a>
+            <a href="/home/download/split/=/product_id/RJ123456.html">self</a>
+        "#;
+
+        let parts = parse_split_download_parts(&page_url, body);
+
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].number, 1);
+        assert_eq!(parts[1].number, 2);
+    }
+
+    #[test]
+    fn parses_serial_download_link() {
+        let page_url =
+            Url::parse("https://www.dlsite.com/home/serial/=/product_id/VJ123456.html").unwrap();
+        let body = r#"
+            <p class="work_download">
+                <a href="https://www.dlsite.com/home/download/=/product_id/VJ123456.html">download</a>
+            </p>
+        "#;
+
+        let request = parse_serial_download_link(&page_url, body).unwrap();
+
+        assert_eq!(
+            request.url.as_str(),
+            "https://www.dlsite.com/home/download/=/product_id/VJ123456.html"
+        );
     }
 
     #[test]

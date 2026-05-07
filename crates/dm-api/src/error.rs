@@ -41,6 +41,8 @@ pub enum DmApiError {
     },
     #[error("redirect limit exceeded while requesting {endpoint}; limit: {limit}")]
     RedirectLimitExceeded { endpoint: Url, limit: usize },
+    #[error("{kind} download page link not found at {page}")]
+    DownloadPageLinkNotFound { page: Url, kind: &'static str },
     #[error("works batch limit exceeded; detected limit: {limit}")]
     BatchLimitExceeded {
         limit: usize,
