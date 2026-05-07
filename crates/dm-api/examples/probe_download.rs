@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let probe = client.probe_download(&work_id).await?;
         print_raw("api/v3/download", &probe.initial);
         println!("classification={:?}", probe.resolution);
-        print_download_plan(&client.download_plan(&work_id).await?);
+        print_download_plan(&client, &client.download_plan(&work_id).await?).await?;
 
         match probe.resolution {
             DownloadResolution::Direct { stream_request } => {
@@ -120,7 +120,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn print_download_plan(plan: &DownloadPlan) {
+async fn print_download_plan(
+    client: &DlsiteClient,
+    plan: &DownloadPlan,
+) -> Result<(), Box<dyn Error>> {
     println!(
         "download plan: files={}, serial_numbers={}",
         plan.files.len(),
@@ -132,6 +135,21 @@ fn print_download_plan(plan: &DownloadPlan) {
             "  plan file kind={:?} url={}",
             file.kind,
             sanitize_url(&file.stream_request.url)
+        );
+
+        let mut stream = client
+            .open_download_stream(&file.stream_request, Some(DownloadByteRange::first_byte()))
+            .await?;
+        println!(
+            "  plan stream kind={:?} status={}, content_length={:?}, headers={}",
+            file.kind,
+            stream.status(),
+            stream.content_length(),
+            format_header_summary(stream.headers())
+        );
+        println!(
+            "  plan first_chunk={}",
+            stream.next_chunk().await?.is_some()
         );
     }
 
@@ -153,6 +171,8 @@ fn print_download_plan(plan: &DownloadPlan) {
                 .join(",")
         );
     }
+
+    Ok(())
 }
 
 fn print_raw(label: &str, raw: &dm_api::raw::RawResponse) {

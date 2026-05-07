@@ -1,6 +1,6 @@
 use dm_api::{
     ContentQuery, Credentials, DlsiteClient, DlsiteClientConfig, DmApiError, DownloadByteRange,
-    DownloadFileKind, DownloadResolution, WorkId,
+    DownloadFileKind, DownloadPlan, DownloadResolution, WorkId,
 };
 use std::{collections::BTreeSet, env, error::Error, path::PathBuf};
 
@@ -179,6 +179,7 @@ async fn live_download_resolution_pinned_cases() -> TestResult {
         assert_eq!(plan.files.len(), 1);
         assert_eq!(plan.files[0].kind, DownloadFileKind::Direct);
         assert!(plan.serial_numbers.is_empty());
+        assert_plan_files_are_streamable(&client, &plan).await?;
     }
 
     if let Some(work_id) = env.split_download_work_id {
@@ -206,6 +207,7 @@ async fn live_download_resolution_pinned_cases() -> TestResult {
             .files
             .iter()
             .all(|file| matches!(file.kind, DownloadFileKind::SplitPart { .. })));
+        assert_plan_files_are_streamable(&client, &plan).await?;
     }
 
     if let Some(work_id) = env.serial_required_work_id {
@@ -226,6 +228,44 @@ async fn live_download_resolution_pinned_cases() -> TestResult {
         assert_eq!(plan.files.len(), 1);
         assert_eq!(plan.files[0].kind, DownloadFileKind::Direct);
         assert!(!plan.serial_numbers.is_empty());
+        assert_plan_files_are_streamable(&client, &plan).await?;
+    }
+
+    Ok(())
+}
+
+async fn assert_plan_files_are_streamable(
+    client: &DlsiteClient,
+    plan: &DownloadPlan,
+) -> TestResult {
+    assert!(!plan.files.is_empty());
+
+    for file in &plan.files {
+        let mut stream = client
+            .open_download_stream(&file.stream_request, Some(DownloadByteRange::first_byte()))
+            .await?;
+
+        assert!(
+            stream.status().is_success(),
+            "expected {:?} stream to succeed, got {}",
+            file.kind,
+            stream.status()
+        );
+
+        if let Some(content_length) = stream.content_length() {
+            assert!(
+                content_length > 0,
+                "expected {:?} stream content length to be positive",
+                file.kind
+            );
+        }
+
+        let first_chunk = stream.next_chunk().await?;
+        assert!(
+            first_chunk.as_ref().is_some_and(|chunk| !chunk.is_empty()),
+            "expected {:?} stream to return bytes",
+            file.kind
+        );
     }
 
     Ok(())
