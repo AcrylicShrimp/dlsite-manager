@@ -1,0 +1,4 @@
+-- Storage bootstrap.
+--
+-- Domain tables are intentionally introduced with the features that consume
+-- them. SQLx records this migration in _sqlx_migrations.

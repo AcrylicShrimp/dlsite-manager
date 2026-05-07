@@ -3,6 +3,7 @@ members = [
     "crates/dm-archive",
     "crates/dm-api",
     "crates/dm-download",
+    "crates/dm-storage",
     "src-tauri",
 ]
 resolver = "3"
