@@ -46,7 +46,7 @@ fn live_fixture_dir() -> Option<PathBuf> {
         return None;
     }
 
-    env_value("DMSITE_ARCHIVE_TEST_LEGACY_SPLIT_RAR_DIR").map(PathBuf::from)
+    env_value("DMSITE_ARCHIVE_TEST_LEGACY_SPLIT_RAR_DIR").map(resolve_fixture_dir)
 }
 
 fn copy_fixture_parts(source_dir: &Path, input_dir: &Path) -> TestResult<Vec<PathBuf>> {
@@ -82,6 +82,26 @@ fn env_value(key: &str) -> Option<String> {
 fn load_dotenv() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     dotenvy::from_path(manifest_dir.join(".env")).ok();
+}
+
+fn resolve_fixture_dir(path: String) -> PathBuf {
+    let path = PathBuf::from(path);
+
+    if path.is_absolute() {
+        return path;
+    }
+
+    repo_root().join(path)
+}
+
+fn repo_root() -> PathBuf {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    manifest_dir
+        .parent()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .unwrap_or(manifest_dir)
 }
 
 fn test_dir(name: &str) -> PathBuf {
