@@ -1,8 +1,9 @@
 use dm_api::{
-    DlsiteClient, DownloadByteRange, DownloadFileKind, DownloadStream, DownloadStreamRequest,
-    WorkId,
+    DlsiteClient, DownloadByteRange, DownloadFile, DownloadFileKind, DownloadPlan, DownloadStream,
+    DownloadStreamRequest, WorkId,
 };
 use std::{
+    collections::BTreeMap,
     future::Future,
     path::{Component, Path, PathBuf},
     pin::Pin,
@@ -88,6 +89,35 @@ pub struct DownloadedFile {
     pub path: PathBuf,
     pub bytes_written: u64,
     pub resumed_from: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadFileMetadata {
+    pub file_index: usize,
+    pub file_kind: DownloadFileKind,
+    pub file_name: String,
+    pub expected_size: Option<u64>,
+    pub final_url: Url,
+}
+
+impl DownloadFileMetadata {
+    pub fn to_file_request(&self, target_dir: impl Into<PathBuf>) -> DownloadFileRequest {
+        let mut request = DownloadFileRequest::new(
+            self.file_index,
+            self.file_kind.clone(),
+            target_dir,
+            self.file_name.clone(),
+        );
+        request.expected_size = self.expected_size;
+        request
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadedWork {
+    pub work_id: WorkId,
+    pub target_dir: PathBuf,
+    pub files: Vec<DownloadedFile>,
 }
 
 pub type DownloadOpenFuture<'a> = Pin<
@@ -196,6 +226,11 @@ pub enum DownloadError {
     InvalidFileName { file_name: String },
     #[error("download target already exists: {path}")]
     TargetAlreadyExists { path: PathBuf },
+    #[error("download job work id {job_work_id} does not match plan work id {plan_work_id}")]
+    PlanWorkMismatch {
+        job_work_id: WorkId,
+        plan_work_id: WorkId,
+    },
     #[error("download ended before expected size; expected {expected} bytes, got {actual}")]
     IncompleteDownload { expected: u64, actual: u64 },
     #[error("download exceeded expected size; expected {expected} bytes, got {actual}")]
@@ -206,6 +241,79 @@ pub enum DownloadError {
     Api(#[from] dm_api::DmApiError),
     #[error("I/O error")]
     Io(#[from] std::io::Error),
+}
+
+pub async fn download_work_files<F>(
+    client: DlsiteClient,
+    job: &DownloadJobRequest,
+    plan: &DownloadPlan,
+    cancellation: &CancellationToken,
+    mut on_progress: F,
+) -> Result<DownloadedWork, DownloadError>
+where
+    F: FnMut(DownloadProgress),
+{
+    if job.work_id.as_ref() != plan.work_id.as_ref() {
+        return Err(DownloadError::PlanWorkMismatch {
+            job_work_id: job.work_id.clone(),
+            plan_work_id: plan.work_id.clone(),
+        });
+    }
+
+    let target_dir = job.target_root.join(job.work_id.as_ref());
+    let mut downloaded_files = Vec::with_capacity(plan.files.len());
+
+    for (file_index, file) in plan.files.iter().enumerate() {
+        if cancellation.is_cancelled() {
+            return Err(DownloadError::Cancelled);
+        }
+
+        on_progress(DownloadProgress {
+            phase: DownloadPhase::ProbingMetadata,
+            file_index: Some(file_index),
+            file_kind: Some(file.kind.clone()),
+            bytes_received: 0,
+            bytes_total: None,
+        });
+
+        let metadata = probe_download_file_metadata(&client, file_index, file).await?;
+        let request = metadata.to_file_request(target_dir.clone());
+        let mut source = DlsiteDownloadSource::new(client.clone(), file.stream_request.clone());
+        let downloaded =
+            download_file(&mut source, &request, cancellation, &mut on_progress).await?;
+
+        downloaded_files.push(downloaded);
+    }
+
+    Ok(DownloadedWork {
+        work_id: job.work_id.clone(),
+        target_dir,
+        files: downloaded_files,
+    })
+}
+
+pub async fn probe_download_file_metadata(
+    client: &DlsiteClient,
+    file_index: usize,
+    file: &DownloadFile,
+) -> Result<DownloadFileMetadata, DownloadError> {
+    let stream = client
+        .open_download_stream(&file.stream_request, Some(DownloadByteRange::first_byte()))
+        .await?;
+    let headers = stream.headers();
+    let final_url = stream.url().clone();
+    let file_name = file_name_from_download_url(&final_url)
+        .ok_or(DownloadError::FileNameUnknown { file_index })?;
+    let expected_size =
+        header_value(&headers, "content-range").and_then(total_size_from_content_range);
+
+    Ok(DownloadFileMetadata {
+        file_index,
+        file_kind: file.kind.clone(),
+        file_name,
+        expected_size,
+        final_url,
+    })
 }
 
 pub async fn download_file<S, F>(
@@ -407,6 +515,13 @@ pub fn total_size_from_content_range(content_range: &str) -> Option<u64> {
     size.parse().ok()
 }
 
+fn header_value<'a>(headers: &'a BTreeMap<String, String>, name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.as_str())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,6 +615,36 @@ mod tests {
         );
         assert_eq!(total_size_from_content_range("bytes 0-0/*"), None);
         assert_eq!(total_size_from_content_range("invalid"), None);
+    }
+
+    #[test]
+    fn converts_metadata_to_file_request() {
+        let metadata = DownloadFileMetadata {
+            file_index: 2,
+            file_kind: DownloadFileKind::SplitPart { number: 3 },
+            file_name: "RJ123456.part3.rar".to_owned(),
+            expected_size: Some(42),
+            final_url: Url::parse("https://download.dlsite.com/get/=/file/RJ123456.part3.rar/_/1")
+                .unwrap(),
+        };
+
+        let request = metadata.to_file_request("/tmp/work");
+
+        assert_eq!(request.file_index, 2);
+        assert_eq!(request.file_kind, DownloadFileKind::SplitPart { number: 3 });
+        assert_eq!(request.target_dir, PathBuf::from("/tmp/work"));
+        assert_eq!(request.file_name, "RJ123456.part3.rar");
+        assert_eq!(request.expected_size, Some(42));
+    }
+
+    #[test]
+    fn finds_headers_case_insensitively() {
+        let headers = BTreeMap::from([("Content-Range".to_owned(), "bytes 0-0/42".to_owned())]);
+
+        assert_eq!(
+            header_value(&headers, "content-range"),
+            Some("bytes 0-0/42")
+        );
     }
 
     #[tokio::test]
