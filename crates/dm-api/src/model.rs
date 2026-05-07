@@ -73,6 +73,12 @@ pub enum SessionStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContentCount {
     pub user: u64,
+    #[serde(default)]
+    pub production: u64,
+    #[serde(default)]
+    pub page_limit: Option<usize>,
+    #[serde(default)]
+    pub concurrency: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -269,21 +275,35 @@ impl DownloadResolution {
         let host = location.host_str().unwrap_or_default();
         let path = location.path();
 
+        if host == "www.dlsite.com"
+            && (path.starts_with("/home/download/split") || path.starts_with("/home/split"))
+        {
+            return Self::Split { location };
+        }
+
+        if host == "www.dlsite.com"
+            && (path.starts_with("/home/download/serial") || path.starts_with("/home/serial"))
+        {
+            return Self::SerialRequired { location };
+        }
+
         if host == "www.dlsite.com" && path.starts_with("/home/download") {
             return Self::Direct {
                 stream_request: DownloadStreamRequest { url: location },
             };
         }
 
-        if host == "www.dlsite.com" && path.starts_with("/home/split") {
-            return Self::Split { location };
-        }
-
-        if host == "www.dlsite.com" && path.starts_with("/home/serial") {
-            return Self::SerialRequired { location };
-        }
-
         Self::UnknownRedirect { location }
+    }
+
+    pub fn location(&self) -> Option<&Url> {
+        match self {
+            Self::Direct { stream_request } => Some(&stream_request.url),
+            Self::Split { location }
+            | Self::SerialRequired { location }
+            | Self::UnknownRedirect { location } => Some(location),
+            Self::Unavailable { .. } => None,
+        }
     }
 }
 
@@ -303,7 +323,44 @@ pub enum DownloadUnavailableReason {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RangeStart(pub u64);
+pub struct DownloadByteRange {
+    start: u64,
+    end_inclusive: Option<u64>,
+}
+
+impl DownloadByteRange {
+    pub const fn from_start(start: u64) -> Self {
+        Self {
+            start,
+            end_inclusive: None,
+        }
+    }
+
+    pub const fn first_byte() -> Self {
+        Self {
+            start: 0,
+            end_inclusive: Some(0),
+        }
+    }
+
+    pub fn inclusive(start: u64, end_inclusive: u64) -> Option<Self> {
+        if end_inclusive < start {
+            return None;
+        }
+
+        Some(Self {
+            start,
+            end_inclusive: Some(end_inclusive),
+        })
+    }
+
+    pub fn header_value(&self) -> String {
+        match self.end_inclusive {
+            Some(end) => format!("bytes={}-{}", self.start, end),
+            None => format!("bytes={}-", self.start),
+        }
+    }
+}
 
 pub(crate) fn deserialize_datetime<'de, D>(
     deserializer: D,
@@ -382,12 +439,55 @@ mod tests {
             DownloadResolution::Split { .. }
         ));
 
+        let split_download =
+            Url::parse("https://www.dlsite.com/home/download/split/=/product_id/RJ123456.html")
+                .unwrap();
+        assert!(matches!(
+            DownloadResolution::from_redirect_location(split_download),
+            DownloadResolution::Split { .. }
+        ));
+
         let serial =
             Url::parse("https://www.dlsite.com/home/serial/=/product_id/RJ123456.html").unwrap();
         assert!(matches!(
             DownloadResolution::from_redirect_location(serial),
             DownloadResolution::SerialRequired { .. }
         ));
+
+        let serial_download =
+            Url::parse("https://www.dlsite.com/home/download/serial/=/product_id/RJ123456.html")
+                .unwrap();
+        assert!(matches!(
+            DownloadResolution::from_redirect_location(serial_download),
+            DownloadResolution::SerialRequired { .. }
+        ));
+    }
+
+    #[test]
+    fn decodes_content_count_limits() {
+        let count: ContentCount = serde_json::from_str(
+            r#"{"user":1223,"production":0,"page_limit":50,"concurrency":500}"#,
+        )
+        .unwrap();
+
+        assert_eq!(count.user, 1223);
+        assert_eq!(count.production, 0);
+        assert_eq!(count.page_limit, Some(50));
+        assert_eq!(count.concurrency, Some(500));
+    }
+
+    #[test]
+    fn formats_download_byte_ranges() {
+        assert_eq!(DownloadByteRange::first_byte().header_value(), "bytes=0-0");
+        assert_eq!(
+            DownloadByteRange::from_start(1024).header_value(),
+            "bytes=1024-"
+        );
+        assert_eq!(
+            DownloadByteRange::inclusive(10, 20).unwrap().header_value(),
+            "bytes=10-20"
+        );
+        assert!(DownloadByteRange::inclusive(20, 10).is_none());
     }
 
     #[test]

@@ -39,6 +39,8 @@ pub enum DmApiError {
         #[source]
         source: serde_json::Error,
     },
+    #[error("redirect limit exceeded while requesting {endpoint}; limit: {limit}")]
+    RedirectLimitExceeded { endpoint: Url, limit: usize },
     #[error("works batch limit exceeded; detected limit: {limit}")]
     BatchLimitExceeded {
         limit: usize,

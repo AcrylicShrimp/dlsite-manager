@@ -1,6 +1,6 @@
 use crate::{
-    raw::RawResponse, ContentCount, ContentQuery, Credentials, DmApiError, DownloadResolution,
-    DownloadStreamRequest, DownloadUnavailableReason, Purchase, RangeStart, Result,
+    raw::RawResponse, ContentCount, ContentQuery, Credentials, DmApiError, DownloadByteRange,
+    DownloadResolution, DownloadStreamRequest, DownloadUnavailableReason, Purchase, Result,
     SessionSnapshot, SessionStatus, Work, WorkId, WorksResponse, DEFAULT_WORKS_BATCH_LIMIT,
 };
 use bytes::Bytes;
@@ -25,6 +25,7 @@ const CONTENT_COUNT_URL: &str = "https://play.dlsite.com/api/v3/content/count";
 const CONTENT_SALES_URL: &str = "https://play.dlsite.com/api/v3/content/sales";
 const CONTENT_WORKS_URL: &str = "https://play.dlsite.com/api/v3/content/works";
 const DOWNLOAD_URL: &str = "https://play.dlsite.com/api/v3/download";
+const MAX_DOWNLOAD_REDIRECTS: usize = 8;
 
 #[derive(Debug, Clone)]
 pub struct DlsiteClientConfig {
@@ -177,7 +178,13 @@ impl DlsiteClient {
         let res = self.http.get(CONTENT_COUNT_URL).send().await?;
 
         match res.status() {
-            StatusCode::OK => Ok(SessionStatus::Authorized),
+            StatusCode::OK => {
+                let endpoint = res.url().clone();
+                let body = res.text().await?;
+                let count = parse_json_body::<ContentCount>(endpoint, &body)?;
+                self.cache_limits_from_count(&count).await;
+                Ok(SessionStatus::Authorized)
+            }
             StatusCode::UNAUTHORIZED => Ok(SessionStatus::Unauthorized),
             status => {
                 let endpoint = res.url().clone();
@@ -199,7 +206,10 @@ impl DlsiteClient {
             request = request.query(&[("last", last)]);
         }
 
-        parse_json_response(request.send().await?).await
+        let count = parse_json_response(request.send().await?).await?;
+        self.cache_limits_from_count(&count).await;
+
+        Ok(count)
     }
 
     pub async fn sales(&self, query: ContentQuery) -> Result<Vec<Purchase>> {
@@ -280,63 +290,59 @@ impl DlsiteClient {
     }
 
     pub async fn resolve_download(&self, work_id: &WorkId) -> Result<DownloadResolution> {
-        let res = self
-            .http
-            .get(DOWNLOAD_URL)
-            .query(&[("workno", work_id.as_ref())])
-            .send()
-            .await?;
-        let status = res.status();
+        Ok(self.probe_download(work_id).await?.resolution)
+    }
 
-        if status.is_redirection() {
-            let location = redirect_location(&res)?;
-            return Ok(DownloadResolution::from_redirect_location(location));
-        }
+    pub async fn probe_download(&self, work_id: &WorkId) -> Result<DownloadProbe> {
+        let initial = self.raw_download_probe(work_id).await?;
+        let resolution = download_resolution_from_raw_response(&initial);
 
-        match status {
-            StatusCode::UNAUTHORIZED => Ok(DownloadResolution::Unavailable {
-                reason: DownloadUnavailableReason::NotAuthorized,
-            }),
-            StatusCode::NOT_FOUND => Ok(DownloadResolution::Unavailable {
-                reason: DownloadUnavailableReason::NotFound,
-            }),
-            _ => {
-                let body_snippet = response_text_snippet(res).await;
-                Ok(DownloadResolution::Unavailable {
-                    reason: DownloadUnavailableReason::UnexpectedStatus {
-                        status: status.as_u16(),
-                        body_snippet,
-                    },
-                })
-            }
-        }
+        Ok(DownloadProbe {
+            work_id: work_id.clone(),
+            initial,
+            resolution,
+        })
     }
 
     pub async fn open_download_stream(
         &self,
         request: &DownloadStreamRequest,
-        range: Option<RangeStart>,
+        range: Option<DownloadByteRange>,
     ) -> Result<DownloadStream> {
-        let mut builder = self.http.get(request.url.clone());
+        let mut url = request.url.clone();
 
-        if let Some(RangeStart(start)) = range {
-            builder = builder.header(RANGE, format!("bytes={start}-"));
+        for _ in 0..MAX_DOWNLOAD_REDIRECTS {
+            let mut builder = self.http.get(url.clone());
+
+            if let Some(range) = range {
+                builder = builder.header(RANGE, range.header_value());
+            }
+
+            let res = builder.send().await?;
+            let status = res.status();
+
+            if status.is_redirection() {
+                url = redirect_location(&res)?;
+                continue;
+            }
+
+            if status != StatusCode::OK && status != StatusCode::PARTIAL_CONTENT {
+                let endpoint = res.url().clone();
+                let body_snippet = response_text_snippet(res).await;
+                return Err(DmApiError::UnexpectedStatus {
+                    endpoint,
+                    status,
+                    body_snippet,
+                });
+            }
+
+            return Ok(DownloadStream { response: res });
         }
 
-        let res = builder.send().await?;
-        let status = res.status();
-
-        if status != StatusCode::OK && status != StatusCode::PARTIAL_CONTENT {
-            let endpoint = res.url().clone();
-            let body_snippet = response_text_snippet(res).await;
-            return Err(DmApiError::UnexpectedStatus {
-                endpoint,
-                status,
-                body_snippet,
-            });
-        }
-
-        Ok(DownloadStream { response: res })
+        Err(DmApiError::RedirectLimitExceeded {
+            endpoint: url,
+            limit: MAX_DOWNLOAD_REDIRECTS,
+        })
     }
 
     pub async fn raw_download_probe(&self, work_id: &WorkId) -> Result<RawResponse> {
@@ -350,6 +356,12 @@ impl DlsiteClient {
         RawResponse::from_response(res).await
     }
 
+    pub async fn raw_get(&self, url: Url) -> Result<RawResponse> {
+        let res = self.http.get(url).send().await?;
+
+        RawResponse::from_response(res).await
+    }
+
     async fn works_batch_limit(&self) -> usize {
         self.works_batch_limit
             .lock()
@@ -359,6 +371,12 @@ impl DlsiteClient {
 
     async fn set_works_batch_limit(&self, limit: usize) {
         *self.works_batch_limit.lock().await = Some(limit);
+    }
+
+    async fn cache_limits_from_count(&self, count: &ContentCount) {
+        if let Some(limit) = count.page_limit.filter(|limit| *limit > 0) {
+            self.set_works_batch_limit(limit).await;
+        }
     }
 
     fn xsrf_token(&self) -> Result<String> {
@@ -391,6 +409,13 @@ impl DlsiteClient {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadProbe {
+    pub work_id: WorkId,
+    pub initial: RawResponse,
+    pub resolution: DownloadResolution,
+}
+
 pub struct DownloadStream {
     response: Response,
 }
@@ -417,10 +442,40 @@ impl DownloadStream {
             .collect()
     }
 
+    pub async fn next_chunk(&mut self) -> std::result::Result<Option<Bytes>, reqwest::Error> {
+        self.response.chunk().await
+    }
+
     pub fn into_bytes_stream(
         self,
     ) -> impl Stream<Item = std::result::Result<Bytes, reqwest::Error>> {
         self.response.bytes_stream()
+    }
+}
+
+fn download_resolution_from_raw_response(raw: &RawResponse) -> DownloadResolution {
+    match raw.status {
+        300..=399 => match raw.location.clone() {
+            Some(location) => DownloadResolution::from_redirect_location(location),
+            None => DownloadResolution::Unavailable {
+                reason: DownloadUnavailableReason::UnexpectedStatus {
+                    status: raw.status,
+                    body_snippet: raw.body_snippet.clone(),
+                },
+            },
+        },
+        401 => DownloadResolution::Unavailable {
+            reason: DownloadUnavailableReason::NotAuthorized,
+        },
+        404 => DownloadResolution::Unavailable {
+            reason: DownloadUnavailableReason::NotFound,
+        },
+        status => DownloadResolution::Unavailable {
+            reason: DownloadUnavailableReason::UnexpectedStatus {
+                status,
+                body_snippet: raw.body_snippet.clone(),
+            },
+        },
     }
 }
 
@@ -493,6 +548,8 @@ fn find_batch_limit_in_json(value: &Value) -> Option<usize> {
         "maxBatchSize",
         "batch_limit",
         "batchLimit",
+        "page_limit",
+        "pageLimit",
     ];
 
     match value {
@@ -581,6 +638,47 @@ mod tests {
         let body = r#"{ "error": { "maxBatchSize": 50 } }"#;
 
         assert_eq!(detect_works_batch_limit(&headers, body), Some(50));
+    }
+
+    #[test]
+    fn detects_batch_limit_from_page_limit_json_body() {
+        let headers = HeaderMap::new();
+        let body = r#"{ "user": 1223, "page_limit": 50, "concurrency": 500 }"#;
+
+        assert_eq!(detect_works_batch_limit(&headers, body), Some(50));
+    }
+
+    #[test]
+    fn classifies_raw_download_responses() {
+        let raw = RawResponse {
+            url: Url::parse(DOWNLOAD_URL).unwrap(),
+            status: 302,
+            headers: BTreeMap::new(),
+            location: Some(
+                Url::parse("https://www.dlsite.com/home/download/=/product_id/RJ123456.html")
+                    .unwrap(),
+            ),
+            content_type: None,
+            body_snippet: None,
+        };
+
+        assert!(matches!(
+            download_resolution_from_raw_response(&raw),
+            DownloadResolution::Direct { .. }
+        ));
+
+        let raw = RawResponse {
+            status: 401,
+            body_snippet: Some("unauthorized".to_owned()),
+            ..raw
+        };
+
+        assert!(matches!(
+            download_resolution_from_raw_response(&raw),
+            DownloadResolution::Unavailable {
+                reason: DownloadUnavailableReason::NotAuthorized
+            }
+        ));
     }
 
     #[test]
