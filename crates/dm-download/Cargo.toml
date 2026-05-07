@@ -10,3 +10,7 @@ dm-api = { path = "../dm-api" }
 thiserror = "1"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "rt"] }
 url = "2"
+
+[dev-dependencies]
+dotenvy = "0.15"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

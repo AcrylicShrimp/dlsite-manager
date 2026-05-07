@@ -417,7 +417,7 @@ impl DlsiteClient {
             .raw_get_with_body_limit(location.clone(), DOWNLOAD_PAGE_BODY_LIMIT)
             .await?;
 
-        if raw.status == StatusCode::INTERNAL_SERVER_ERROR.as_u16() {
+        if is_absent_optional_serial_page_status(raw.status) {
             return Ok(None);
         }
 
@@ -559,6 +559,10 @@ fn parse_serial_download_page_from_raw(
         page: location,
         kind: "serial",
     })
+}
+
+fn is_absent_optional_serial_page_status(status: u16) -> bool {
+    status == StatusCode::INTERNAL_SERVER_ERROR.as_u16() || (300..=399).contains(&status)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1084,6 +1088,13 @@ mod tests {
             url.as_str(),
             "https://www.dlsite.com/home/serial/=/product_id/RJ123456.html"
         );
+    }
+
+    #[test]
+    fn detects_absent_optional_serial_page_statuses() {
+        assert!(is_absent_optional_serial_page_status(302));
+        assert!(is_absent_optional_serial_page_status(500));
+        assert!(!is_absent_optional_serial_page_status(200));
     }
 
     #[test]
