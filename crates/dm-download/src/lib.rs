@@ -322,12 +322,12 @@ pub fn unpack_downloaded_files(
     );
 
     match archive_plan {
-        ArchivePlan::SingleZip { .. } => {
+        ArchivePlan::SingleZip { .. } | ArchivePlan::LegacySplitRar { .. } => {
             dm_archive::extract_archive_plan(&archive_plan, target_dir, options)
                 .map(Some)
                 .map_err(Into::into)
         }
-        ArchivePlan::KeepArchives { .. } | ArchivePlan::LegacySplitRar { .. } => Ok(None),
+        ArchivePlan::KeepArchives { .. } => Ok(None),
     }
 }
 
@@ -820,8 +820,8 @@ mod tests {
     }
 
     #[test]
-    fn keeps_legacy_split_rar_until_supported() {
-        let dir = test_dir("keep-split-rar");
+    fn propagates_legacy_split_rar_errors_and_preserves_sources() {
+        let dir = test_dir("invalid-split-rar");
         let first_part = dir.join("RJ123456.part1.exe");
         let second_part = dir.join("RJ123456.part2.rar");
         std::fs::write(&first_part, b"part1").unwrap();
@@ -841,15 +841,15 @@ mod tests {
             },
         ];
 
-        let extraction = unpack_downloaded_files(
+        let err = unpack_downloaded_files(
             &files,
             &dir,
             UnpackPolicy::UnpackWhenRecognized,
             ArchiveExtractOptions::default(),
         )
-        .unwrap();
+        .unwrap_err();
 
-        assert!(extraction.is_none());
+        assert!(matches!(err, DownloadError::Archive(_)));
         assert!(first_part.exists());
         assert!(second_part.exists());
 

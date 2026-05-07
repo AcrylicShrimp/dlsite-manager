@@ -31,6 +31,8 @@ pub enum ArchiveError {
     Io(#[from] io::Error),
     #[error("ZIP error")]
     Zip(#[from] zip::result::ZipError),
+    #[error("RAR error")]
+    Rar(#[from] unrar_ng::error::UnrarError),
     #[error("unsafe archive entry path: {entry}")]
     UnsafeArchiveEntry { entry: String },
     #[error("archive extraction target already exists: {path}")]
@@ -96,9 +98,9 @@ pub fn extract_archive_plan(
             removed_sources: Vec::new(),
         }),
         ArchivePlan::SingleZip { archive } => extract_single_zip(archive, output_dir, options),
-        ArchivePlan::LegacySplitRar { .. } => Err(ArchiveError::UnsupportedPlan {
-            kind: "legacy_split_rar",
-        }),
+        ArchivePlan::LegacySplitRar { first_part, parts } => {
+            extract_legacy_split_rar(first_part, parts, output_dir, options)
+        }
     }
 }
 
@@ -120,6 +122,125 @@ pub fn extract_single_zip(
     }
 
     result
+}
+
+pub fn extract_legacy_split_rar(
+    first_part: impl AsRef<Path>,
+    parts: &[PathBuf],
+    output_dir: impl AsRef<Path>,
+    options: ArchiveExtractOptions,
+) -> Result<ArchiveExtraction> {
+    let first_part = first_part.as_ref();
+    let output_dir = output_dir.as_ref();
+    let temporary_rar_path = legacy_split_rar_temporary_path(first_part);
+
+    fs::create_dir_all(output_dir)?;
+
+    if temporary_rar_path.try_exists()? {
+        return Err(ArchiveError::TargetAlreadyExists {
+            path: temporary_rar_path,
+        });
+    }
+
+    fs::rename(first_part, &temporary_rar_path)?;
+
+    let extraction_result =
+        extract_legacy_split_rar_renamed(&temporary_rar_path, parts, output_dir, options);
+    let restore_result = restore_legacy_split_first_part(&temporary_rar_path, first_part);
+
+    match (extraction_result, restore_result) {
+        (Ok(mut extraction), Ok(())) => {
+            if options.remove_sources {
+                extraction.removed_sources = remove_archive_sources(parts)?;
+            }
+
+            Ok(extraction)
+        }
+        (Err(err), Ok(())) => Err(err),
+        (Ok(_), Err(err)) | (Err(_), Err(err)) => Err(err.into()),
+    }
+}
+
+fn extract_legacy_split_rar_renamed(
+    temporary_rar_path: &Path,
+    parts: &[PathBuf],
+    output_dir: &Path,
+    options: ArchiveExtractOptions,
+) -> Result<ArchiveExtraction> {
+    validate_legacy_split_rar_entries(temporary_rar_path)?;
+
+    let staging_dir = create_staging_dir(output_dir)?;
+    let result = extract_legacy_split_rar_inner(
+        temporary_rar_path,
+        parts,
+        output_dir,
+        &staging_dir,
+        options,
+    );
+
+    if result.is_err() {
+        fs::remove_dir_all(&staging_dir).ok();
+    }
+
+    result
+}
+
+fn extract_legacy_split_rar_inner(
+    temporary_rar_path: &Path,
+    _parts: &[PathBuf],
+    output_dir: &Path,
+    staging_dir: &Path,
+    options: ArchiveExtractOptions,
+) -> Result<ArchiveExtraction> {
+    unrar_ng::Archive::new(temporary_rar_path)
+        .open_for_processing()?
+        .extract_all(staging_dir)?;
+
+    let content_root = content_root(staging_dir, options.flatten_single_root)?;
+    let extracted_paths = move_extracted_contents(&content_root, output_dir)?;
+
+    fs::remove_dir_all(staging_dir).ok();
+
+    Ok(ArchiveExtraction {
+        output_dir: output_dir.to_owned(),
+        extracted_paths,
+        removed_sources: Vec::new(),
+    })
+}
+
+fn validate_legacy_split_rar_entries(temporary_rar_path: &Path) -> Result<()> {
+    for entry in unrar_ng::Archive::new(temporary_rar_path).open_for_listing_split()? {
+        let entry = entry?;
+        validate_archive_entry_path(&entry.filename)?;
+    }
+
+    Ok(())
+}
+
+fn restore_legacy_split_first_part(temporary_rar_path: &Path, first_part: &Path) -> io::Result<()> {
+    if temporary_rar_path.try_exists()? {
+        fs::rename(temporary_rar_path, first_part)?;
+    }
+
+    Ok(())
+}
+
+fn remove_archive_sources(parts: &[PathBuf]) -> Result<Vec<PathBuf>> {
+    let mut removed_sources = Vec::new();
+
+    for part in parts {
+        match fs::remove_file(part) {
+            Ok(()) => removed_sources.push(part.clone()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.into()),
+        }
+    }
+
+    Ok(removed_sources)
+}
+
+fn legacy_split_rar_temporary_path(first_part: &Path) -> PathBuf {
+    first_part.with_extension("rar")
 }
 
 fn extract_single_zip_inner(
@@ -200,13 +321,30 @@ fn move_extracted_contents(content_root: &Path, output_dir: &Path) -> Result<Vec
 }
 
 fn safe_archive_entry_path(base: &Path, entry: &str) -> Result<PathBuf> {
+    validate_archive_entry_str(entry)?;
+
+    Ok(base.join(relative_archive_entry_path(Path::new(entry), entry)?))
+}
+
+fn validate_archive_entry_path(path: &Path) -> Result<()> {
+    let entry = path.to_string_lossy();
+    validate_archive_entry_str(&entry)?;
+    relative_archive_entry_path(path, &entry)?;
+
+    Ok(())
+}
+
+fn validate_archive_entry_str(entry: &str) -> Result<()> {
     if entry.contains('\\') || entry.contains('\0') {
         return Err(ArchiveError::UnsafeArchiveEntry {
             entry: entry.to_owned(),
         });
     }
 
-    let path = Path::new(entry);
+    Ok(())
+}
+
+fn relative_archive_entry_path(path: &Path, original_entry: &str) -> Result<PathBuf> {
     let mut relative = PathBuf::new();
 
     for component in path.components() {
@@ -215,7 +353,7 @@ fn safe_archive_entry_path(base: &Path, entry: &str) -> Result<PathBuf> {
             Component::CurDir => {}
             _ => {
                 return Err(ArchiveError::UnsafeArchiveEntry {
-                    entry: entry.to_owned(),
+                    entry: original_entry.to_owned(),
                 });
             }
         }
@@ -223,11 +361,11 @@ fn safe_archive_entry_path(base: &Path, entry: &str) -> Result<PathBuf> {
 
     if relative.as_os_str().is_empty() {
         return Err(ArchiveError::UnsafeArchiveEntry {
-            entry: entry.to_owned(),
+            entry: original_entry.to_owned(),
         });
     }
 
-    Ok(base.join(relative))
+    Ok(relative)
 }
 
 fn create_staging_dir(output_dir: &Path) -> Result<PathBuf> {
@@ -385,6 +523,70 @@ mod tests {
         let err = extract_single_zip(&archive, &dir, ArchiveExtractOptions::default()).unwrap_err();
 
         assert!(matches!(err, ArchiveError::UnsafeArchiveEntry { .. }));
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn builds_legacy_split_temporary_rar_path() {
+        assert_eq!(
+            legacy_split_rar_temporary_path(Path::new("RJ123456.part1.exe")),
+            PathBuf::from("RJ123456.part1.rar")
+        );
+    }
+
+    #[test]
+    fn validates_archive_entry_path_components() {
+        assert!(validate_archive_entry_path(Path::new("root/readme.txt")).is_ok());
+        assert!(matches!(
+            validate_archive_entry_path(Path::new("../readme.txt")),
+            Err(ArchiveError::UnsafeArchiveEntry { .. })
+        ));
+        assert!(matches!(
+            validate_archive_entry_path(Path::new("/tmp/readme.txt")),
+            Err(ArchiveError::UnsafeArchiveEntry { .. })
+        ));
+    }
+
+    #[test]
+    fn removes_archive_sources_and_ignores_already_missing_files() {
+        let dir = test_dir("remove-sources");
+        let first = dir.join("RJ123456.part1.exe");
+        let second = dir.join("RJ123456.part2.rar");
+        let missing = dir.join("RJ123456.part3.rar");
+        std::fs::write(&first, b"1").unwrap();
+        std::fs::write(&second, b"2").unwrap();
+
+        let removed = remove_archive_sources(&[first.clone(), second.clone(), missing]).unwrap();
+
+        assert_eq!(removed, vec![first.clone(), second.clone()]);
+        assert!(!first.exists());
+        assert!(!second.exists());
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn restores_legacy_split_first_part_after_rar_error() {
+        let dir = test_dir("invalid-rar");
+        let first = dir.join("RJ123456.part1.exe");
+        let second = dir.join("RJ123456.part2.rar");
+        std::fs::write(&first, b"not rar").unwrap();
+        std::fs::write(&second, b"also not rar").unwrap();
+
+        let err = extract_legacy_split_rar(
+            &first,
+            &[first.clone(), second.clone()],
+            &dir,
+            ArchiveExtractOptions::default(),
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, ArchiveError::Rar(_)));
+        assert!(first.exists());
+        assert!(second.exists());
+        assert!(!legacy_split_rar_temporary_path(&first).exists());
+        assert!(!dir.join(".dm-archive-0").exists());
 
         std::fs::remove_dir_all(dir).unwrap();
     }

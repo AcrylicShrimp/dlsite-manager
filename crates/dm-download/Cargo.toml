@@ -8,11 +8,11 @@ publish = false
 [dependencies]
 dm-api = { path = "../dm-api" }
 dm-archive = { path = "../dm-archive" }
-thiserror = "1"
-tokio = { version = "1", features = ["fs", "io-util", "macros", "rt"] }
-url = "2"
+thiserror = "2.0.18"
+tokio = { version = "1.52.2", features = ["fs", "io-util", "macros", "rt"] }
+url = "2.5.8"
 
 [dev-dependencies]
-dotenvy = "0.15"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-zip = { version = "2", default-features = false, features = ["deflate"] }
+dotenvy = "0.15.7"
+tokio = { version = "1.52.2", features = ["macros", "rt-multi-thread"] }
+zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
