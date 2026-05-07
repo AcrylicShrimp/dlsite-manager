@@ -573,6 +573,10 @@ pub struct DownloadStream {
 }
 
 impl DownloadStream {
+    pub fn url(&self) -> &Url {
+        self.response.url()
+    }
+
     pub fn status(&self) -> StatusCode {
         self.response.status()
     }

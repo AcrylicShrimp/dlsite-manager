@@ -1,6 +1,8 @@
 [workspace]
 members = [
+    "crates/dm-archive",
     "crates/dm-api",
+    "crates/dm-download",
     "src-tauri",
 ]
 resolver = "3"

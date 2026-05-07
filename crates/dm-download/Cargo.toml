@@ -1,0 +1,11 @@
+[package]
+name = "dm-download"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+dm-api = { path = "../dm-api" }
+thiserror = "1"
+url = "2"

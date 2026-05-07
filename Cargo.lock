@@ -840,6 +840,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dm-archive"
+version = "0.1.0"
+
+[[package]]
+name = "dm-download"
+version = "0.1.0"
+dependencies = [
+ "dm-api",
+ "thiserror 1.0.69",
+ "url",
+]
+
+[[package]]
 name = "document-features"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"

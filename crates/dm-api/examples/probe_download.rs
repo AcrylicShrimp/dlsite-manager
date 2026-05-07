@@ -141,9 +141,10 @@ async fn print_download_plan(
             .open_download_stream(&file.stream_request, Some(DownloadByteRange::first_byte()))
             .await?;
         println!(
-            "  plan stream kind={:?} status={}, content_length={:?}, headers={}",
+            "  plan stream kind={:?} status={}, url={}, content_length={:?}, headers={}",
             file.kind,
             stream.status(),
+            sanitize_url(stream.url()),
             stream.content_length(),
             format_header_summary(stream.headers())
         );
