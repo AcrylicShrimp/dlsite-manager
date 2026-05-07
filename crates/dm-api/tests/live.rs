@@ -198,6 +198,7 @@ async fn live_download_resolution_pinned_cases() -> TestResult {
         };
 
         let page = client.serial_download_page(location.clone()).await?;
+        assert!(!page.serial_numbers.is_empty());
         let mut stream = client
             .open_download_stream(&page.stream_request, Some(DownloadByteRange::first_byte()))
             .await?;

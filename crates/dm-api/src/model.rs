@@ -327,7 +327,23 @@ pub struct SplitDownloadPart {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SerialDownloadPage {
     pub page_url: Url,
+    pub serial_numbers: Vec<SerialNumber>,
     pub stream_request: DownloadStreamRequest,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct SerialNumber {
+    pub label: String,
+    pub value: String,
+}
+
+impl fmt::Debug for SerialNumber {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SerialNumber")
+            .field("label", &self.label)
+            .field("value", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

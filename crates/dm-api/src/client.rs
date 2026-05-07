@@ -1,8 +1,8 @@
 use crate::{
     raw::RawResponse, ContentCount, ContentQuery, Credentials, DmApiError, DownloadByteRange,
     DownloadResolution, DownloadStreamRequest, DownloadUnavailableReason, Purchase, Result,
-    SerialDownloadPage, SessionSnapshot, SessionStatus, SplitDownloadPage, SplitDownloadPart, Work,
-    WorkId, WorksResponse, DEFAULT_WORKS_BATCH_LIMIT,
+    SerialDownloadPage, SerialNumber, SessionSnapshot, SessionStatus, SplitDownloadPage,
+    SplitDownloadPart, Work, WorkId, WorksResponse, DEFAULT_WORKS_BATCH_LIMIT,
 };
 use bytes::Bytes;
 use cookie_store::CookieStore;
@@ -372,10 +372,12 @@ impl DlsiteClient {
             .raw_get_with_body_limit(location.clone(), DOWNLOAD_PAGE_BODY_LIMIT)
             .await?;
         let body = raw.body_snippet.as_deref().unwrap_or_default();
+        let serial_numbers = parse_serial_numbers(body);
 
         if let Some(stream_request) = parse_serial_download_link(&location, body) {
             return Ok(SerialDownloadPage {
                 page_url: raw.url,
+                serial_numbers,
                 stream_request,
             });
         }
@@ -569,6 +571,92 @@ fn parse_serial_download_link(page_url: &Url, body: &str) -> Option<DownloadStre
             )
         })
         .map(|url| DownloadStreamRequest { url })
+}
+
+fn parse_serial_numbers(body: &str) -> Vec<SerialNumber> {
+    let Some(section_start) = body.find("<h2>シリアル番号</h2>") else {
+        return Vec::new();
+    };
+    let section = &body[section_start..];
+    let Some(table_start) = section.find("<table") else {
+        return Vec::new();
+    };
+    let section = &section[table_start..];
+    let table_end = section.find("</table>").unwrap_or(section.len());
+    let table = &section[..table_end];
+    let mut serial_numbers = Vec::new();
+    let mut rest = table;
+
+    while let Some(row_start) = rest.find("<tr") {
+        rest = &rest[row_start..];
+        let Some(row_end) = rest.find("</tr>") else {
+            break;
+        };
+        let row = &rest[..row_end];
+
+        if let Some(serial_number) = parse_serial_number_row(row) {
+            serial_numbers.push(serial_number);
+        }
+
+        rest = &rest[row_end + "</tr>".len()..];
+    }
+
+    serial_numbers
+}
+
+fn parse_serial_number_row(row: &str) -> Option<SerialNumber> {
+    let label = extract_element_text(row, "th")?;
+
+    if !label.contains("シリアル") && !label.to_ascii_lowercase().contains("serial") {
+        return None;
+    }
+
+    let value = extract_element_text(row, "td")?;
+
+    if value.is_empty() {
+        return None;
+    }
+
+    Some(SerialNumber { label, value })
+}
+
+fn extract_element_text(html: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}");
+    let close = format!("</{tag}>");
+    let start = html.find(&open)?;
+    let after_open = html[start..].find('>')? + start + 1;
+    let end = html[after_open..].find(&close)? + after_open;
+    let text = strip_html_tags(&html[after_open..end]);
+    let text = decode_basic_html_entities(&text);
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    Some(text)
+}
+
+fn strip_html_tags(html: &str) -> String {
+    let mut output = String::new();
+    let mut in_tag = false;
+
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => output.push(ch),
+            _ => {}
+        }
+    }
+
+    output
+}
+
+fn decode_basic_html_entities(value: &str) -> String {
+    value
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#039;", "'")
 }
 
 fn extract_download_links(page_url: &Url, body: &str) -> Vec<Url> {
@@ -861,6 +949,29 @@ mod tests {
         assert_eq!(
             request.url.as_str(),
             "https://www.dlsite.com/home/download/=/product_id/VJ123456.html"
+        );
+    }
+
+    #[test]
+    fn parses_serial_numbers() {
+        let body = r#"
+            <h2>シリアル番号</h2>
+            <table>
+                <tr>
+                    <th>シリアル番号</th>
+                    <td><strong class="color_02">ABCD-1234-EFGH</strong></td>
+                </tr>
+            </table>
+        "#;
+
+        let serial_numbers = parse_serial_numbers(body);
+
+        assert_eq!(
+            serial_numbers,
+            vec![SerialNumber {
+                label: "シリアル番号".to_owned(),
+                value: "ABCD-1234-EFGH".to_owned()
+            }]
         );
     }
 

@@ -84,6 +84,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                 let page = client.serial_download_page(raw.url.clone()).await?;
                 println!(
+                    "serial numbers={}, labels={}",
+                    page.serial_numbers.len(),
+                    page.serial_numbers
+                        .iter()
+                        .map(|serial| serial.label.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                );
+                println!(
+                    "serial redacted values={}",
+                    page.serial_numbers
+                        .iter()
+                        .map(|serial| redact_sensitive_text(&serial.value))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                );
+                println!(
                     "serial download url={}",
                     sanitize_url(&page.stream_request.url)
                 );
@@ -134,6 +151,7 @@ fn print_body_observations(body: &str, work_id: &WorkId) {
     }
 
     print_keyword_contexts(body, work_id.as_ref());
+    print_serial_section(body);
 }
 
 fn extract_quoted_candidates(body: &str, work_id: &str) -> Vec<String> {
@@ -176,7 +194,18 @@ fn is_candidate(value: &str, work_id: &str) -> bool {
 
 fn print_keyword_contexts(body: &str, work_id: &str) {
     for keyword in [
-        work_id, "/home/", "/api/", "download", "serial", "split", "number",
+        work_id,
+        "/home/",
+        "/api/",
+        "download",
+        "serial",
+        "split",
+        "number",
+        "シリアル",
+        "番号",
+        "ライセンス",
+        "プロダクト",
+        "コード",
     ] {
         let mut rest = body;
         let mut offset = 0;
@@ -203,7 +232,7 @@ fn print_keyword_contexts(body: &str, work_id: &str) {
             println!(
                 "context keyword={}: {}",
                 keyword.escape_debug(),
-                sanitize_url_string(&context).escape_debug()
+                redact_sensitive_text(&sanitize_url_string(&context)).escape_debug()
             );
 
             printed += 1;
@@ -216,6 +245,62 @@ fn print_keyword_contexts(body: &str, work_id: &str) {
             rest = &rest[advance..];
         }
     }
+}
+
+fn print_serial_section(body: &str) {
+    let Some(index) = body.find("シリアル番号(プロダクトID)") else {
+        return;
+    };
+    let end = body[index..]
+        .char_indices()
+        .nth(1600)
+        .map(|(end, _)| index + end)
+        .unwrap_or(body.len());
+    let context = body[index..end]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    println!(
+        "serial section context: {}",
+        redact_sensitive_text(&sanitize_url_string(&context)).escape_debug()
+    );
+}
+
+fn redact_sensitive_text(value: &str) -> String {
+    let mut output = String::new();
+    let mut token = String::new();
+
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | ':') {
+            token.push(ch);
+            continue;
+        }
+
+        flush_redacted_token(&mut output, &mut token);
+        output.push(ch);
+    }
+
+    flush_redacted_token(&mut output, &mut token);
+    output
+}
+
+fn flush_redacted_token(output: &mut String, token: &mut String) {
+    if token.is_empty() {
+        return;
+    }
+
+    if is_sensitive_token(token) {
+        output.push_str("<redacted>");
+    } else {
+        output.push_str(token);
+    }
+
+    token.clear();
+}
+
+fn is_sensitive_token(token: &str) -> bool {
+    token.len() >= 10 && token.chars().filter(|ch| ch.is_ascii_digit()).count() >= 2
 }
 
 fn format_header_summary(headers: std::collections::BTreeMap<String, String>) -> String {
