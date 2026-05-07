@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "crates/dm-api",
+    "src-tauri",
+]
+resolver = "3"

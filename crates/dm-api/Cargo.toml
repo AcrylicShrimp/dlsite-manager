@@ -1,0 +1,24 @@
+[package]
+name = "dm-api"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+bytes = "1"
+chrono = { version = "0.4", features = ["serde"] }
+cookie_store = { version = "0.21", features = ["serde_json"] }
+futures-core = "0.3"
+reqwest = { version = "0.12", features = ["cookies", "json", "stream"] }
+reqwest_cookie_store = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_path_to_error = "0.1"
+thiserror = "1"
+tokio = { version = "1", features = ["sync"] }
+url = { version = "2", features = ["serde"] }
+
+[dev-dependencies]
+dotenvy = "0.15"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

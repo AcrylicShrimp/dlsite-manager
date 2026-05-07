@@ -1,0 +1,599 @@
+use crate::{
+    raw::RawResponse, ContentCount, ContentQuery, Credentials, DmApiError, DownloadResolution,
+    DownloadStreamRequest, DownloadUnavailableReason, Purchase, RangeStart, Result,
+    SessionSnapshot, SessionStatus, Work, WorkId, WorksResponse, DEFAULT_WORKS_BATCH_LIMIT,
+};
+use bytes::Bytes;
+use cookie_store::CookieStore;
+use futures_core::Stream;
+use reqwest::{
+    header::{HeaderMap, HeaderValue, CONTENT_TYPE, LOCATION, RANGE},
+    redirect::Policy,
+    Client, Response, StatusCode,
+};
+use reqwest_cookie_store::CookieStoreMutex;
+use serde::de::DeserializeOwned;
+use serde_json::Value;
+use std::{collections::BTreeMap, io::BufWriter, sync::Arc};
+use tokio::sync::Mutex;
+use url::Url;
+
+const LOGIN_URL: &str = "https://login.dlsite.com/login";
+const LOGIN_SKIP_URL: &str = "https://www.dlsite.com/home/login/=/skip_register/1";
+const LOGIN_FINISH_URL: &str = "https://www.dlsite.com/home/login/finish";
+const CONTENT_COUNT_URL: &str = "https://play.dlsite.com/api/v3/content/count";
+const CONTENT_SALES_URL: &str = "https://play.dlsite.com/api/v3/content/sales";
+const CONTENT_WORKS_URL: &str = "https://play.dlsite.com/api/v3/content/works";
+const DOWNLOAD_URL: &str = "https://play.dlsite.com/api/v3/download";
+
+#[derive(Debug, Clone)]
+pub struct DlsiteClientConfig {
+    pub user_agent: String,
+}
+
+impl Default for DlsiteClientConfig {
+    fn default() -> Self {
+        Self {
+            user_agent: concat!("dlsite-manager/", env!("CARGO_PKG_VERSION")).to_owned(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct DlsiteClient {
+    http: Client,
+    cookie_store: Arc<CookieStoreMutex>,
+    works_batch_limit: Arc<Mutex<Option<usize>>>,
+}
+
+impl DlsiteClient {
+    pub fn new(config: DlsiteClientConfig) -> Result<Self> {
+        let cookie_store = Arc::new(CookieStoreMutex::new(CookieStore::default()));
+        let http = Client::builder()
+            .cookie_provider(cookie_store.clone())
+            .redirect(Policy::none())
+            .user_agent(config.user_agent)
+            .build()?;
+
+        Ok(Self {
+            http,
+            cookie_store,
+            works_batch_limit: Arc::new(Mutex::new(None)),
+        })
+    }
+
+    pub async fn login(&self, credentials: &Credentials) -> Result<SessionSnapshot> {
+        self.http
+            .get(LOGIN_URL)
+            .query(&[("user", "self")])
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let xsrf_token = self.xsrf_token()?;
+
+        let auth_res = self
+            .http
+            .post(LOGIN_URL)
+            .form(&[
+                ("login_id", credentials.username.as_str()),
+                ("password", credentials.password.as_str()),
+                ("_token", xsrf_token.as_str()),
+            ])
+            .send()
+            .await?;
+
+        if auth_res.status() != StatusCode::FOUND {
+            let endpoint = auth_res.url().clone();
+            let status = auth_res.status();
+            let body_snippet = response_text_snippet(auth_res).await;
+
+            if body_snippet
+                .as_deref()
+                .is_some_and(|body| body.contains("ログインIDかパスワードが間違っています。"))
+            {
+                return Err(DmApiError::InvalidCredentials);
+            }
+
+            return Err(DmApiError::UnexpectedStatus {
+                endpoint,
+                status,
+                body_snippet,
+            });
+        }
+
+        let login_res = self.http.get(LOGIN_URL).send().await?;
+        let login_res_status = login_res.status();
+        let login_res_endpoint = login_res.url().clone();
+        let login_res_body = response_text_snippet(login_res).await;
+
+        if login_res_body
+            .as_deref()
+            .is_some_and(|body| body.contains("ログインIDかパスワードが間違っています。"))
+        {
+            return Err(DmApiError::InvalidCredentials);
+        }
+
+        if login_res_status != StatusCode::OK && login_res_status != StatusCode::FOUND {
+            return Err(DmApiError::UnexpectedStatus {
+                endpoint: login_res_endpoint,
+                status: login_res_status,
+                body_snippet: login_res_body,
+            });
+        }
+
+        let skip_location = self.redirect_location_from_get(LOGIN_SKIP_URL).await?;
+        let oauth_request_location = self.redirect_location_from_get(skip_location).await?;
+
+        self.redirect_location_from_get(oauth_request_location)
+            .await?;
+
+        self.http
+            .get(LOGIN_FINISH_URL)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        match self.validate_session().await? {
+            SessionStatus::Authorized => self.export_session(),
+            SessionStatus::Unauthorized => Err(DmApiError::InvalidCredentials),
+        }
+    }
+
+    pub fn export_session(&self) -> Result<SessionSnapshot> {
+        let mut writer = BufWriter::new(Vec::new());
+        let guard = self
+            .cookie_store
+            .lock()
+            .map_err(|_| DmApiError::CookieStore("cookie store mutex is poisoned".to_owned()))?;
+
+        cookie_store::serde::json::save(&guard, &mut writer)
+            .map_err(|err| DmApiError::CookieStore(format!("{err:?}")))?;
+
+        drop(guard);
+
+        let bytes = writer
+            .into_inner()
+            .map_err(|err| DmApiError::CookieStore(format!("{err:?}")))?;
+        let cookies_json =
+            String::from_utf8(bytes).map_err(|err| DmApiError::CookieStore(format!("{err:?}")))?;
+
+        Ok(SessionSnapshot { cookies_json })
+    }
+
+    pub fn import_session(&self, snapshot: &SessionSnapshot) -> Result<()> {
+        let parsed = cookie_store::serde::json::load(snapshot.cookies_json.as_bytes())
+            .map_err(|err| DmApiError::CookieStore(format!("{err:?}")))?;
+        let mut guard = self
+            .cookie_store
+            .lock()
+            .map_err(|_| DmApiError::CookieStore("cookie store mutex is poisoned".to_owned()))?;
+
+        *guard = parsed;
+        Ok(())
+    }
+
+    pub async fn validate_session(&self) -> Result<SessionStatus> {
+        let res = self.http.get(CONTENT_COUNT_URL).send().await?;
+
+        match res.status() {
+            StatusCode::OK => Ok(SessionStatus::Authorized),
+            StatusCode::UNAUTHORIZED => Ok(SessionStatus::Unauthorized),
+            status => {
+                let endpoint = res.url().clone();
+                let body_snippet = response_text_snippet(res).await;
+                Err(DmApiError::UnexpectedStatus {
+                    endpoint,
+                    status,
+                    body_snippet,
+                })
+            }
+        }
+    }
+
+    pub async fn content_count(&self, query: ContentQuery) -> Result<ContentCount> {
+        let endpoint = Url::parse(CONTENT_COUNT_URL)?;
+        let mut request = self.http.get(endpoint.clone());
+
+        if let Some(last) = query.last {
+            request = request.query(&[("last", last)]);
+        }
+
+        parse_json_response(request.send().await?).await
+    }
+
+    pub async fn sales(&self, query: ContentQuery) -> Result<Vec<Purchase>> {
+        let endpoint = Url::parse(CONTENT_SALES_URL)?;
+        let mut request = self.http.get(endpoint.clone());
+
+        if let Some(last) = query.last {
+            request = request.query(&[("last", last)]);
+        }
+
+        parse_json_response(request.send().await?).await
+    }
+
+    pub async fn works(&self, ids: &[WorkId]) -> Result<Vec<Work>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        'load: loop {
+            let limit = self.works_batch_limit().await;
+            let mut works = Vec::new();
+
+            for chunk in ids.chunks(limit) {
+                match self.works_batch(chunk).await {
+                    Ok(chunk_works) => works.extend(chunk_works),
+                    Err(DmApiError::BatchLimitExceeded { limit, .. }) if limit > 0 => {
+                        self.set_works_batch_limit(limit).await;
+                        continue 'load;
+                    }
+                    Err(err) => return Err(err),
+                }
+            }
+
+            return Ok(works);
+        }
+    }
+
+    pub async fn works_batch(&self, ids: &[WorkId]) -> Result<Vec<Work>> {
+        let endpoint = Url::parse(CONTENT_WORKS_URL)?;
+        let ids = ids
+            .iter()
+            .map(|id| id.as_ref().to_owned())
+            .collect::<Vec<_>>();
+
+        let res = self.http.post(endpoint).json(&ids).send().await?;
+        let status = res.status();
+
+        if status == StatusCode::UNAUTHORIZED {
+            return Err(DmApiError::NotAuthorized);
+        }
+
+        if !status.is_success() {
+            let endpoint = res.url().clone();
+            let headers = res.headers().clone();
+            let body_snippet = response_text_snippet(res).await;
+
+            if let Some(limit) =
+                detect_works_batch_limit(&headers, body_snippet.as_deref().unwrap_or_default())
+            {
+                return Err(DmApiError::BatchLimitExceeded {
+                    limit,
+                    body_snippet,
+                });
+            }
+
+            return Err(DmApiError::UnexpectedStatus {
+                endpoint,
+                status,
+                body_snippet,
+            });
+        }
+
+        let endpoint = res.url().clone();
+        let body = res.text().await?;
+        let response = parse_json_body::<WorksResponse>(endpoint, &body)?;
+
+        Ok(response.works)
+    }
+
+    pub async fn resolve_download(&self, work_id: &WorkId) -> Result<DownloadResolution> {
+        let res = self
+            .http
+            .get(DOWNLOAD_URL)
+            .query(&[("workno", work_id.as_ref())])
+            .send()
+            .await?;
+        let status = res.status();
+
+        if status.is_redirection() {
+            let location = redirect_location(&res)?;
+            return Ok(DownloadResolution::from_redirect_location(location));
+        }
+
+        match status {
+            StatusCode::UNAUTHORIZED => Ok(DownloadResolution::Unavailable {
+                reason: DownloadUnavailableReason::NotAuthorized,
+            }),
+            StatusCode::NOT_FOUND => Ok(DownloadResolution::Unavailable {
+                reason: DownloadUnavailableReason::NotFound,
+            }),
+            _ => {
+                let body_snippet = response_text_snippet(res).await;
+                Ok(DownloadResolution::Unavailable {
+                    reason: DownloadUnavailableReason::UnexpectedStatus {
+                        status: status.as_u16(),
+                        body_snippet,
+                    },
+                })
+            }
+        }
+    }
+
+    pub async fn open_download_stream(
+        &self,
+        request: &DownloadStreamRequest,
+        range: Option<RangeStart>,
+    ) -> Result<DownloadStream> {
+        let mut builder = self.http.get(request.url.clone());
+
+        if let Some(RangeStart(start)) = range {
+            builder = builder.header(RANGE, format!("bytes={start}-"));
+        }
+
+        let res = builder.send().await?;
+        let status = res.status();
+
+        if status != StatusCode::OK && status != StatusCode::PARTIAL_CONTENT {
+            let endpoint = res.url().clone();
+            let body_snippet = response_text_snippet(res).await;
+            return Err(DmApiError::UnexpectedStatus {
+                endpoint,
+                status,
+                body_snippet,
+            });
+        }
+
+        Ok(DownloadStream { response: res })
+    }
+
+    pub async fn raw_download_probe(&self, work_id: &WorkId) -> Result<RawResponse> {
+        let res = self
+            .http
+            .get(DOWNLOAD_URL)
+            .query(&[("workno", work_id.as_ref())])
+            .send()
+            .await?;
+
+        RawResponse::from_response(res).await
+    }
+
+    async fn works_batch_limit(&self) -> usize {
+        self.works_batch_limit
+            .lock()
+            .await
+            .unwrap_or(DEFAULT_WORKS_BATCH_LIMIT)
+    }
+
+    async fn set_works_batch_limit(&self, limit: usize) {
+        *self.works_batch_limit.lock().await = Some(limit);
+    }
+
+    fn xsrf_token(&self) -> Result<String> {
+        let guard = self
+            .cookie_store
+            .lock()
+            .map_err(|_| DmApiError::CookieStore("cookie store mutex is poisoned".to_owned()))?;
+
+        guard
+            .get("login.dlsite.com", "/", "XSRF-TOKEN")
+            .map(|cookie| cookie.value().to_owned())
+            .ok_or(DmApiError::XsrfTokenNotFound)
+    }
+
+    async fn redirect_location_from_get(&self, url: impl reqwest::IntoUrl) -> Result<Url> {
+        let res = self.http.get(url).send().await?;
+        let status = res.status();
+
+        if !status.is_redirection() {
+            let endpoint = res.url().clone();
+            let body_snippet = response_text_snippet(res).await;
+            return Err(DmApiError::UnexpectedStatus {
+                endpoint,
+                status,
+                body_snippet,
+            });
+        }
+
+        redirect_location(&res)
+    }
+}
+
+pub struct DownloadStream {
+    response: Response,
+}
+
+impl DownloadStream {
+    pub fn status(&self) -> StatusCode {
+        self.response.status()
+    }
+
+    pub fn content_length(&self) -> Option<u64> {
+        self.response.content_length()
+    }
+
+    pub fn headers(&self) -> BTreeMap<String, String> {
+        self.response
+            .headers()
+            .iter()
+            .filter_map(|(key, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|value| (key.as_str().to_owned(), value.to_owned()))
+            })
+            .collect()
+    }
+
+    pub fn into_bytes_stream(
+        self,
+    ) -> impl Stream<Item = std::result::Result<Bytes, reqwest::Error>> {
+        self.response.bytes_stream()
+    }
+}
+
+async fn parse_json_response<T>(res: Response) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    let status = res.status();
+
+    if status == StatusCode::UNAUTHORIZED {
+        return Err(DmApiError::NotAuthorized);
+    }
+
+    if !status.is_success() {
+        let endpoint = res.url().clone();
+        let body_snippet = response_text_snippet(res).await;
+        return Err(DmApiError::UnexpectedStatus {
+            endpoint,
+            status,
+            body_snippet,
+        });
+    }
+
+    let endpoint = res.url().clone();
+    let body = res.text().await?;
+    parse_json_body(endpoint, &body)
+}
+
+fn parse_json_body<T>(endpoint: Url, body: &str) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    let mut deserializer = serde_json::Deserializer::from_str(body);
+    serde_path_to_error::deserialize(&mut deserializer).map_err(|err| DmApiError::UnexpectedJson {
+        endpoint,
+        path: err.path().to_string(),
+        source: err.into_inner(),
+    })
+}
+
+pub fn detect_works_batch_limit(headers: &HeaderMap, body: &str) -> Option<usize> {
+    const HEADER_KEYS: &[&str] = &[
+        "x-batch-limit",
+        "x-max-batch-size",
+        "x-works-batch-limit",
+        "x-dlsite-batch-limit",
+    ];
+
+    for key in HEADER_KEYS {
+        if let Some(limit) = headers.get(*key).and_then(header_value_to_usize) {
+            return Some(limit);
+        }
+    }
+
+    let body = body.trim();
+    if body.is_empty() {
+        return None;
+    }
+
+    let json = serde_json::from_str::<Value>(body).ok()?;
+    find_batch_limit_in_json(&json)
+}
+
+fn find_batch_limit_in_json(value: &Value) -> Option<usize> {
+    const JSON_KEYS: &[&str] = &[
+        "expected_batch_size",
+        "batch_size",
+        "batchSize",
+        "max_batch_size",
+        "maxBatchSize",
+        "batch_limit",
+        "batchLimit",
+    ];
+
+    match value {
+        Value::Object(map) => {
+            for key in JSON_KEYS {
+                if let Some(limit) = map
+                    .get(*key)
+                    .and_then(|value| value.as_u64())
+                    .and_then(|value| usize::try_from(value).ok())
+                {
+                    return Some(limit);
+                }
+            }
+
+            map.values().find_map(find_batch_limit_in_json)
+        }
+        Value::Array(values) => values.iter().find_map(find_batch_limit_in_json),
+        _ => None,
+    }
+}
+
+fn header_value_to_usize(value: &HeaderValue) -> Option<usize> {
+    value.to_str().ok()?.parse().ok()
+}
+
+pub(crate) fn redirect_location(res: &Response) -> Result<Url> {
+    let endpoint = res.url().clone();
+    let location = res
+        .headers()
+        .get(LOCATION)
+        .ok_or_else(|| DmApiError::LocationHeaderMissing {
+            endpoint: endpoint.clone(),
+        })?
+        .to_str()
+        .map_err(|err| DmApiError::CookieStore(format!("invalid Location header: {err:?}")))?;
+
+    endpoint
+        .join(location)
+        .map_err(|source| DmApiError::InvalidLocationHeader {
+            endpoint,
+            location: location.to_owned(),
+            source,
+        })
+}
+
+pub(crate) fn text_snippet(value: &str) -> String {
+    const MAX_CHARS: usize = 2048;
+    value.chars().take(MAX_CHARS).collect()
+}
+
+async fn response_text_snippet(res: Response) -> Option<String> {
+    let content_type = res
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if !content_type.is_empty()
+        && !content_type.contains("json")
+        && !content_type.contains("text")
+        && !content_type.contains("html")
+    {
+        return None;
+    }
+
+    res.text().await.ok().map(|body| text_snippet(&body))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::header::HeaderValue;
+
+    #[test]
+    fn detects_batch_limit_from_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-batch-limit", HeaderValue::from_static("50"));
+
+        assert_eq!(detect_works_batch_limit(&headers, ""), Some(50));
+    }
+
+    #[test]
+    fn detects_batch_limit_from_json_body() {
+        let headers = HeaderMap::new();
+        let body = r#"{ "error": { "maxBatchSize": 50 } }"#;
+
+        assert_eq!(detect_works_batch_limit(&headers, body), Some(50));
+    }
+
+    #[test]
+    fn exports_and_imports_empty_session_snapshot() {
+        let client = DlsiteClient::new(DlsiteClientConfig::default()).unwrap();
+        let snapshot = client.export_session().unwrap();
+
+        let other = DlsiteClient::new(DlsiteClientConfig::default()).unwrap();
+        other.import_session(&snapshot).unwrap();
+
+        assert_eq!(
+            other.export_session().unwrap().cookies_json,
+            snapshot.cookies_json
+        );
+    }
+}

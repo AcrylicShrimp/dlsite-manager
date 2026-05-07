@@ -1,0 +1,8 @@
+# Work Log
+
+## 2026-05-07
+
+- Created `docs/todos/2026-05-07.00.set-up-rewrite-milestones.md` to track the staged rewrite plan: DLsite API v3 crate, download/decompression crate boundary, SQLite storage crate, and final Tauri GUI integration. Validation: inspected generated TODO content; no code validation run because this was documentation-only planning.
+- Captured the agreed first-slice API crate design in `docs/designs/2026-05-07.00-dlsite-api-v3-surface.md`. The design keeps `dm-api` v3-first, owns auth/session and authenticated byte streams, delays split/download manifest contracts until live behavior is observed, and requires env-gated live tests. Validation: documentation-only change; no code validation run.
+- Added the initial `crates/dm-api` Rust crate and root Cargo workspace with resolver `3`. The crate now covers v3 login/session import/export, content count, sales, works lookup with auto chunking, conservative download redirect resolution, authenticated direct download streams, a raw download probe, env-gated live tests, and `crates/dm-api/.env.example`. Live DTO handling was adjusted for observed nullable `regist_date`, `genre_ids`, and `tags`. Added `/target` to `.gitignore`. Validation: `cargo fmt --all`, `cargo test -p dm-api`, and `cargo test --workspace` passed.
+- Updated `docs/todos/2026-05-07.00.set-up-rewrite-milestones.md` to `Partially Taken`, marking the API env/test harness criterion complete while leaving full download API discovery, download/decompression, storage, and GUI milestones open. Validation: documentation-only TODO update after the workspace tests had passed.
