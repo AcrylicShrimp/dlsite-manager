@@ -1,11 +1,13 @@
 use sqlx::{
     migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteQueryResult},
-    Sqlite, SqlitePool, Transaction,
+    Row, Sqlite, SqlitePool, Transaction,
 };
 use std::path::Path;
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
+const LIBRARY_ROOT_KEY: &str = "library_root";
+const DOWNLOAD_ROOT_KEY: &str = "download_root";
 
 pub type Result<T> = std::result::Result<T, StorageError>;
 
@@ -17,6 +19,12 @@ pub enum StorageError {
     Migration(#[from] sqlx::migrate::MigrateError),
     #[error("write transaction is already finished")]
     TransactionFinished,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AppSettings {
+    pub library_root: Option<String>,
+    pub download_root: Option<String>,
 }
 
 #[derive(Clone)]
@@ -62,6 +70,40 @@ impl Storage {
             transaction: Some(transaction),
         })
     }
+
+    pub async fn app_settings(&self) -> Result<AppSettings> {
+        let rows = sqlx::query("SELECT key, value FROM app_settings")
+            .fetch_all(&self.pool)
+            .await?;
+        let mut settings = AppSettings::default();
+
+        for row in rows {
+            let key: String = row.try_get("key")?;
+            let value: String = row.try_get("value")?;
+
+            match key.as_str() {
+                LIBRARY_ROOT_KEY => settings.library_root = Some(value),
+                DOWNLOAD_ROOT_KEY => settings.download_root = Some(value),
+                _ => {}
+            }
+        }
+
+        Ok(settings)
+    }
+
+    pub async fn save_app_settings(&self, settings: &AppSettings) -> Result<()> {
+        let mut transaction = self.begin_write().await?;
+
+        transaction
+            .set_setting(LIBRARY_ROOT_KEY, settings.library_root.as_deref())
+            .await?;
+        transaction
+            .set_setting(DOWNLOAD_ROOT_KEY, settings.download_root.as_deref())
+            .await?;
+        transaction.commit().await?;
+
+        Ok(())
+    }
 }
 
 pub struct WriteTransaction<'storage> {
@@ -95,13 +137,42 @@ impl WriteTransaction<'_> {
         transaction.rollback().await?;
         Ok(())
     }
+
+    async fn set_setting(&mut self, key: &str, value: Option<&str>) -> Result<()> {
+        let transaction = self
+            .transaction
+            .as_mut()
+            .ok_or(StorageError::TransactionFinished)?;
+
+        match value {
+            Some(value) => {
+                sqlx::query(
+                    "INSERT INTO app_settings (key, value, updated_at)
+                     VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                     ON CONFLICT(key) DO UPDATE SET
+                        value = excluded.value,
+                        updated_at = excluded.updated_at",
+                )
+                .bind(key)
+                .bind(value)
+                .execute(&mut **transaction)
+                .await?;
+            }
+            None => {
+                sqlx::query("DELETE FROM app_settings WHERE key = ?1")
+                    .bind(key)
+                    .execute(&mut **transaction)
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::Row;
-
     #[tokio::test]
     async fn runs_embedded_migrations_once() -> Result<()> {
         let storage = Storage::open_in_memory().await?;
@@ -113,7 +184,7 @@ mod tests {
             .fetch_one(&storage.pool)
             .await?;
 
-        assert_eq!(migration_count, 1);
+        assert_eq!(migration_count, 2);
 
         Ok(())
     }
@@ -178,6 +249,61 @@ mod tests {
         drop(storage);
 
         assert!(path.exists());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reads_empty_app_settings_by_default() -> Result<()> {
+        let storage = Storage::open_in_memory().await?;
+        storage.run_migrations().await?;
+
+        assert_eq!(storage.app_settings().await?, AppSettings::default());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn saves_app_settings_in_one_transaction() -> Result<()> {
+        let storage = Storage::open_in_memory().await?;
+        storage.run_migrations().await?;
+        let settings = AppSettings {
+            library_root: Some("/library".to_owned()),
+            download_root: Some("/downloads".to_owned()),
+        };
+
+        storage.save_app_settings(&settings).await?;
+
+        assert_eq!(storage.app_settings().await?, settings);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn clears_missing_app_settings() -> Result<()> {
+        let storage = Storage::open_in_memory().await?;
+        storage.run_migrations().await?;
+
+        storage
+            .save_app_settings(&AppSettings {
+                library_root: Some("/library".to_owned()),
+                download_root: Some("/downloads".to_owned()),
+            })
+            .await?;
+        storage
+            .save_app_settings(&AppSettings {
+                library_root: Some("/library".to_owned()),
+                download_root: None,
+            })
+            .await?;
+
+        assert_eq!(
+            storage.app_settings().await?,
+            AppSettings {
+                library_root: Some("/library".to_owned()),
+                download_root: None,
+            }
+        );
 
         Ok(())
     }
