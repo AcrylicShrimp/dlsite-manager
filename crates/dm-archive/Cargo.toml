@@ -6,3 +6,5 @@ license = "MIT"
 publish = false
 
 [dependencies]
+thiserror = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
