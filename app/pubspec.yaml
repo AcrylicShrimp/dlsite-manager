@@ -12,6 +12,10 @@ dependencies:
     sdk: flutter
 
   cupertino_icons: ^1.0.8
+  dio: ^5.9.0
+  dm_api:
+    path: ../packages/dm_api
+  fluent_ui: ^4.13.0
 
 dev_dependencies:
   flutter_test:
