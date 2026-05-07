@@ -1,8 +1,9 @@
 use crate::{
     raw::RawResponse, ContentCount, ContentQuery, Credentials, DmApiError, DownloadByteRange,
-    DownloadResolution, DownloadStreamRequest, DownloadUnavailableReason, Purchase, Result,
-    SerialDownloadPage, SerialNumber, SessionSnapshot, SessionStatus, SplitDownloadPage,
-    SplitDownloadPart, Work, WorkId, WorksResponse, DEFAULT_WORKS_BATCH_LIMIT,
+    DownloadFile, DownloadFileKind, DownloadPlan, DownloadResolution, DownloadStreamRequest,
+    DownloadUnavailableReason, Purchase, Result, SerialDownloadPage, SerialNumber, SessionSnapshot,
+    SessionStatus, SplitDownloadPage, SplitDownloadPart, Work, WorkId, WorksResponse,
+    DEFAULT_WORKS_BATCH_LIMIT,
 };
 use bytes::Bytes;
 use cookie_store::CookieStore;
@@ -26,6 +27,7 @@ const CONTENT_COUNT_URL: &str = "https://play.dlsite.com/api/v3/content/count";
 const CONTENT_SALES_URL: &str = "https://play.dlsite.com/api/v3/content/sales";
 const CONTENT_WORKS_URL: &str = "https://play.dlsite.com/api/v3/content/works";
 const DOWNLOAD_URL: &str = "https://play.dlsite.com/api/v3/download";
+const HOME_SERIAL_URL: &str = "https://www.dlsite.com/home/serial/=/product_id/";
 const MAX_DOWNLOAD_REDIRECTS: usize = 8;
 const DOWNLOAD_PAGE_BODY_LIMIT: usize = 512 * 1024;
 
@@ -306,6 +308,65 @@ impl DlsiteClient {
         })
     }
 
+    pub async fn download_plan(&self, work_id: &WorkId) -> Result<DownloadPlan> {
+        match self.resolve_download(work_id).await? {
+            DownloadResolution::Direct { stream_request } => {
+                let serial_page = self.optional_serial_download_page(work_id).await?;
+                let (stream_request, serial_numbers) = match serial_page {
+                    Some(page) => (page.stream_request, page.serial_numbers),
+                    None => (stream_request, Vec::new()),
+                };
+
+                Ok(DownloadPlan {
+                    work_id: work_id.clone(),
+                    files: vec![DownloadFile {
+                        kind: DownloadFileKind::Direct,
+                        stream_request,
+                    }],
+                    serial_numbers,
+                })
+            }
+            DownloadResolution::Split { location } => {
+                let page = self.split_download_page(location).await?;
+                Ok(DownloadPlan {
+                    work_id: work_id.clone(),
+                    files: page
+                        .parts
+                        .into_iter()
+                        .map(|part| DownloadFile {
+                            kind: DownloadFileKind::SplitPart {
+                                number: part.number,
+                            },
+                            stream_request: part.stream_request,
+                        })
+                        .collect(),
+                    serial_numbers: Vec::new(),
+                })
+            }
+            DownloadResolution::SerialRequired { location } => {
+                let page = self.serial_download_page(location).await?;
+                Ok(DownloadPlan {
+                    work_id: work_id.clone(),
+                    files: vec![DownloadFile {
+                        kind: DownloadFileKind::Direct,
+                        stream_request: page.stream_request,
+                    }],
+                    serial_numbers: page.serial_numbers,
+                })
+            }
+            DownloadResolution::UnknownRedirect { location } => {
+                Err(DmApiError::DownloadUnknownRedirect {
+                    work_id: work_id.clone(),
+                    location,
+                })
+            }
+            DownloadResolution::Unavailable { reason } => Err(DmApiError::DownloadUnavailable {
+                work_id: work_id.clone(),
+                reason,
+            }),
+        }
+    }
+
     pub async fn open_download_stream(
         &self,
         request: &DownloadStreamRequest,
@@ -347,6 +408,22 @@ impl DlsiteClient {
         })
     }
 
+    pub async fn optional_serial_download_page(
+        &self,
+        work_id: &WorkId,
+    ) -> Result<Option<SerialDownloadPage>> {
+        let location = serial_page_url(work_id)?;
+        let raw = self
+            .raw_get_with_body_limit(location.clone(), DOWNLOAD_PAGE_BODY_LIMIT)
+            .await?;
+
+        if raw.status == StatusCode::INTERNAL_SERVER_ERROR.as_u16() {
+            return Ok(None);
+        }
+
+        parse_serial_download_page_from_raw(location, raw).map(Some)
+    }
+
     pub async fn split_download_page(&self, location: Url) -> Result<SplitDownloadPage> {
         let raw = self
             .raw_get_with_body_limit(location.clone(), DOWNLOAD_PAGE_BODY_LIMIT)
@@ -371,21 +448,8 @@ impl DlsiteClient {
         let raw = self
             .raw_get_with_body_limit(location.clone(), DOWNLOAD_PAGE_BODY_LIMIT)
             .await?;
-        let body = raw.body_snippet.as_deref().unwrap_or_default();
-        let serial_numbers = parse_serial_numbers(body);
 
-        if let Some(stream_request) = parse_serial_download_link(&location, body) {
-            return Ok(SerialDownloadPage {
-                page_url: raw.url,
-                serial_numbers,
-                stream_request,
-            });
-        }
-
-        Err(DmApiError::DownloadPageLinkNotFound {
-            page: location,
-            kind: "serial",
-        })
+        parse_serial_download_page_from_raw(location, raw)
     }
 
     pub async fn raw_download_probe(&self, work_id: &WorkId) -> Result<RawResponse> {
@@ -466,6 +530,35 @@ impl DlsiteClient {
 
         redirect_location(&res)
     }
+}
+
+fn parse_serial_download_page_from_raw(
+    location: Url,
+    raw: RawResponse,
+) -> Result<SerialDownloadPage> {
+    if !(200..=299).contains(&raw.status) {
+        return Err(DmApiError::UnexpectedStatus {
+            endpoint: raw.url,
+            status: StatusCode::from_u16(raw.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            body_snippet: raw.body_snippet,
+        });
+    }
+
+    let body = raw.body_snippet.as_deref().unwrap_or_default();
+    let serial_numbers = parse_serial_numbers(body);
+
+    if let Some(stream_request) = parse_serial_download_link(&location, body) {
+        return Ok(SerialDownloadPage {
+            page_url: raw.url,
+            serial_numbers,
+            stream_request,
+        });
+    }
+
+    Err(DmApiError::DownloadPageLinkNotFound {
+        page: location,
+        kind: "serial",
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -709,6 +802,10 @@ fn download_part_number(url: &Url) -> Option<u32> {
     }
 
     None
+}
+
+fn serial_page_url(work_id: &WorkId) -> Result<Url> {
+    Url::parse(&format!("{HOME_SERIAL_URL}{work_id}.html")).map_err(Into::into)
 }
 
 async fn parse_json_response<T>(res: Response) -> Result<T>
@@ -972,6 +1069,16 @@ mod tests {
                 label: "シリアル番号".to_owned(),
                 value: "ABCD-1234-EFGH".to_owned()
             }]
+        );
+    }
+
+    #[test]
+    fn builds_serial_page_url() {
+        let url = serial_page_url(&WorkId::from("RJ123456")).unwrap();
+
+        assert_eq!(
+            url.as_str(),
+            "https://www.dlsite.com/home/serial/=/product_id/RJ123456.html"
         );
     }
 

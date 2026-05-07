@@ -1,6 +1,6 @@
 use dm_api::{
     ContentQuery, Credentials, DlsiteClient, DlsiteClientConfig, DmApiError, DownloadByteRange,
-    DownloadResolution, WorkId,
+    DownloadFileKind, DownloadResolution, WorkId,
 };
 use std::{collections::BTreeSet, env, error::Error, path::PathBuf};
 
@@ -164,12 +164,21 @@ async fn live_download_resolution_pinned_cases() -> TestResult {
         let DownloadResolution::Direct { stream_request } = &resolution else {
             panic!("expected {work_id} to resolve to a direct download, got {resolution:?}");
         };
+        assert!(client
+            .optional_serial_download_page(&work_id)
+            .await?
+            .is_none());
 
         let mut stream = client
             .open_download_stream(stream_request, Some(DownloadByteRange::first_byte()))
             .await?;
         assert!(stream.status().is_success());
         assert!(stream.next_chunk().await?.is_some());
+
+        let plan = client.download_plan(&work_id).await?;
+        assert_eq!(plan.files.len(), 1);
+        assert_eq!(plan.files[0].kind, DownloadFileKind::Direct);
+        assert!(plan.serial_numbers.is_empty());
     }
 
     if let Some(work_id) = env.split_download_work_id {
@@ -189,6 +198,14 @@ async fn live_download_resolution_pinned_cases() -> TestResult {
             .await?;
         assert!(stream.status().is_success());
         assert!(stream.next_chunk().await?.is_some());
+
+        let plan = client.download_plan(&work_id).await?;
+        assert!(!plan.files.is_empty());
+        assert!(plan.serial_numbers.is_empty());
+        assert!(plan
+            .files
+            .iter()
+            .all(|file| matches!(file.kind, DownloadFileKind::SplitPart { .. })));
     }
 
     if let Some(work_id) = env.serial_required_work_id {
@@ -204,6 +221,11 @@ async fn live_download_resolution_pinned_cases() -> TestResult {
             .await?;
         assert!(stream.status().is_success());
         assert!(stream.next_chunk().await?.is_some());
+
+        let plan = client.download_plan(&work_id).await?;
+        assert_eq!(plan.files.len(), 1);
+        assert_eq!(plan.files[0].kind, DownloadFileKind::Direct);
+        assert!(!plan.serial_numbers.is_empty());
     }
 
     Ok(())

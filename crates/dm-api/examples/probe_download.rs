@@ -1,5 +1,5 @@
 use dm_api::{
-    ContentQuery, Credentials, DlsiteClient, DlsiteClientConfig, DownloadByteRange,
+    ContentQuery, Credentials, DlsiteClient, DlsiteClientConfig, DownloadByteRange, DownloadPlan,
     DownloadResolution, WorkId,
 };
 use std::{env, error::Error, path::PathBuf};
@@ -45,6 +45,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let probe = client.probe_download(&work_id).await?;
         print_raw("api/v3/download", &probe.initial);
         println!("classification={:?}", probe.resolution);
+        print_download_plan(&client.download_plan(&work_id).await?);
 
         match probe.resolution {
             DownloadResolution::Direct { stream_request } => {
@@ -117,6 +118,41 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+fn print_download_plan(plan: &DownloadPlan) {
+    println!(
+        "download plan: files={}, serial_numbers={}",
+        plan.files.len(),
+        plan.serial_numbers.len()
+    );
+
+    for file in &plan.files {
+        println!(
+            "  plan file kind={:?} url={}",
+            file.kind,
+            sanitize_url(&file.stream_request.url)
+        );
+    }
+
+    if !plan.serial_numbers.is_empty() {
+        println!(
+            "  serial labels={}",
+            plan.serial_numbers
+                .iter()
+                .map(|serial| serial.label.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        println!(
+            "  serial values={}",
+            plan.serial_numbers
+                .iter()
+                .map(|serial| redact_sensitive_text(&serial.value))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+    }
 }
 
 fn print_raw(label: &str, raw: &dm_api::raw::RawResponse) {

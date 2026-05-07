@@ -43,6 +43,16 @@ pub enum DmApiError {
     RedirectLimitExceeded { endpoint: Url, limit: usize },
     #[error("{kind} download page link not found at {page}")]
     DownloadPageLinkNotFound { page: Url, kind: &'static str },
+    #[error("download is unavailable for {work_id}: {reason:?}")]
+    DownloadUnavailable {
+        work_id: crate::WorkId,
+        reason: crate::DownloadUnavailableReason,
+    },
+    #[error("unknown download redirect for {work_id}: {location}")]
+    DownloadUnknownRedirect {
+        work_id: crate::WorkId,
+        location: Url,
+    },
     #[error("works batch limit exceeded; detected limit: {limit}")]
     BatchLimitExceeded {
         limit: usize,

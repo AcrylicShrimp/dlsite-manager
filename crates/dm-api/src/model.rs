@@ -313,6 +313,25 @@ pub struct DownloadStreamRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadPlan {
+    pub work_id: WorkId,
+    pub files: Vec<DownloadFile>,
+    pub serial_numbers: Vec<SerialNumber>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadFile {
+    pub kind: DownloadFileKind,
+    pub stream_request: DownloadStreamRequest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DownloadFileKind {
+    Direct,
+    SplitPart { number: u32 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SplitDownloadPage {
     pub page_url: Url,
     pub parts: Vec<SplitDownloadPart>,
