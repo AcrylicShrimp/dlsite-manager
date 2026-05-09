@@ -1,5 +1,9 @@
 # Work Log
 
+## 2026-05-10
+
+- Created `docs/todos/2026-05-10.00.add-generic-background-job-system.md` to track the proposed generic background job system. The plan covers a `dm-jobs` crate, cooperative cancellation, snapshots, bounded logs, generic Tauri job commands/events, account-sync migration, frontend job state, observability rules, and later download/archive integration. Validation: documentation-only change; inspected the generated TODO content, no code validation run.
+
 ## 2026-05-09
 
 - Captured the unified multi-account product-list design in `docs/designs/2026-05-09.00-unified-product-list-and-accounts.md`. The design treats DLsite accounts as ownership sources under one virtual library, keeps list rendering cache-backed, defers serial/session-sensitive storage, and sets the next implementation slice for account/work ownership storage plus a `dm-library` orchestration crate. Validation: documentation-only change; no code validation run.
