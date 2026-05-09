@@ -1,7 +1,7 @@
 use sqlx::{
     migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteQueryResult},
-    Row, Sqlite, SqlitePool, Transaction,
+    QueryBuilder, Row, Sqlite, SqlitePool, Transaction,
 };
 use std::path::Path;
 
@@ -19,12 +19,181 @@ pub enum StorageError {
     Migration(#[from] sqlx::migrate::MigrateError),
     #[error("write transaction is already finished")]
     TransactionFinished,
+    #[error("{entity} not found: {id}")]
+    NotFound { entity: &'static str, id: String },
+    #[error("invalid stored value for {field}: {value}")]
+    InvalidStoredValue { field: &'static str, value: String },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AppSettings {
     pub library_root: Option<String>,
     pub download_root: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Account {
+    pub id: String,
+    pub label: String,
+    pub login_name: Option<String>,
+    pub credential_ref: Option<String>,
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_login_at: Option<String>,
+    pub last_sync_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountUpsert {
+    pub id: String,
+    pub label: String,
+    pub login_name: Option<String>,
+    pub credential_ref: Option<String>,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachedWork {
+    pub work_id: String,
+    pub title: String,
+    pub title_json: String,
+    pub maker_id: Option<String>,
+    pub maker_name: Option<String>,
+    pub maker_json: Option<String>,
+    pub work_type: Option<String>,
+    pub age_category: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub registered_at: Option<String>,
+    pub published_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub raw_json: String,
+    pub last_detail_sync_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountWork {
+    pub work_id: String,
+    pub purchased_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountSyncCommit {
+    pub sync_run_id: String,
+    pub account_id: String,
+    pub started_at: String,
+    pub completed_at: String,
+    pub works: Vec<CachedWork>,
+    pub account_works: Vec<AccountWork>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncFailure {
+    pub sync_run_id: String,
+    pub account_id: String,
+    pub started_at: String,
+    pub completed_at: String,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncRunStatus {
+    Started,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+impl SyncRunStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Started => "started",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "started" => Ok(Self::Started),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err(StorageError::InvalidStoredValue {
+                field: "sync_runs.status",
+                value: value.to_owned(),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncRun {
+    pub id: String,
+    pub account_id: String,
+    pub status: SyncRunStatus,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductSort {
+    TitleAsc,
+    LatestPurchaseDesc,
+    PublishedAtDesc,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductListQuery {
+    pub search: Option<String>,
+    pub account_id: Option<String>,
+    pub sort: ProductSort,
+    pub limit: u32,
+    pub offset: u32,
+}
+
+impl Default for ProductListQuery {
+    fn default() -> Self {
+        Self {
+            search: None,
+            account_id: None,
+            sort: ProductSort::TitleAsc,
+            limit: 100,
+            offset: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductListPage {
+    pub total_count: u64,
+    pub products: Vec<ProductListItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductListItem {
+    pub work_id: String,
+    pub title: String,
+    pub maker_name: Option<String>,
+    pub work_type: Option<String>,
+    pub age_category: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub published_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub earliest_purchased_at: Option<String>,
+    pub latest_purchased_at: Option<String>,
+    pub owners: Vec<ProductOwner>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductOwner {
+    pub account_id: String,
+    pub label: String,
+    pub purchased_at: Option<String>,
 }
 
 #[derive(Clone)]
@@ -104,6 +273,190 @@ impl Storage {
 
         Ok(())
     }
+
+    pub async fn accounts(&self) -> Result<Vec<Account>> {
+        let rows = sqlx::query(
+            "SELECT id, label, login_name, credential_ref, enabled, created_at,
+                    updated_at, last_login_at, last_sync_at
+             FROM accounts
+             ORDER BY label COLLATE NOCASE ASC, id ASC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter().map(account_from_row).collect()
+    }
+
+    pub async fn save_account(&self, account: &AccountUpsert) -> Result<()> {
+        let mut transaction = self.begin_write().await?;
+        transaction.upsert_account(account).await?;
+        transaction.commit().await?;
+
+        Ok(())
+    }
+
+    pub async fn set_account_enabled(&self, account_id: &str, enabled: bool) -> Result<()> {
+        let mut transaction = self.begin_write().await?;
+        transaction.set_account_enabled(account_id, enabled).await?;
+        transaction.commit().await?;
+
+        Ok(())
+    }
+
+    pub async fn record_account_login(&self, account_id: &str, logged_in_at: &str) -> Result<()> {
+        let mut transaction = self.begin_write().await?;
+        transaction
+            .record_account_login(account_id, logged_in_at)
+            .await?;
+        transaction.commit().await?;
+
+        Ok(())
+    }
+
+    pub async fn commit_account_sync(&self, sync: &AccountSyncCommit) -> Result<()> {
+        let mut transaction = self.begin_write().await?;
+        transaction.commit_account_sync(sync).await?;
+        transaction.commit().await?;
+
+        Ok(())
+    }
+
+    pub async fn record_sync_failure(&self, failure: &SyncFailure) -> Result<()> {
+        let mut transaction = self.begin_write().await?;
+        transaction.record_sync_failure(failure).await?;
+        transaction.commit().await?;
+
+        Ok(())
+    }
+
+    pub async fn sync_runs_for_account(&self, account_id: &str) -> Result<Vec<SyncRun>> {
+        let rows = sqlx::query(
+            "SELECT id, account_id, status, started_at, completed_at, error_code,
+                    error_message
+             FROM sync_runs
+             WHERE account_id = ?1
+             ORDER BY started_at DESC, id DESC",
+        )
+        .bind(account_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter().map(sync_run_from_row).collect()
+    }
+
+    pub async fn list_products(&self, query: &ProductListQuery) -> Result<ProductListPage> {
+        let total_count = self.count_products(query).await?;
+        let products = self.fetch_product_page(query).await?;
+
+        Ok(ProductListPage {
+            total_count,
+            products,
+        })
+    }
+
+    async fn count_products(&self, query: &ProductListQuery) -> Result<u64> {
+        let mut builder = QueryBuilder::<Sqlite>::new(
+            "SELECT COUNT(*) AS count FROM (
+                 SELECT w.work_id
+                 FROM works w
+                 JOIN account_works aw ON aw.work_id = w.work_id
+                 JOIN accounts a ON a.id = aw.account_id
+                 WHERE aw.is_current = 1 AND a.enabled = 1",
+        );
+
+        push_product_filters(&mut builder, query);
+        builder.push(" GROUP BY w.work_id)");
+
+        let row = builder.build().fetch_one(&self.pool).await?;
+        let count: i64 = row.try_get("count")?;
+
+        Ok(count as u64)
+    }
+
+    async fn fetch_product_page(&self, query: &ProductListQuery) -> Result<Vec<ProductListItem>> {
+        let mut builder = QueryBuilder::<Sqlite>::new(
+            "WITH visible_works AS (
+                 SELECT
+                    w.work_id,
+                    lower(w.title) AS sort_title,
+                    COALESCE(w.published_at, '') AS sort_published_at,
+                    MIN(aw.purchased_at) AS earliest_purchased_at,
+                    MAX(aw.purchased_at) AS latest_purchased_at
+                 FROM works w
+                 JOIN account_works aw ON aw.work_id = w.work_id
+                 JOIN accounts a ON a.id = aw.account_id
+                 WHERE aw.is_current = 1 AND a.enabled = 1",
+        );
+
+        push_product_filters(&mut builder, query);
+        builder.push(" GROUP BY w.work_id ORDER BY ");
+        push_product_sort(&mut builder, query.sort);
+        builder.push(" LIMIT ");
+        builder.push_bind(i64::from(query.limit));
+        builder.push(" OFFSET ");
+        builder.push_bind(i64::from(query.offset));
+        builder.push(
+            ")
+             SELECT
+                w.work_id,
+                w.title,
+                w.maker_name,
+                w.work_type,
+                w.age_category,
+                w.thumbnail_url,
+                w.published_at,
+                w.updated_at,
+                vw.earliest_purchased_at,
+                vw.latest_purchased_at,
+                aw.account_id,
+                a.label AS account_label,
+                aw.purchased_at
+             FROM visible_works vw
+             JOIN works w ON w.work_id = vw.work_id
+             JOIN account_works aw ON aw.work_id = w.work_id
+             JOIN accounts a ON a.id = aw.account_id
+             WHERE aw.is_current = 1 AND a.enabled = 1
+             ORDER BY ",
+        );
+        push_outer_product_sort(&mut builder, query.sort);
+        builder.push(", lower(a.label) ASC, aw.account_id ASC");
+
+        let rows = builder.build().fetch_all(&self.pool).await?;
+        let mut products = Vec::<ProductListItem>::new();
+
+        for row in rows {
+            let work_id: String = row.try_get("work_id")?;
+            let owner = ProductOwner {
+                account_id: row.try_get("account_id")?,
+                label: row.try_get("account_label")?,
+                purchased_at: row.try_get("purchased_at")?,
+            };
+
+            if let Some(product) = products
+                .last_mut()
+                .filter(|product| product.work_id == work_id)
+            {
+                product.owners.push(owner);
+                continue;
+            }
+
+            products.push(ProductListItem {
+                work_id,
+                title: row.try_get("title")?,
+                maker_name: row.try_get("maker_name")?,
+                work_type: row.try_get("work_type")?,
+                age_category: row.try_get("age_category")?,
+                thumbnail_url: row.try_get("thumbnail_url")?,
+                published_at: row.try_get("published_at")?,
+                updated_at: row.try_get("updated_at")?,
+                earliest_purchased_at: row.try_get("earliest_purchased_at")?,
+                latest_purchased_at: row.try_get("latest_purchased_at")?,
+                owners: vec![owner],
+            });
+        }
+
+        Ok(products)
+    }
 }
 
 pub struct WriteTransaction<'storage> {
@@ -168,11 +521,522 @@ impl WriteTransaction<'_> {
 
         Ok(())
     }
+
+    pub async fn upsert_account(&mut self, account: &AccountUpsert) -> Result<()> {
+        let transaction = self
+            .transaction
+            .as_mut()
+            .ok_or(StorageError::TransactionFinished)?;
+
+        sqlx::query(
+            "INSERT INTO accounts (
+                id, label, login_name, credential_ref, enabled, created_at, updated_at
+             )
+             VALUES (
+                ?1, ?2, ?3, ?4, ?5,
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             )
+             ON CONFLICT(id) DO UPDATE SET
+                label = excluded.label,
+                login_name = excluded.login_name,
+                credential_ref = excluded.credential_ref,
+                enabled = excluded.enabled,
+                updated_at = excluded.updated_at",
+        )
+        .bind(&account.id)
+        .bind(&account.label)
+        .bind(&account.login_name)
+        .bind(&account.credential_ref)
+        .bind(bool_to_i64(account.enabled))
+        .execute(&mut **transaction)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn set_account_enabled(&mut self, account_id: &str, enabled: bool) -> Result<()> {
+        let transaction = self
+            .transaction
+            .as_mut()
+            .ok_or(StorageError::TransactionFinished)?;
+
+        let result = sqlx::query(
+            "UPDATE accounts
+             SET enabled = ?2,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?1",
+        )
+        .bind(account_id)
+        .bind(bool_to_i64(enabled))
+        .execute(&mut **transaction)
+        .await?;
+
+        ensure_changed(result, "account", account_id)
+    }
+
+    pub async fn record_account_login(
+        &mut self,
+        account_id: &str,
+        logged_in_at: &str,
+    ) -> Result<()> {
+        let transaction = self
+            .transaction
+            .as_mut()
+            .ok_or(StorageError::TransactionFinished)?;
+
+        let result = sqlx::query(
+            "UPDATE accounts
+             SET last_login_at = ?2,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?1",
+        )
+        .bind(account_id)
+        .bind(logged_in_at)
+        .execute(&mut **transaction)
+        .await?;
+
+        ensure_changed(result, "account", account_id)
+    }
+
+    pub async fn commit_account_sync(&mut self, sync: &AccountSyncCommit) -> Result<()> {
+        self.ensure_account_exists(&sync.account_id).await?;
+        self.insert_sync_run(
+            &sync.sync_run_id,
+            &sync.account_id,
+            SyncRunStatus::Completed,
+            &sync.started_at,
+            Some(&sync.completed_at),
+            None,
+            None,
+        )
+        .await?;
+
+        for work in &sync.works {
+            self.upsert_work(work).await?;
+        }
+
+        for account_work in &sync.account_works {
+            self.upsert_account_work(
+                &sync.account_id,
+                account_work,
+                &sync.sync_run_id,
+                &sync.completed_at,
+            )
+            .await?;
+        }
+
+        self.mark_account_works_not_seen_in_sync(&sync.account_id, &sync.sync_run_id)
+            .await?;
+        self.record_account_sync_completed(&sync.account_id, &sync.completed_at)
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn record_sync_failure(&mut self, failure: &SyncFailure) -> Result<()> {
+        self.ensure_account_exists(&failure.account_id).await?;
+        self.insert_sync_run(
+            &failure.sync_run_id,
+            &failure.account_id,
+            SyncRunStatus::Failed,
+            &failure.started_at,
+            Some(&failure.completed_at),
+            failure.error_code.as_deref(),
+            failure.error_message.as_deref(),
+        )
+        .await
+    }
+
+    async fn ensure_account_exists(&mut self, account_id: &str) -> Result<()> {
+        let transaction = self
+            .transaction
+            .as_mut()
+            .ok_or(StorageError::TransactionFinished)?;
+        let row = sqlx::query("SELECT 1 FROM accounts WHERE id = ?1")
+            .bind(account_id)
+            .fetch_optional(&mut **transaction)
+            .await?;
+
+        if row.is_some() {
+            Ok(())
+        } else {
+            Err(StorageError::NotFound {
+                entity: "account",
+                id: account_id.to_owned(),
+            })
+        }
+    }
+
+    async fn insert_sync_run(
+        &mut self,
+        sync_run_id: &str,
+        account_id: &str,
+        status: SyncRunStatus,
+        started_at: &str,
+        completed_at: Option<&str>,
+        error_code: Option<&str>,
+        error_message: Option<&str>,
+    ) -> Result<()> {
+        let transaction = self
+            .transaction
+            .as_mut()
+            .ok_or(StorageError::TransactionFinished)?;
+
+        sqlx::query(
+            "INSERT INTO sync_runs (
+                id, account_id, status, started_at, completed_at, error_code,
+                error_message
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )
+        .bind(sync_run_id)
+        .bind(account_id)
+        .bind(status.as_str())
+        .bind(started_at)
+        .bind(completed_at)
+        .bind(error_code)
+        .bind(error_message)
+        .execute(&mut **transaction)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn upsert_work(&mut self, work: &CachedWork) -> Result<()> {
+        let transaction = self
+            .transaction
+            .as_mut()
+            .ok_or(StorageError::TransactionFinished)?;
+
+        sqlx::query(
+            "INSERT INTO works (
+                work_id, title, title_json, maker_id, maker_name, maker_json,
+                work_type, age_category, thumbnail_url, registered_at,
+                published_at, updated_at, raw_json, last_detail_sync_at
+             )
+             VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
+             )
+             ON CONFLICT(work_id) DO UPDATE SET
+                title = excluded.title,
+                title_json = excluded.title_json,
+                maker_id = excluded.maker_id,
+                maker_name = excluded.maker_name,
+                maker_json = excluded.maker_json,
+                work_type = excluded.work_type,
+                age_category = excluded.age_category,
+                thumbnail_url = excluded.thumbnail_url,
+                registered_at = excluded.registered_at,
+                published_at = excluded.published_at,
+                updated_at = excluded.updated_at,
+                raw_json = excluded.raw_json,
+                last_detail_sync_at = excluded.last_detail_sync_at",
+        )
+        .bind(&work.work_id)
+        .bind(&work.title)
+        .bind(&work.title_json)
+        .bind(&work.maker_id)
+        .bind(&work.maker_name)
+        .bind(&work.maker_json)
+        .bind(&work.work_type)
+        .bind(&work.age_category)
+        .bind(&work.thumbnail_url)
+        .bind(&work.registered_at)
+        .bind(&work.published_at)
+        .bind(&work.updated_at)
+        .bind(&work.raw_json)
+        .bind(&work.last_detail_sync_at)
+        .execute(&mut **transaction)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn upsert_account_work(
+        &mut self,
+        account_id: &str,
+        account_work: &AccountWork,
+        sync_run_id: &str,
+        seen_at: &str,
+    ) -> Result<()> {
+        let transaction = self
+            .transaction
+            .as_mut()
+            .ok_or(StorageError::TransactionFinished)?;
+
+        sqlx::query(
+            "INSERT INTO account_works (
+                account_id, work_id, purchased_at, first_seen_at, last_seen_at,
+                last_seen_sync_run_id, is_current
+             )
+             VALUES (?1, ?2, ?3, ?4, ?4, ?5, 1)
+             ON CONFLICT(account_id, work_id) DO UPDATE SET
+                purchased_at = excluded.purchased_at,
+                last_seen_at = excluded.last_seen_at,
+                last_seen_sync_run_id = excluded.last_seen_sync_run_id,
+                is_current = 1",
+        )
+        .bind(account_id)
+        .bind(&account_work.work_id)
+        .bind(&account_work.purchased_at)
+        .bind(seen_at)
+        .bind(sync_run_id)
+        .execute(&mut **transaction)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn mark_account_works_not_seen_in_sync(
+        &mut self,
+        account_id: &str,
+        sync_run_id: &str,
+    ) -> Result<()> {
+        let transaction = self
+            .transaction
+            .as_mut()
+            .ok_or(StorageError::TransactionFinished)?;
+
+        sqlx::query(
+            "UPDATE account_works
+             SET is_current = 0
+             WHERE account_id = ?1
+               AND is_current = 1
+               AND (
+                    last_seen_sync_run_id IS NULL
+                    OR last_seen_sync_run_id <> ?2
+               )",
+        )
+        .bind(account_id)
+        .bind(sync_run_id)
+        .execute(&mut **transaction)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn record_account_sync_completed(
+        &mut self,
+        account_id: &str,
+        completed_at: &str,
+    ) -> Result<()> {
+        let transaction = self
+            .transaction
+            .as_mut()
+            .ok_or(StorageError::TransactionFinished)?;
+
+        let result = sqlx::query(
+            "UPDATE accounts
+             SET last_sync_at = ?2,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?1",
+        )
+        .bind(account_id)
+        .bind(completed_at)
+        .execute(&mut **transaction)
+        .await?;
+
+        ensure_changed(result, "account", account_id)
+    }
+}
+
+fn account_from_row(row: sqlx::sqlite::SqliteRow) -> Result<Account> {
+    Ok(Account {
+        id: row.try_get("id")?,
+        label: row.try_get("label")?,
+        login_name: row.try_get("login_name")?,
+        credential_ref: row.try_get("credential_ref")?,
+        enabled: i64_to_bool(row.try_get("enabled")?, "accounts.enabled")?,
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+        last_login_at: row.try_get("last_login_at")?,
+        last_sync_at: row.try_get("last_sync_at")?,
+    })
+}
+
+fn sync_run_from_row(row: sqlx::sqlite::SqliteRow) -> Result<SyncRun> {
+    let status: String = row.try_get("status")?;
+
+    Ok(SyncRun {
+        id: row.try_get("id")?,
+        account_id: row.try_get("account_id")?,
+        status: SyncRunStatus::from_str(&status)?,
+        started_at: row.try_get("started_at")?,
+        completed_at: row.try_get("completed_at")?,
+        error_code: row.try_get("error_code")?,
+        error_message: row.try_get("error_message")?,
+    })
+}
+
+fn push_product_filters(builder: &mut QueryBuilder<Sqlite>, query: &ProductListQuery) {
+    if let Some(account_id) = query.account_id.as_deref() {
+        builder.push(" AND aw.account_id = ");
+        builder.push_bind(account_id.to_owned());
+    }
+
+    if let Some(search) = query
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let pattern = format!("%{}%", escape_like(search));
+        builder.push(
+            " AND (
+                w.work_id LIKE ",
+        );
+        builder.push_bind(pattern.clone());
+        builder.push(
+            " ESCAPE '\\'
+                OR w.title LIKE ",
+        );
+        builder.push_bind(pattern.clone());
+        builder.push(
+            " ESCAPE '\\'
+                OR w.maker_name LIKE ",
+        );
+        builder.push_bind(pattern);
+        builder.push(" ESCAPE '\\')");
+    }
+}
+
+fn push_product_sort(builder: &mut QueryBuilder<Sqlite>, sort: ProductSort) {
+    match sort {
+        ProductSort::TitleAsc => {
+            builder.push("sort_title ASC, w.work_id ASC");
+        }
+        ProductSort::LatestPurchaseDesc => {
+            builder.push("latest_purchased_at DESC, sort_title ASC, w.work_id ASC");
+        }
+        ProductSort::PublishedAtDesc => {
+            builder.push("sort_published_at DESC, sort_title ASC, w.work_id ASC");
+        }
+    }
+}
+
+fn push_outer_product_sort(builder: &mut QueryBuilder<Sqlite>, sort: ProductSort) {
+    match sort {
+        ProductSort::TitleAsc => {
+            builder.push("vw.sort_title ASC, w.work_id ASC");
+        }
+        ProductSort::LatestPurchaseDesc => {
+            builder.push("vw.latest_purchased_at DESC, vw.sort_title ASC, w.work_id ASC");
+        }
+        ProductSort::PublishedAtDesc => {
+            builder.push("vw.sort_published_at DESC, vw.sort_title ASC, w.work_id ASC");
+        }
+    }
+}
+
+fn escape_like(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+
+    for character in value.chars() {
+        match character {
+            '\\' | '%' | '_' => {
+                escaped.push('\\');
+                escaped.push(character);
+            }
+            _ => escaped.push(character),
+        }
+    }
+
+    escaped
+}
+
+fn bool_to_i64(value: bool) -> i64 {
+    if value {
+        1
+    } else {
+        0
+    }
+}
+
+fn i64_to_bool(value: i64, field: &'static str) -> Result<bool> {
+    match value {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(StorageError::InvalidStoredValue {
+            field,
+            value: value.to_string(),
+        }),
+    }
+}
+
+fn ensure_changed(result: SqliteQueryResult, entity: &'static str, id: &str) -> Result<()> {
+    if result.rows_affected() == 0 {
+        Err(StorageError::NotFound {
+            entity,
+            id: id.to_owned(),
+        })
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn migrated_storage() -> Result<Storage> {
+        let storage = Storage::open_in_memory().await?;
+        storage.run_migrations().await?;
+        Ok(storage)
+    }
+
+    fn account(id: &str, label: &str) -> AccountUpsert {
+        AccountUpsert {
+            id: id.to_owned(),
+            label: label.to_owned(),
+            login_name: Some(format!("{id}@example.test")),
+            credential_ref: Some(format!("account:{id}:password")),
+            enabled: true,
+        }
+    }
+
+    fn work(work_id: &str, title: &str, maker_name: &str, published_at: &str) -> CachedWork {
+        CachedWork {
+            work_id: work_id.to_owned(),
+            title: title.to_owned(),
+            title_json: format!(r#"{{"ja_JP":"{title}"}}"#),
+            maker_id: Some(format!("maker-{maker_name}")),
+            maker_name: Some(maker_name.to_owned()),
+            maker_json: Some(format!(r#"{{"ja_JP":"{maker_name}"}}"#)),
+            work_type: Some("SOU".to_owned()),
+            age_category: Some("general".to_owned()),
+            thumbnail_url: Some(format!("https://img.example.test/{work_id}.jpg")),
+            registered_at: Some(published_at.to_owned()),
+            published_at: Some(published_at.to_owned()),
+            updated_at: Some(published_at.to_owned()),
+            raw_json: format!(r#"{{"workno":"{work_id}"}}"#),
+            last_detail_sync_at: "2026-05-09T00:00:00.000Z".to_owned(),
+        }
+    }
+
+    fn account_work(work_id: &str, purchased_at: &str) -> AccountWork {
+        AccountWork {
+            work_id: work_id.to_owned(),
+            purchased_at: Some(purchased_at.to_owned()),
+        }
+    }
+
+    fn sync_commit(
+        account_id: &str,
+        sync_run_id: &str,
+        works: Vec<CachedWork>,
+        account_works: Vec<AccountWork>,
+    ) -> AccountSyncCommit {
+        AccountSyncCommit {
+            sync_run_id: sync_run_id.to_owned(),
+            account_id: account_id.to_owned(),
+            started_at: "2026-05-09T00:00:00.000Z".to_owned(),
+            completed_at: "2026-05-09T00:01:00.000Z".to_owned(),
+            works,
+            account_works,
+        }
+    }
+
     #[tokio::test]
     async fn runs_embedded_migrations_once() -> Result<()> {
         let storage = Storage::open_in_memory().await?;
@@ -184,15 +1048,14 @@ mod tests {
             .fetch_one(&storage.pool)
             .await?;
 
-        assert_eq!(migration_count, 2);
+        assert_eq!(migration_count, 3);
 
         Ok(())
     }
 
     #[tokio::test]
     async fn commits_write_transaction() -> Result<()> {
-        let storage = Storage::open_in_memory().await?;
-        storage.run_migrations().await?;
+        let storage = migrated_storage().await?;
 
         let mut transaction = storage.begin_write().await?;
         transaction
@@ -214,8 +1077,7 @@ mod tests {
 
     #[tokio::test]
     async fn rolls_back_write_transaction() -> Result<()> {
-        let storage = Storage::open_in_memory().await?;
-        storage.run_migrations().await?;
+        let storage = migrated_storage().await?;
 
         let mut transaction = storage.begin_write().await?;
         transaction
@@ -255,8 +1117,7 @@ mod tests {
 
     #[tokio::test]
     async fn reads_empty_app_settings_by_default() -> Result<()> {
-        let storage = Storage::open_in_memory().await?;
-        storage.run_migrations().await?;
+        let storage = migrated_storage().await?;
 
         assert_eq!(storage.app_settings().await?, AppSettings::default());
 
@@ -265,8 +1126,7 @@ mod tests {
 
     #[tokio::test]
     async fn saves_app_settings_in_one_transaction() -> Result<()> {
-        let storage = Storage::open_in_memory().await?;
-        storage.run_migrations().await?;
+        let storage = migrated_storage().await?;
         let settings = AppSettings {
             library_root: Some("/library".to_owned()),
             download_root: Some("/downloads".to_owned()),
@@ -281,8 +1141,7 @@ mod tests {
 
     #[tokio::test]
     async fn clears_missing_app_settings() -> Result<()> {
-        let storage = Storage::open_in_memory().await?;
-        storage.run_migrations().await?;
+        let storage = migrated_storage().await?;
 
         storage
             .save_app_settings(&AppSettings {
@@ -304,6 +1163,406 @@ mod tests {
                 download_root: None,
             }
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn creates_updates_and_disables_accounts() -> Result<()> {
+        let storage = migrated_storage().await?;
+
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+        storage
+            .record_account_login("account-a", "2026-05-09T00:02:00.000Z")
+            .await?;
+        storage
+            .save_account(&AccountUpsert {
+                id: "account-a".to_owned(),
+                label: "Renamed".to_owned(),
+                login_name: Some("renamed@example.test".to_owned()),
+                credential_ref: None,
+                enabled: true,
+            })
+            .await?;
+        storage.set_account_enabled("account-a", false).await?;
+
+        let accounts = storage.accounts().await?;
+
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].id, "account-a");
+        assert_eq!(accounts[0].label, "Renamed");
+        assert_eq!(
+            accounts[0].login_name,
+            Some("renamed@example.test".to_owned())
+        );
+        assert_eq!(accounts[0].credential_ref, None);
+        assert!(!accounts[0].enabled);
+        assert_eq!(
+            accounts[0].last_login_at,
+            Some("2026-05-09T00:02:00.000Z".to_owned())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn missing_account_updates_return_not_found() -> Result<()> {
+        let storage = migrated_storage().await?;
+
+        assert!(matches!(
+            storage.set_account_enabled("missing", true).await,
+            Err(StorageError::NotFound {
+                entity: "account",
+                id
+            }) if id == "missing"
+        ));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unified_product_list_collapses_duplicate_ownership() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+        storage
+            .save_account(&account("account-b", "Account B"))
+            .await?;
+
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-1",
+                vec![
+                    work(
+                        "RJ000001",
+                        "Shared Work",
+                        "Maker One",
+                        "2026-01-01T00:00:00Z",
+                    ),
+                    work(
+                        "RJ000002",
+                        "Account A Work",
+                        "Maker Two",
+                        "2026-01-02T00:00:00Z",
+                    ),
+                ],
+                vec![
+                    account_work("RJ000001", "2026-02-01T00:00:00Z"),
+                    account_work("RJ000002", "2026-02-02T00:00:00Z"),
+                ],
+            ))
+            .await?;
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-b",
+                "sync-b-1",
+                vec![work(
+                    "RJ000001",
+                    "Shared Work",
+                    "Maker One",
+                    "2026-01-01T00:00:00Z",
+                )],
+                vec![account_work("RJ000001", "2026-03-01T00:00:00Z")],
+            ))
+            .await?;
+
+        let page = storage
+            .list_products(&ProductListQuery {
+                sort: ProductSort::TitleAsc,
+                ..ProductListQuery::default()
+            })
+            .await?;
+
+        assert_eq!(page.total_count, 2);
+        assert_eq!(page.products.len(), 2);
+        assert_eq!(page.products[1].work_id, "RJ000001");
+        assert_eq!(page.products[1].owners.len(), 2);
+        assert_eq!(page.products[1].owners[0].account_id, "account-a");
+        assert_eq!(page.products[1].owners[1].account_id, "account-b");
+        assert_eq!(
+            page.products[1].earliest_purchased_at,
+            Some("2026-02-01T00:00:00Z".to_owned())
+        );
+        assert_eq!(
+            page.products[1].latest_purchased_at,
+            Some("2026-03-01T00:00:00Z".to_owned())
+        );
+
+        let filtered_page = storage
+            .list_products(&ProductListQuery {
+                account_id: Some("account-b".to_owned()),
+                ..ProductListQuery::default()
+            })
+            .await?;
+
+        assert_eq!(filtered_page.total_count, 1);
+        assert_eq!(filtered_page.products[0].work_id, "RJ000001");
+        assert_eq!(filtered_page.products[0].owners.len(), 2);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn disabled_accounts_are_excluded_from_default_product_list() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+        storage
+            .save_account(&account("account-b", "Account B"))
+            .await?;
+
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-1",
+                vec![
+                    work(
+                        "RJ000001",
+                        "Shared Work",
+                        "Maker One",
+                        "2026-01-01T00:00:00Z",
+                    ),
+                    work("RJ000002", "Only A", "Maker Two", "2026-01-02T00:00:00Z"),
+                ],
+                vec![
+                    account_work("RJ000001", "2026-02-01T00:00:00Z"),
+                    account_work("RJ000002", "2026-02-02T00:00:00Z"),
+                ],
+            ))
+            .await?;
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-b",
+                "sync-b-1",
+                vec![work(
+                    "RJ000001",
+                    "Shared Work",
+                    "Maker One",
+                    "2026-01-01T00:00:00Z",
+                )],
+                vec![account_work("RJ000001", "2026-03-01T00:00:00Z")],
+            ))
+            .await?;
+
+        storage.set_account_enabled("account-a", false).await?;
+
+        let page = storage.list_products(&ProductListQuery::default()).await?;
+
+        assert_eq!(page.total_count, 1);
+        assert_eq!(page.products[0].work_id, "RJ000001");
+        assert_eq!(page.products[0].owners.len(), 1);
+        assert_eq!(page.products[0].owners[0].account_id, "account-b");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn complete_sync_marks_missing_ownership_stale_without_deleting_history() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-1",
+                vec![
+                    work("RJ000001", "Old Work", "Maker One", "2026-01-01T00:00:00Z"),
+                    work("RJ000002", "Kept Work", "Maker Two", "2026-01-02T00:00:00Z"),
+                ],
+                vec![
+                    account_work("RJ000001", "2026-02-01T00:00:00Z"),
+                    account_work("RJ000002", "2026-02-02T00:00:00Z"),
+                ],
+            ))
+            .await?;
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-2",
+                vec![work(
+                    "RJ000002",
+                    "Kept Work",
+                    "Maker Two",
+                    "2026-01-02T00:00:00Z",
+                )],
+                vec![account_work("RJ000002", "2026-02-02T00:00:00Z")],
+            ))
+            .await?;
+
+        let page = storage.list_products(&ProductListQuery::default()).await?;
+        let stale_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM account_works WHERE is_current = 0")
+                .fetch_one(&storage.pool)
+                .await?;
+        let sync_runs = storage.sync_runs_for_account("account-a").await?;
+        let accounts = storage.accounts().await?;
+
+        assert_eq!(page.total_count, 1);
+        assert_eq!(page.products[0].work_id, "RJ000002");
+        assert_eq!(stale_count, 1);
+        assert_eq!(sync_runs.len(), 2);
+        assert_eq!(sync_runs[0].status, SyncRunStatus::Completed);
+        assert_eq!(
+            accounts[0].last_sync_at,
+            Some("2026-05-09T00:01:00.000Z".to_owned())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sync_failure_is_recorded_without_marking_existing_cache_stale() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-1",
+                vec![work(
+                    "RJ000001",
+                    "Existing Work",
+                    "Maker One",
+                    "2026-01-01T00:00:00Z",
+                )],
+                vec![account_work("RJ000001", "2026-02-01T00:00:00Z")],
+            ))
+            .await?;
+        storage
+            .record_sync_failure(&SyncFailure {
+                sync_run_id: "sync-a-failed".to_owned(),
+                account_id: "account-a".to_owned(),
+                started_at: "2026-05-09T00:02:00.000Z".to_owned(),
+                completed_at: "2026-05-09T00:03:00.000Z".to_owned(),
+                error_code: Some("network".to_owned()),
+                error_message: Some("network unavailable".to_owned()),
+            })
+            .await?;
+
+        let page = storage.list_products(&ProductListQuery::default()).await?;
+        let sync_runs = storage.sync_runs_for_account("account-a").await?;
+
+        assert_eq!(page.total_count, 1);
+        assert_eq!(sync_runs.len(), 2);
+        assert_eq!(sync_runs[0].status, SyncRunStatus::Failed);
+        assert_eq!(sync_runs[0].error_code, Some("network".to_owned()));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn failed_sync_commit_rolls_back_partial_writes() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+
+        let result = storage
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-1",
+                Vec::new(),
+                vec![account_work("RJ000001", "2026-02-01T00:00:00Z")],
+            ))
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            storage.sync_runs_for_account("account-a").await?,
+            Vec::new()
+        );
+        assert_eq!(
+            storage
+                .list_products(&ProductListQuery::default())
+                .await?
+                .total_count,
+            0
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn explicit_write_transaction_can_roll_back_library_changes() -> Result<()> {
+        let storage = migrated_storage().await?;
+        let mut transaction = storage.begin_write().await?;
+
+        transaction
+            .upsert_account(&account("account-a", "Account A"))
+            .await?;
+        transaction
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-1",
+                vec![work(
+                    "RJ000001",
+                    "Rolled Back Work",
+                    "Maker One",
+                    "2026-01-01T00:00:00Z",
+                )],
+                vec![account_work("RJ000001", "2026-02-01T00:00:00Z")],
+            ))
+            .await?;
+        transaction.rollback().await?;
+
+        assert_eq!(storage.accounts().await?, Vec::new());
+        assert_eq!(
+            storage
+                .list_products(&ProductListQuery::default())
+                .await?
+                .total_count,
+            0
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn product_list_search_and_sort_use_cached_columns() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-1",
+                vec![
+                    work("RJ000001", "Alpha", "Circle One", "2026-01-01T00:00:00Z"),
+                    work("RJ000002", "Beta", "Special Maker", "2026-03-01T00:00:00Z"),
+                ],
+                vec![
+                    account_work("RJ000001", "2026-02-01T00:00:00Z"),
+                    account_work("RJ000002", "2026-02-02T00:00:00Z"),
+                ],
+            ))
+            .await?;
+
+        let search_page = storage
+            .list_products(&ProductListQuery {
+                search: Some("Special".to_owned()),
+                ..ProductListQuery::default()
+            })
+            .await?;
+        let sorted_page = storage
+            .list_products(&ProductListQuery {
+                sort: ProductSort::PublishedAtDesc,
+                ..ProductListQuery::default()
+            })
+            .await?;
+
+        assert_eq!(search_page.total_count, 1);
+        assert_eq!(search_page.products[0].work_id, "RJ000002");
+        assert_eq!(sorted_page.products[0].work_id, "RJ000002");
 
         Ok(())
     }
