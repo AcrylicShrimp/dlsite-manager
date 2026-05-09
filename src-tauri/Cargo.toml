@@ -20,9 +20,11 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 dm-api = { path = "../crates/dm-api" }
 dm-credentials = { path = "../crates/dm-credentials" }
+dm-jobs = { path = "../crates/dm-jobs" }
 dm-library = { path = "../crates/dm-library" }
 dm-storage = { path = "../crates/dm-storage" }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tokio = { version = "1", features = ["sync"] }

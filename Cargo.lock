@@ -988,6 +988,7 @@ version = "0.1.0"
 dependencies = [
  "dm-api",
  "dm-credentials",
+ "dm-jobs",
  "dm-library",
  "dm-storage",
  "serde",
@@ -995,6 +996,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
+ "tokio",
 ]
 
 [[package]]

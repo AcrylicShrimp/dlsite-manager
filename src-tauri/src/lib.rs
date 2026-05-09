@@ -1,4 +1,5 @@
 use dm_credentials::{CredentialStore, InMemoryCredentialStore, KeyringCredentialStore};
+use dm_jobs::{JobContext, JobFailure, JobId, JobLogPage, JobManager, JobMetadata, JobProgress};
 use dm_library::{
     AccountSyncRequest, DlsiteSyncSource, Library, SaveAccountRequest, SyncProgress,
     SyncProgressSink,
@@ -8,12 +9,15 @@ use dm_storage::{
     ProductSort, Storage,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::sync::broadcast::error::RecvError;
 
 struct AppState {
     storage: Storage,
     library: Library,
+    jobs: JobManager,
 }
 
 #[tauri::command]
@@ -91,35 +95,114 @@ async fn list_products(
 }
 
 #[tauri::command]
-async fn sync_account(
-    app: AppHandle,
+async fn start_account_sync(
     state: State<'_, AppState>,
-    request: SyncAccountCommandRequest,
-) -> Result<AccountSyncReportDto, String> {
+    request: StartAccountSyncRequest,
+) -> Result<StartJobResponse, String> {
     let account_id = normalize_required_id(request.account_id)?;
-    let progress_sink = TauriSyncProgressSink {
-        app,
-        account_id: account_id.clone(),
-    };
-    let client =
-        dm_api::DlsiteClient::new(dm_api::DlsiteClientConfig::default()).map_err(command_error)?;
-    let source = DlsiteSyncSource::new(client);
     let password = normalize_secret(request.password)?;
+    let library = state.library.clone();
+    let mut metadata = JobMetadata::new();
+
+    metadata.insert("accountId".to_owned(), json!(account_id));
+
+    let job_id = state.jobs.spawn(
+        "accountSync",
+        format!("Sync {account_id}"),
+        metadata,
+        move |context| async move {
+            context.info("Preparing account sync");
+            let client = dm_api::DlsiteClient::new(dm_api::DlsiteClientConfig::default())
+                .map_err(|error| JobFailure::with_code("api_client", error.to_string()))?;
+            let source = DlsiteSyncSource::new(client);
+            let progress_sink = JobSyncProgressSink {
+                context: context.clone(),
+            };
+            let report = library
+                .sync_account_with_source(
+                    AccountSyncRequest {
+                        account_id: &account_id,
+                        password: password.as_deref(),
+                        cancellation_token: Some(context.cancellation_token()),
+                        progress_sink: Some(&progress_sink),
+                    },
+                    &source,
+                )
+                .await
+                .map_err(account_sync_failure)?;
+            let mut output = JobMetadata::new();
+
+            output.insert("accountId".to_owned(), json!(report.account_id));
+            output.insert("syncRunId".to_owned(), json!(report.sync_run_id));
+            output.insert("purchasedCount".to_owned(), json!(report.purchased_count));
+            output.insert(
+                "cachedWorkCount".to_owned(),
+                json!(report.cached_work_count),
+            );
+            output.insert("pageLimit".to_owned(), json!(report.page_limit));
+            output.insert("concurrency".to_owned(), json!(report.concurrency));
+            context.info(format!("Synced {} works", report.cached_work_count));
+
+            Ok(output)
+        },
+    );
+
+    Ok(StartJobResponse {
+        job_id: job_id.to_string(),
+    })
+}
+
+#[tauri::command]
+async fn list_jobs(state: State<'_, AppState>) -> Result<Vec<dm_jobs::JobSnapshot>, String> {
+    Ok(state.jobs.list_jobs())
+}
+
+#[tauri::command]
+async fn get_job(
+    state: State<'_, AppState>,
+    request: JobIdRequest,
+) -> Result<dm_jobs::JobSnapshot, String> {
+    let job_id = normalize_required_id(request.job_id)?;
 
     state
-        .library
-        .sync_account_with_source(
-            AccountSyncRequest {
-                account_id: &account_id,
-                password: password.as_deref(),
-                cancellation_token: None,
-                progress_sink: Some(&progress_sink),
-            },
-            &source,
-        )
-        .await
-        .map(AccountSyncReportDto::from)
+        .jobs
+        .get_job(&JobId::from(job_id))
+        .ok_or_else(|| "job not found".to_owned())
+}
+
+#[tauri::command]
+async fn cancel_job(
+    state: State<'_, AppState>,
+    request: JobIdRequest,
+) -> Result<dm_jobs::CancelJobResult, String> {
+    let job_id = normalize_required_id(request.job_id)?;
+
+    state
+        .jobs
+        .cancel_job(&JobId::from(job_id))
         .map_err(command_error)
+}
+
+#[tauri::command]
+async fn get_job_logs(
+    state: State<'_, AppState>,
+    request: JobLogsRequest,
+) -> Result<JobLogPage, String> {
+    let job_id = normalize_required_id(request.job_id)?;
+
+    state
+        .jobs
+        .job_logs(&JobId::from(job_id), request.after_sequence, request.limit)
+        .map_err(command_error)
+}
+
+#[tauri::command]
+async fn clear_finished_jobs(
+    state: State<'_, AppState>,
+) -> Result<ClearFinishedJobsResponse, String> {
+    Ok(ClearFinishedJobsResponse {
+        removed_count: state.jobs.clear_finished(),
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -325,105 +408,87 @@ impl From<ProductOwner> for ProductOwnerDto {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SyncAccountCommandRequest {
+struct StartAccountSyncRequest {
     account_id: String,
     password: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct AccountSyncReportDto {
-    account_id: String,
-    sync_run_id: String,
-    purchased_count: usize,
-    cached_work_count: usize,
-    page_limit: Option<usize>,
-    concurrency: Option<usize>,
+struct StartJobResponse {
+    job_id: String,
 }
 
-impl From<dm_library::AccountSyncReport> for AccountSyncReportDto {
-    fn from(report: dm_library::AccountSyncReport) -> Self {
-        Self {
-            account_id: report.account_id,
-            sync_run_id: report.sync_run_id,
-            purchased_count: report.purchased_count,
-            cached_work_count: report.cached_work_count,
-            page_limit: report.page_limit,
-            concurrency: report.concurrency,
-        }
-    }
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JobIdRequest {
+    job_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JobLogsRequest {
+    job_id: String,
+    after_sequence: Option<u64>,
+    limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SyncProgressEvent {
-    account_id: String,
-    phase: &'static str,
-    work_count: Option<usize>,
-    sync_run_id: Option<String>,
-    cached_work_count: Option<usize>,
+struct ClearFinishedJobsResponse {
+    removed_count: usize,
 }
 
-struct TauriSyncProgressSink {
-    app: AppHandle,
-    account_id: String,
+struct JobSyncProgressSink {
+    context: JobContext,
 }
 
-impl SyncProgressSink for TauriSyncProgressSink {
+impl SyncProgressSink for JobSyncProgressSink {
     fn emit(&self, progress: SyncProgress) {
-        let event = SyncProgressEvent::from_progress(self.account_id.clone(), progress);
-        let _ = self.app.emit("library-sync-progress", event);
-    }
-}
-
-impl SyncProgressEvent {
-    fn from_progress(account_id: String, progress: SyncProgress) -> Self {
         match progress {
-            SyncProgress::LoggingIn => Self {
-                account_id,
-                phase: "loggingIn",
-                work_count: None,
-                sync_run_id: None,
-                cached_work_count: None,
-            },
-            SyncProgress::LoadingCount => Self {
-                account_id,
-                phase: "loadingCount",
-                work_count: None,
-                sync_run_id: None,
-                cached_work_count: None,
-            },
-            SyncProgress::LoadingPurchases => Self {
-                account_id,
-                phase: "loadingPurchases",
-                work_count: None,
-                sync_run_id: None,
-                cached_work_count: None,
-            },
-            SyncProgress::LoadingWorks { work_count } => Self {
-                account_id,
-                phase: "loadingWorks",
-                work_count: Some(work_count),
-                sync_run_id: None,
-                cached_work_count: None,
-            },
-            SyncProgress::Committing { work_count } => Self {
-                account_id,
-                phase: "committing",
-                work_count: Some(work_count),
-                sync_run_id: None,
-                cached_work_count: None,
-            },
+            SyncProgress::LoggingIn => {
+                self.context.set_phase("loggingIn");
+                self.context.clear_progress();
+                self.context.info("Signing in");
+            }
+            SyncProgress::LoadingCount => {
+                self.context.set_phase("loadingCount");
+                self.context.clear_progress();
+                self.context.info("Checking library count");
+            }
+            SyncProgress::LoadingPurchases => {
+                self.context.set_phase("loadingPurchases");
+                self.context.clear_progress();
+                self.context.info("Loading purchases");
+            }
+            SyncProgress::LoadingWorks { work_count } => {
+                self.context.set_phase("loadingWorks");
+                self.context
+                    .set_progress(JobProgress::items(None, Some(work_count as u64)));
+                self.context
+                    .info(format!("Loading {work_count} work details"));
+            }
+            SyncProgress::Committing { work_count } => {
+                self.context.set_phase("committing");
+                self.context.set_progress(JobProgress::items(
+                    Some(work_count as u64),
+                    Some(work_count as u64),
+                ));
+                self.context.info("Saving product cache");
+            }
             SyncProgress::Completed {
                 sync_run_id,
                 cached_work_count,
-            } => Self {
-                account_id,
-                phase: "completed",
-                work_count: None,
-                sync_run_id: Some(sync_run_id),
-                cached_work_count: Some(cached_work_count),
-            },
+            } => {
+                self.context.set_phase("completed");
+                self.context.set_progress(JobProgress::items(
+                    Some(cached_work_count as u64),
+                    Some(cached_work_count as u64),
+                ));
+                self.context.info(format!(
+                    "Sync run {sync_run_id} cached {cached_work_count} works"
+                ));
+            }
         }
     }
 }
@@ -522,8 +587,51 @@ fn normalize_secret(value: Option<String>) -> Result<Option<String>, String> {
     Ok(Some(value))
 }
 
+fn account_sync_failure(error: dm_library::LibraryError) -> JobFailure {
+    if matches!(error, dm_library::LibraryError::Cancelled) {
+        return JobFailure::cancelled();
+    }
+
+    let code = match &error {
+        dm_library::LibraryError::Storage(_) => "storage",
+        dm_library::LibraryError::Credentials(_) => "credentials",
+        dm_library::LibraryError::Api(_) => "api",
+        dm_library::LibraryError::SyncSource(_) => "sync_source",
+        dm_library::LibraryError::AccountNotFound(_) => "account_not_found",
+        dm_library::LibraryError::AccountDisabled(_) => "account_disabled",
+        dm_library::LibraryError::MissingLoginName(_) => "missing_login_name",
+        dm_library::LibraryError::MissingPassword(_) => "missing_password",
+        dm_library::LibraryError::Cancelled => "cancelled",
+        dm_library::LibraryError::MissingWorkDetails(_) => "missing_work_details",
+        dm_library::LibraryError::Json(_) => "json",
+    };
+
+    JobFailure::with_code(code, error.to_string())
+}
+
 fn command_error(error: impl ToString) -> String {
     error.to_string()
+}
+
+fn forward_job_events(app: AppHandle, jobs: JobManager) {
+    let mut receiver = jobs.subscribe();
+
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match receiver.recv().await {
+                Ok(event) => {
+                    let _ = app.emit("dm-job-event", event);
+                }
+                Err(RecvError::Lagged(skipped)) => {
+                    eprintln!("job event forwarder skipped {skipped} lagged events");
+                }
+                Err(RecvError::Closed) => {
+                    eprintln!("job event forwarder stopped");
+                    break;
+                }
+            }
+        }
+    });
 }
 
 fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -543,8 +651,14 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let library = Library::new(storage.clone(), credentials);
+    let jobs = JobManager::default();
 
-    app.manage(AppState { storage, library });
+    forward_job_events(app.handle().clone(), jobs.clone());
+    app.manage(AppState {
+        storage,
+        library,
+        jobs,
+    });
 
     Ok(())
 }
@@ -561,7 +675,12 @@ pub fn run() {
             save_account,
             set_account_enabled,
             list_products,
-            sync_account,
+            start_account_sync,
+            list_jobs,
+            get_job,
+            cancel_job,
+            get_job_logs,
+            clear_finished_jobs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

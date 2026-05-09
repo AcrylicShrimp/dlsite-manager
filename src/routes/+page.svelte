@@ -45,21 +45,51 @@
     products: Product[];
   };
 
-  type SyncProgressEvent = {
-    accountId: string;
-    phase: string;
-    workCount: number | null;
-    syncRunId: string | null;
-    cachedWorkCount: number | null;
+  type JobStatus = "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
+
+  type JobProgress = {
+    current: number | null;
+    total: number | null;
+    unit: string | null;
   };
 
-  type SyncReport = {
-    accountId: string;
-    syncRunId: string;
-    purchasedCount: number;
-    cachedWorkCount: number;
-    pageLimit: number | null;
-    concurrency: number | null;
+  type JobFailure = {
+    code: string | null;
+    message: string;
+    details: Record<string, unknown>;
+  };
+
+  type JobSnapshot = {
+    id: string;
+    kind: string;
+    title: string;
+    status: JobStatus;
+    phase: string | null;
+    progress: JobProgress | null;
+    metadata: Record<string, unknown>;
+    output: Record<string, unknown> | null;
+    error: JobFailure | null;
+    cancellable: boolean;
+    createdAt: string;
+    startedAt: string | null;
+    finishedAt: string | null;
+  };
+
+  type JobEvent = {
+    sequence: number;
+    eventKind: string;
+    jobId: string;
+    kind: string;
+    status: JobStatus;
+    phase: string | null;
+    progress: JobProgress | null;
+    message: string | null;
+    log: { message: string } | null;
+    snapshot: JobSnapshot;
+  };
+
+  type StartJobResponse = {
+    jobId: string;
   };
 
   type View = "products" | "settings";
@@ -88,8 +118,9 @@
   let selectedAccountId = $state("");
   let productSort = $state("titleAsc");
 
-  let syncingAccountId = $state<string | null>(null);
-  let syncProgress = $state<Record<string, SyncProgressEvent>>({});
+  let jobs = $state<JobSnapshot[]>([]);
+  let jobsLoading = $state(true);
+  let jobMessages = $state<Record<string, string>>({});
   let status = $state("");
   let error = $state("");
 
@@ -99,11 +130,8 @@
     let unlisten: (() => void) | null = null;
     let disposed = false;
 
-    void listen<SyncProgressEvent>("library-sync-progress", (event) => {
-      syncProgress = {
-        ...syncProgress,
-        [event.payload.accountId]: event.payload,
-      };
+    void listen<JobEvent>("dm-job-event", (event) => {
+      void handleJobEvent(event.payload);
     }).then((cleanup) => {
       if (disposed) {
         cleanup();
@@ -119,7 +147,7 @@
   });
 
   async function loadInitial() {
-    await Promise.all([loadSettings(), loadAccounts(), loadProducts()]);
+    await Promise.all([loadSettings(), loadAccounts(), loadProducts(), loadJobs()]);
   }
 
   async function loadSettings() {
@@ -263,36 +291,66 @@
     }
   }
 
+  async function loadJobs() {
+    jobsLoading = true;
+    error = "";
+
+    try {
+      jobs = await invoke<JobSnapshot[]>("list_jobs");
+    } catch (err) {
+      error = errorMessage(err);
+    } finally {
+      jobsLoading = false;
+    }
+  }
+
+  async function handleJobEvent(event: JobEvent) {
+    jobs = upsertJob(jobs, event.snapshot);
+
+    if (event.message) {
+      jobMessages = {
+        ...jobMessages,
+        [event.jobId]: event.message,
+      };
+    }
+
+    if (event.kind === "accountSync" && isTerminalJob(event.snapshot)) {
+      await Promise.all([loadAccounts(), loadProducts()]);
+    }
+  }
+
   async function searchProducts(event: Event) {
     event.preventDefault();
     await loadProducts();
   }
 
   async function syncAccount(account: Account) {
-    syncingAccountId = account.id;
     error = "";
     status = "";
 
     try {
-      const report = await invoke<SyncReport>("sync_account", {
+      const response = await invoke<StartJobResponse>("start_account_sync", {
         request: {
           accountId: account.id,
           password: editingAccountId === account.id ? valueOrNull(accountPassword) : null,
         },
       });
-      status = `Synced ${report.cachedWorkCount} works`;
+      status = "Sync queued";
+      jobMessages = {
+        ...jobMessages,
+        [response.jobId]: "Sync queued",
+      };
       accountPassword = "";
-      await loadAccounts();
-      await loadProducts();
+      await loadJobs();
     } catch (err) {
       error = errorMessage(err);
-    } finally {
-      syncingAccountId = null;
     }
   }
 
   async function syncEnabledAccounts() {
-    const enabledAccounts = accounts.filter((account) => account.enabled);
+    const enabledAccounts = accounts.filter(
+      (account) => account.enabled && !activeAccountSyncJob(account.id),
+    );
 
     for (const account of enabledAccounts) {
       await syncAccount(account);
@@ -302,28 +360,56 @@
     }
   }
 
+  async function cancelAccountSync(account: Account) {
+    const job = activeAccountSyncJob(account.id);
+
+    if (!job) {
+      return;
+    }
+
+    error = "";
+    status = "";
+
+    try {
+      await invoke("cancel_job", {
+        request: {
+          jobId: job.id,
+        },
+      });
+      status = "Cancellation requested";
+      await loadJobs();
+    } catch (err) {
+      error = errorMessage(err);
+    }
+  }
+
+  async function clearFinishedJobs() {
+    error = "";
+    status = "";
+
+    try {
+      await invoke("clear_finished_jobs");
+      await loadJobs();
+    } catch (err) {
+      error = errorMessage(err);
+    }
+  }
+
   function phaseLabel(account: Account) {
-    if (syncingAccountId === account.id) {
-      const progress = syncProgress[account.id];
+    const activeJob = activeAccountSyncJob(account.id);
 
-      if (progress) {
-        switch (progress.phase) {
-          case "loggingIn":
-            return "Signing in";
-          case "loadingCount":
-            return "Checking library";
-          case "loadingPurchases":
-            return "Loading purchases";
-          case "loadingWorks":
-            return `Loading ${progress.workCount ?? 0} works`;
-          case "committing":
-            return "Saving cache";
-          case "completed":
-            return "Synced";
-        }
-      }
+    if (activeJob) {
+      return jobLabel(activeJob);
+    }
 
-      return "Syncing";
+    const latestJob = latestAccountSyncJob(account.id);
+
+    if (latestJob?.status === "failed") {
+      return "Sync failed";
+    }
+
+    if (latestJob?.status === "cancelled") {
+      return "Sync cancelled";
     }
 
     if (account.lastSyncAt) {
@@ -331,6 +417,110 @@
     }
 
     return "Not synced";
+  }
+
+  function upsertJob(currentJobs: JobSnapshot[], job: JobSnapshot) {
+    const index = currentJobs.findIndex((item) => item.id === job.id);
+
+    if (index === -1) {
+      return [...currentJobs, job];
+    }
+
+    const next = currentJobs.slice();
+    next[index] = job;
+    return next;
+  }
+
+  function accountSyncJobs(accountId: string) {
+    return jobs.filter((job) => job.kind === "accountSync" && jobAccountId(job) === accountId);
+  }
+
+  function activeAccountSyncJob(accountId: string) {
+    return [...accountSyncJobs(accountId)].reverse().find(isActiveJob) ?? null;
+  }
+
+  function latestAccountSyncJob(accountId: string) {
+    return [...accountSyncJobs(accountId)].reverse()[0] ?? null;
+  }
+
+  function visibleJobs() {
+    return [...jobs].reverse().slice(0, 6);
+  }
+
+  function hasSyncableEnabledAccount() {
+    return accounts.some((account) => account.enabled && !activeAccountSyncJob(account.id));
+  }
+
+  function isActiveJob(job: JobSnapshot) {
+    return job.status === "queued" || job.status === "running" || job.status === "cancelling";
+  }
+
+  function isTerminalJob(job: JobSnapshot) {
+    return job.status === "succeeded" || job.status === "failed" || job.status === "cancelled";
+  }
+
+  function jobAccountId(job: JobSnapshot) {
+    const accountId = job.metadata.accountId;
+    return typeof accountId === "string" ? accountId : null;
+  }
+
+  function jobAccountLabel(job: JobSnapshot) {
+    const accountId = jobAccountId(job);
+    const account = accounts.find((item) => item.id === accountId);
+    return account?.label ?? accountId ?? job.title;
+  }
+
+  function jobLabel(job: JobSnapshot) {
+    if (job.status === "queued") {
+      return "Queued";
+    }
+
+    if (job.status === "cancelling") {
+      return "Cancelling";
+    }
+
+    if (job.status === "failed") {
+      return "Failed";
+    }
+
+    if (job.status === "cancelled") {
+      return "Cancelled";
+    }
+
+    if (job.status === "succeeded") {
+      const cachedCount = jobOutputNumber(job, "cachedWorkCount");
+      return typeof cachedCount === "number" ? `Synced ${cachedCount} works` : "Synced";
+    }
+
+    switch (job.phase) {
+      case "loggingIn":
+        return "Signing in";
+      case "loadingCount":
+        return "Checking library";
+      case "loadingPurchases":
+        return "Loading purchases";
+      case "loadingWorks":
+        return `Loading ${job.progress?.total ?? 0} works`;
+      case "committing":
+        return "Saving cache";
+      case "completed":
+        return "Completing";
+      default:
+        return "Syncing";
+    }
+  }
+
+  function jobDetail(job: JobSnapshot) {
+    if (job.error?.message) {
+      return job.error.message;
+    }
+
+    return jobMessages[job.id] ?? shortDate(job.finishedAt ?? job.startedAt ?? job.createdAt);
+  }
+
+  function jobOutputNumber(job: JobSnapshot, key: string) {
+    const value = job.output?.[key];
+    return typeof value === "number" ? value : null;
   }
 
   function valueOrNull(value: string) {
@@ -388,14 +578,14 @@
             class="secondary"
             type="button"
             onclick={loadProducts}
-            disabled={productsLoading || Boolean(syncingAccountId)}
+            disabled={productsLoading}
           >
             Reload
           </button>
           <button
             type="button"
             onclick={syncEnabledAccounts}
-            disabled={accountsLoading || Boolean(syncingAccountId) || accounts.every((account) => !account.enabled)}
+            disabled={accountsLoading || jobsLoading || !hasSyncableEnabledAccount()}
           >
             Sync
           </button>
@@ -532,6 +722,7 @@
               <div class="empty-state compact">No accounts</div>
             {:else}
               {#each accounts as account (account.id)}
+                {@const activeSyncJob = activeAccountSyncJob(account.id)}
                 <article class="account-row" class:disabled={!account.enabled}>
                   <button class="account-name" type="button" onclick={() => editAccount(account)}>
                     <span>{account.label}</span>
@@ -542,21 +733,57 @@
                       class="secondary small"
                       type="button"
                       onclick={() => setAccountEnabled(account, !account.enabled)}
-                      disabled={Boolean(syncingAccountId)}
+                      disabled={Boolean(activeSyncJob)}
                     >
                       {account.enabled ? "Disable" : "Enable"}
                     </button>
-                    <button
-                      class="small"
-                      type="button"
-                      onclick={() => syncAccount(account)}
-                      disabled={!account.enabled || Boolean(syncingAccountId)}
-                    >
-                      Sync
-                    </button>
+                    {#if activeSyncJob}
+                      <button
+                        class="secondary small"
+                        type="button"
+                        onclick={() => cancelAccountSync(account)}
+                        disabled={!activeSyncJob.cancellable || activeSyncJob.status === "cancelling"}
+                      >
+                        Cancel
+                      </button>
+                    {:else}
+                      <button
+                        class="small"
+                        type="button"
+                        onclick={() => syncAccount(account)}
+                        disabled={!account.enabled}
+                      >
+                        Sync
+                      </button>
+                    {/if}
                   </div>
                 </article>
               {/each}
+            {/if}
+          </div>
+
+          <div class="activity-section">
+            <div class="panel-title compact-title">
+              <h2>Activity</h2>
+              <button class="secondary small" type="button" onclick={clearFinishedJobs}>Clear</button>
+            </div>
+
+            {#if jobsLoading}
+              <div class="empty-state compact">Loading</div>
+            {:else if visibleJobs().length === 0}
+              <div class="empty-state compact">No jobs</div>
+            {:else}
+              <div class="job-list">
+                {#each visibleJobs() as job (job.id)}
+                  <article class="job-row" class:failed={job.status === "failed"}>
+                    <div>
+                      <div class="job-title">{jobAccountLabel(job)}</div>
+                      <div class="job-detail">{jobDetail(job)}</div>
+                    </div>
+                    <span class:active={isActiveJob(job)}>{jobLabel(job)}</span>
+                  </article>
+                {/each}
+              </div>
             {/if}
           </div>
         </aside>
@@ -867,6 +1094,16 @@
     margin-top: 18px;
   }
 
+  .activity-section {
+    margin-top: 22px;
+    padding-top: 18px;
+    border-top: 1px solid #e2e8f0;
+  }
+
+  .compact-title {
+    margin-bottom: 10px;
+  }
+
   .account-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -901,6 +1138,57 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .job-list {
+    display: grid;
+    gap: 7px;
+  }
+
+  .job-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid #edf2f7;
+  }
+
+  .job-row:last-child {
+    border-bottom: 0;
+  }
+
+  .job-row.failed .job-title {
+    color: #b42318;
+  }
+
+  .job-title {
+    color: #111827;
+    font-size: 13px;
+    font-weight: 650;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .job-detail {
+    margin-top: 2px;
+    color: #667787;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .job-row > span {
+    color: #667787;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .job-row > span.active {
+    color: #275f46;
+    font-weight: 650;
   }
 
   label {
