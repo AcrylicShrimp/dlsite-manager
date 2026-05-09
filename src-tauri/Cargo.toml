@@ -18,6 +18,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+dm-api = { path = "../crates/dm-api" }
+dm-credentials = { path = "../crates/dm-credentials" }
+dm-library = { path = "../crates/dm-library" }
 dm-storage = { path = "../crates/dm-storage" }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"

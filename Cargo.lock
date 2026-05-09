@@ -986,6 +986,9 @@ dependencies = [
 name = "dlsite-manager"
 version = "0.1.0"
 dependencies = [
+ "dm-api",
+ "dm-credentials",
+ "dm-library",
  "dm-storage",
  "serde",
  "serde_json",

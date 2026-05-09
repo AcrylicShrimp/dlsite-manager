@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
 
   type AppSettings = {
@@ -7,36 +8,138 @@
     downloadRoot: string | null;
   };
 
+  type Account = {
+    id: string;
+    label: string;
+    loginName: string | null;
+    hasCredential: boolean;
+    enabled: boolean;
+    createdAt: string;
+    updatedAt: string;
+    lastLoginAt: string | null;
+    lastSyncAt: string | null;
+  };
+
+  type ProductOwner = {
+    accountId: string;
+    label: string;
+    purchasedAt: string | null;
+  };
+
+  type Product = {
+    workId: string;
+    title: string;
+    makerName: string | null;
+    workType: string | null;
+    ageCategory: string | null;
+    thumbnailUrl: string | null;
+    publishedAt: string | null;
+    updatedAt: string | null;
+    earliestPurchasedAt: string | null;
+    latestPurchasedAt: string | null;
+    owners: ProductOwner[];
+  };
+
+  type ProductListPage = {
+    totalCount: number;
+    products: Product[];
+  };
+
+  type SyncProgressEvent = {
+    accountId: string;
+    phase: string;
+    workCount: number | null;
+    syncRunId: string | null;
+    cachedWorkCount: number | null;
+  };
+
+  type SyncReport = {
+    accountId: string;
+    syncRunId: string;
+    purchasedCount: number;
+    cachedWorkCount: number;
+    pageLimit: number | null;
+    concurrency: number | null;
+  };
+
+  type View = "products" | "settings";
+
+  let activeView = $state<View>("products");
+
   let libraryRoot = $state("");
   let downloadRoot = $state("");
-  let loading = $state(true);
-  let saving = $state(false);
+  let settingsLoading = $state(true);
+  let settingsSaving = $state(false);
+
+  let accounts = $state<Account[]>([]);
+  let accountsLoading = $state(true);
+  let accountSaving = $state(false);
+  let editingAccountId = $state<string | null>(null);
+  let accountLabel = $state("");
+  let accountLoginName = $state("");
+  let accountPassword = $state("");
+  let accountRememberPassword = $state(true);
+  let accountEnabled = $state(true);
+
+  let products = $state<Product[]>([]);
+  let totalProducts = $state(0);
+  let productsLoading = $state(true);
+  let productSearch = $state("");
+  let selectedAccountId = $state("");
+  let productSort = $state("titleAsc");
+
+  let syncingAccountId = $state<string | null>(null);
+  let syncProgress = $state<Record<string, SyncProgressEvent>>({});
   let status = $state("");
   let error = $state("");
 
   onMount(() => {
-    void loadSettings();
+    void loadInitial();
+
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+
+    void listen<SyncProgressEvent>("library-sync-progress", (event) => {
+      syncProgress = {
+        ...syncProgress,
+        [event.payload.accountId]: event.payload,
+      };
+    }).then((cleanup) => {
+      if (disposed) {
+        cleanup();
+      } else {
+        unlisten = cleanup;
+      }
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   });
 
+  async function loadInitial() {
+    await Promise.all([loadSettings(), loadAccounts(), loadProducts()]);
+  }
+
   async function loadSettings() {
-    loading = true;
+    settingsLoading = true;
     error = "";
 
     try {
       const settings = await invoke<AppSettings>("get_settings");
       libraryRoot = settings.libraryRoot ?? "";
       downloadRoot = settings.downloadRoot ?? "";
-      status = "";
     } catch (err) {
       error = errorMessage(err);
     } finally {
-      loading = false;
+      settingsLoading = false;
     }
   }
 
   async function saveSettings(event: Event) {
     event.preventDefault();
-    saving = true;
+    settingsSaving = true;
     error = "";
     status = "";
 
@@ -49,17 +152,198 @@
       });
       libraryRoot = settings.libraryRoot ?? "";
       downloadRoot = settings.downloadRoot ?? "";
-      status = "Saved";
+      status = "Settings saved";
     } catch (err) {
       error = errorMessage(err);
     } finally {
-      saving = false;
+      settingsSaving = false;
     }
+  }
+
+  async function loadAccounts() {
+    accountsLoading = true;
+    error = "";
+
+    try {
+      accounts = await invoke<Account[]>("list_accounts");
+      if (selectedAccountId && !accounts.some((account) => account.id === selectedAccountId)) {
+        selectedAccountId = "";
+      }
+    } catch (err) {
+      error = errorMessage(err);
+    } finally {
+      accountsLoading = false;
+    }
+  }
+
+  async function saveAccount(event: Event) {
+    event.preventDefault();
+    accountSaving = true;
+    error = "";
+    status = "";
+
+    try {
+      const account = await invoke<Account>("save_account", {
+        request: {
+          id: editingAccountId,
+          label: accountLabel,
+          loginName: valueOrNull(accountLoginName),
+          password: valueOrNull(accountPassword),
+          rememberPassword: accountRememberPassword,
+          enabled: accountEnabled,
+        },
+      });
+      status = editingAccountId ? "Account updated" : "Account added";
+      editAccount(account);
+      accountPassword = "";
+      await loadAccounts();
+    } catch (err) {
+      error = errorMessage(err);
+    } finally {
+      accountSaving = false;
+    }
+  }
+
+  async function setAccountEnabled(account: Account, enabled: boolean) {
+    error = "";
+    status = "";
+
+    try {
+      await invoke("set_account_enabled", {
+        request: {
+          accountId: account.id,
+          enabled,
+        },
+      });
+      await loadAccounts();
+      await loadProducts();
+    } catch (err) {
+      error = errorMessage(err);
+    }
+  }
+
+  function editAccount(account: Account) {
+    editingAccountId = account.id;
+    accountLabel = account.label;
+    accountLoginName = account.loginName ?? "";
+    accountPassword = "";
+    accountRememberPassword = account.hasCredential;
+    accountEnabled = account.enabled;
+  }
+
+  function resetAccountForm() {
+    editingAccountId = null;
+    accountLabel = "";
+    accountLoginName = "";
+    accountPassword = "";
+    accountRememberPassword = true;
+    accountEnabled = true;
+  }
+
+  async function loadProducts() {
+    productsLoading = true;
+    error = "";
+
+    try {
+      const page = await invoke<ProductListPage>("list_products", {
+        request: {
+          search: valueOrNull(productSearch),
+          accountId: selectedAccountId || null,
+          sort: productSort,
+          limit: 100,
+          offset: 0,
+        },
+      });
+      products = page.products;
+      totalProducts = page.totalCount;
+    } catch (err) {
+      error = errorMessage(err);
+    } finally {
+      productsLoading = false;
+    }
+  }
+
+  async function searchProducts(event: Event) {
+    event.preventDefault();
+    await loadProducts();
+  }
+
+  async function syncAccount(account: Account) {
+    syncingAccountId = account.id;
+    error = "";
+    status = "";
+
+    try {
+      const report = await invoke<SyncReport>("sync_account", {
+        request: {
+          accountId: account.id,
+          password: editingAccountId === account.id ? valueOrNull(accountPassword) : null,
+        },
+      });
+      status = `Synced ${report.cachedWorkCount} works`;
+      accountPassword = "";
+      await loadAccounts();
+      await loadProducts();
+    } catch (err) {
+      error = errorMessage(err);
+    } finally {
+      syncingAccountId = null;
+    }
+  }
+
+  async function syncEnabledAccounts() {
+    const enabledAccounts = accounts.filter((account) => account.enabled);
+
+    for (const account of enabledAccounts) {
+      await syncAccount(account);
+      if (error) {
+        break;
+      }
+    }
+  }
+
+  function phaseLabel(account: Account) {
+    if (syncingAccountId === account.id) {
+      const progress = syncProgress[account.id];
+
+      if (progress) {
+        switch (progress.phase) {
+          case "loggingIn":
+            return "Signing in";
+          case "loadingCount":
+            return "Checking library";
+          case "loadingPurchases":
+            return "Loading purchases";
+          case "loadingWorks":
+            return `Loading ${progress.workCount ?? 0} works`;
+          case "committing":
+            return "Saving cache";
+          case "completed":
+            return "Synced";
+        }
+      }
+
+      return "Syncing";
+    }
+
+    if (account.lastSyncAt) {
+      return shortDate(account.lastSyncAt);
+    }
+
+    return "Not synced";
   }
 
   function valueOrNull(value: string) {
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
+  }
+
+  function shortDate(value: string | null) {
+    if (!value) {
+      return "";
+    }
+
+    return value.replace("T", " ").replace(/\.\d+Z$/, "Z");
   }
 
   function errorMessage(err: unknown) {
@@ -75,49 +359,240 @@
   <aside class="sidebar" aria-label="Primary">
     <div class="brand">dlsite-manager</div>
     <nav>
-      <a class="nav-item active" href="/">Settings</a>
+      <button
+        class:active={activeView === "products"}
+        type="button"
+        onclick={() => (activeView = "products")}
+      >
+        Products
+      </button>
+      <button
+        class:active={activeView === "settings"}
+        type="button"
+        onclick={() => (activeView = "settings")}
+      >
+        Settings
+      </button>
     </nav>
   </aside>
 
   <section class="workspace">
     <header class="workspace-header">
       <div>
-        <p class="eyebrow">Application</p>
-        <h1>Settings</h1>
+        <p class="eyebrow">{activeView === "products" ? "Library" : "Application"}</p>
+        <h1>{activeView === "products" ? "Products" : "Settings"}</h1>
       </div>
-      <button class="secondary" type="button" onclick={loadSettings} disabled={loading || saving}>
-        Reload
-      </button>
+      <div class="header-actions">
+        {#if activeView === "products"}
+          <button
+            class="secondary"
+            type="button"
+            onclick={loadProducts}
+            disabled={productsLoading || Boolean(syncingAccountId)}
+          >
+            Reload
+          </button>
+          <button
+            type="button"
+            onclick={syncEnabledAccounts}
+            disabled={accountsLoading || Boolean(syncingAccountId) || accounts.every((account) => !account.enabled)}
+          >
+            Sync
+          </button>
+        {:else}
+          <button
+            class="secondary"
+            type="button"
+            onclick={loadSettings}
+            disabled={settingsLoading || settingsSaving}
+          >
+            Reload
+          </button>
+        {/if}
+      </div>
     </header>
 
-    <form class="settings-panel" onsubmit={saveSettings}>
-      <label>
-        <span>Library root</span>
-        <input
-          type="text"
-          autocomplete="off"
-          spellcheck="false"
-          bind:value={libraryRoot}
-          disabled={loading || saving}
-        />
-      </label>
+    {#if error || status}
+      <p class:error={Boolean(error)} class="status-line" aria-live="polite">{error || status}</p>
+    {/if}
 
-      <label>
-        <span>Download root</span>
-        <input
-          type="text"
-          autocomplete="off"
-          spellcheck="false"
-          bind:value={downloadRoot}
-          disabled={loading || saving}
-        />
-      </label>
+    {#if activeView === "products"}
+      <div class="product-layout">
+        <section class="product-area" aria-label="Products">
+          <form class="toolbar" onsubmit={searchProducts}>
+            <input
+              type="search"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="Search title, maker, work ID"
+              bind:value={productSearch}
+            />
+            <select bind:value={selectedAccountId} onchange={loadProducts}>
+              <option value="">All accounts</option>
+              {#each accounts as account (account.id)}
+                <option value={account.id}>{account.label}</option>
+              {/each}
+            </select>
+            <select bind:value={productSort} onchange={loadProducts}>
+              <option value="titleAsc">Title</option>
+              <option value="latestPurchaseDesc">Latest purchase</option>
+              <option value="publishedAtDesc">Published</option>
+            </select>
+            <button type="submit" disabled={productsLoading}>Search</button>
+          </form>
 
-      <div class="actions">
-        <p class:error={Boolean(error)} aria-live="polite">{error || status}</p>
-        <button type="submit" disabled={loading || saving}>{saving ? "Saving" : "Save"}</button>
+          <div class="list-header">
+            <span>{totalProducts} products</span>
+          </div>
+
+          {#if productsLoading}
+            <div class="empty-state">Loading</div>
+          {:else if products.length === 0}
+            <div class="empty-state">No products</div>
+          {:else}
+            <div class="product-table" aria-label="Cached products">
+              {#each products as product (product.workId)}
+                <article class="product-row">
+                  <div class="thumb" aria-hidden="true">
+                    {#if product.thumbnailUrl}
+                      <img src={product.thumbnailUrl} alt="" loading="lazy" />
+                    {/if}
+                  </div>
+                  <div class="product-main">
+                    <div class="product-title">{product.title}</div>
+                    <div class="product-meta">
+                      <span>{product.workId}</span>
+                      {#if product.makerName}
+                        <span>{product.makerName}</span>
+                      {/if}
+                      {#if product.workType}
+                        <span>{product.workType}</span>
+                      {/if}
+                    </div>
+                  </div>
+                  <div class="owner-list" aria-label="Owners">
+                    {#each product.owners as owner (owner.accountId)}
+                      <span>{owner.label}</span>
+                    {/each}
+                  </div>
+                  <div class="date-cell">{shortDate(product.latestPurchasedAt)}</div>
+                </article>
+              {/each}
+            </div>
+          {/if}
+        </section>
+
+        <aside class="accounts-panel" aria-label="Accounts">
+          <div class="panel-title">
+            <h2>Accounts</h2>
+            <button class="secondary small" type="button" onclick={resetAccountForm}>New</button>
+          </div>
+
+          <form class="account-form" onsubmit={saveAccount}>
+            <label>
+              <span>Label</span>
+              <input type="text" autocomplete="off" bind:value={accountLabel} disabled={accountSaving} />
+            </label>
+            <label>
+              <span>Login</span>
+              <input
+                type="text"
+                autocomplete="username"
+                spellcheck="false"
+                bind:value={accountLoginName}
+                disabled={accountSaving}
+              />
+            </label>
+            <label>
+              <span>Password</span>
+              <input
+                type="password"
+                autocomplete="current-password"
+                bind:value={accountPassword}
+                disabled={accountSaving}
+              />
+            </label>
+            <label class="check-row">
+              <input type="checkbox" bind:checked={accountRememberPassword} disabled={accountSaving} />
+              <span>Remember password</span>
+            </label>
+            <label class="check-row">
+              <input type="checkbox" bind:checked={accountEnabled} disabled={accountSaving} />
+              <span>Enabled</span>
+            </label>
+            <button type="submit" disabled={accountSaving}>
+              {editingAccountId ? "Update" : "Add"}
+            </button>
+          </form>
+
+          <div class="account-list">
+            {#if accountsLoading}
+              <div class="empty-state compact">Loading</div>
+            {:else if accounts.length === 0}
+              <div class="empty-state compact">No accounts</div>
+            {:else}
+              {#each accounts as account (account.id)}
+                <article class="account-row" class:disabled={!account.enabled}>
+                  <button class="account-name" type="button" onclick={() => editAccount(account)}>
+                    <span>{account.label}</span>
+                    <small>{phaseLabel(account)}</small>
+                  </button>
+                  <div class="account-actions">
+                    <button
+                      class="secondary small"
+                      type="button"
+                      onclick={() => setAccountEnabled(account, !account.enabled)}
+                      disabled={Boolean(syncingAccountId)}
+                    >
+                      {account.enabled ? "Disable" : "Enable"}
+                    </button>
+                    <button
+                      class="small"
+                      type="button"
+                      onclick={() => syncAccount(account)}
+                      disabled={!account.enabled || Boolean(syncingAccountId)}
+                    >
+                      Sync
+                    </button>
+                  </div>
+                </article>
+              {/each}
+            {/if}
+          </div>
+        </aside>
       </div>
-    </form>
+    {:else}
+      <form class="settings-panel" onsubmit={saveSettings}>
+        <label>
+          <span>Library root</span>
+          <input
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            bind:value={libraryRoot}
+            disabled={settingsLoading || settingsSaving}
+          />
+        </label>
+
+        <label>
+          <span>Download root</span>
+          <input
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            bind:value={downloadRoot}
+            disabled={settingsLoading || settingsSaving}
+          />
+        </label>
+
+        <div class="actions">
+          <span></span>
+          <button type="submit" disabled={settingsLoading || settingsSaving}>
+            {settingsSaving ? "Saving" : "Save"}
+          </button>
+        </div>
+      </form>
+    {/if}
   </section>
 </main>
 
@@ -137,7 +612,8 @@
   }
 
   :global(button),
-  :global(input) {
+  :global(input),
+  :global(select) {
     font: inherit;
     letter-spacing: 0;
   }
@@ -169,30 +645,42 @@
     gap: 6px;
   }
 
-  .nav-item {
-    display: block;
-    padding: 9px 10px;
-    border-radius: 6px;
+  nav button {
+    width: 100%;
+    justify-content: flex-start;
+    border-color: transparent;
     color: #cbd5df;
-    text-decoration: none;
+    background: transparent;
   }
 
-  .nav-item.active {
+  nav button.active {
     background: #2a3947;
     color: #ffffff;
   }
 
   .workspace {
     min-width: 0;
-    padding: 32px;
+    padding: 28px;
+  }
+
+  .workspace-header,
+  .header-actions,
+  .actions,
+  .panel-title,
+  .account-actions {
+    display: flex;
+    align-items: center;
   }
 
   .workspace-header {
-    display: flex;
-    align-items: center;
     justify-content: space-between;
     gap: 16px;
-    margin-bottom: 22px;
+    margin-bottom: 14px;
+  }
+
+  .header-actions,
+  .account-actions {
+    gap: 8px;
   }
 
   .eyebrow {
@@ -202,27 +690,222 @@
     font-weight: 600;
   }
 
-  h1 {
+  h1,
+  h2 {
     margin: 0;
     color: #111827;
-    font-size: 28px;
     font-weight: 700;
   }
 
-  .settings-panel {
+  h1 {
+    font-size: 28px;
+  }
+
+  h2 {
+    font-size: 17px;
+  }
+
+  .status-line {
+    min-height: 22px;
+    margin: 0 0 14px;
+    color: #2f6f4f;
+    overflow-wrap: anywhere;
+  }
+
+  .status-line.error {
+    color: #b42318;
+  }
+
+  .product-layout {
     display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
     gap: 18px;
-    max-width: 760px;
-    padding: 22px;
+    align-items: start;
+  }
+
+  .product-area,
+  .accounts-panel,
+  .settings-panel {
     border: 1px solid #d8e0e7;
     border-radius: 8px;
     background: #ffffff;
     box-shadow: 0 1px 2px rgb(15 23 42 / 8%);
   }
 
-  label {
+  .product-area {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .accounts-panel,
+  .settings-panel {
+    padding: 18px;
+  }
+
+  .settings-panel,
+  .account-form {
+    display: grid;
+    gap: 14px;
+  }
+
+  .settings-panel {
+    max-width: 760px;
+  }
+
+  .toolbar {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) 170px 160px auto;
+    gap: 10px;
+    padding: 14px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .list-header {
+    display: flex;
+    justify-content: flex-end;
+    padding: 9px 14px;
+    border-bottom: 1px solid #e2e8f0;
+    color: #667787;
+    font-size: 13px;
+  }
+
+  .product-table {
+    display: grid;
+  }
+
+  .product-row {
+    display: grid;
+    grid-template-columns: 54px minmax(0, 1fr) minmax(110px, 190px) 150px;
+    gap: 12px;
+    align-items: center;
+    min-height: 78px;
+    padding: 10px 14px;
+    border-bottom: 1px solid #edf2f7;
+  }
+
+  .product-row:last-child {
+    border-bottom: 0;
+  }
+
+  .thumb {
+    width: 48px;
+    height: 48px;
+    border: 1px solid #dbe3eb;
+    border-radius: 6px;
+    background: #f4f7f9;
+    overflow: hidden;
+  }
+
+  .thumb img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .product-main {
+    min-width: 0;
+  }
+
+  .product-title {
+    color: #111827;
+    font-weight: 650;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .product-meta,
+  .owner-list,
+  .date-cell,
+  .account-name small {
+    color: #667787;
+    font-size: 12px;
+  }
+
+  .product-meta {
+    display: flex;
+    gap: 9px;
+    margin-top: 4px;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .owner-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    justify-content: flex-end;
+  }
+
+  .owner-list span {
+    max-width: 150px;
+    padding: 3px 7px;
+    border: 1px solid #cbd5df;
+    border-radius: 999px;
+    color: #334155;
+    background: #f8fafc;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .date-cell {
+    text-align: right;
+  }
+
+  .panel-title {
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+
+  .account-list {
     display: grid;
     gap: 8px;
+    margin-top: 18px;
+  }
+
+  .account-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    padding: 9px;
+    border: 1px solid #e0e7ef;
+    border-radius: 8px;
+    background: #fbfcfd;
+  }
+
+  .account-row.disabled {
+    opacity: 0.62;
+  }
+
+  .account-name {
+    display: grid;
+    justify-items: start;
+    min-width: 0;
+    height: auto;
+    min-height: 38px;
+    padding: 0;
+    border: 0;
+    color: inherit;
+    background: transparent;
+  }
+
+  .account-name span {
+    max-width: 100%;
+    color: #111827;
+    font-weight: 650;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  label {
+    display: grid;
+    gap: 6px;
   }
 
   label span {
@@ -231,50 +914,48 @@
     font-weight: 650;
   }
 
-  input {
+  .check-row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+
+  .check-row input {
+    width: 16px;
+    height: 16px;
+  }
+
+  input,
+  select {
     width: 100%;
     min-width: 0;
-    height: 40px;
-    padding: 0 11px;
+    height: 38px;
+    padding: 0 10px;
     border: 1px solid #cbd5df;
     border-radius: 6px;
     color: #111827;
     background: #fbfcfd;
   }
 
-  input:focus {
+  input:focus,
+  select:focus {
     border-color: #38658f;
     outline: 2px solid rgb(56 101 143 / 16%);
   }
 
-  input:disabled {
+  input:disabled,
+  select:disabled {
     color: #7b8794;
     background: #f4f7f9;
   }
 
-  .actions {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 14px;
-    min-height: 40px;
-  }
-
-  .actions p {
-    margin: 0;
-    min-width: 0;
-    color: #2f6f4f;
-    overflow-wrap: anywhere;
-  }
-
-  .actions p.error {
-    color: #b42318;
-  }
-
   button {
-    min-width: 88px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 84px;
     height: 38px;
-    padding: 0 14px;
+    padding: 0 13px;
     border: 1px solid #203142;
     border-radius: 6px;
     color: #ffffff;
@@ -283,15 +964,57 @@
   }
 
   button.secondary {
-    min-width: 82px;
     border-color: #c5d0da;
     color: #1f2933;
     background: #ffffff;
   }
 
+  button.small {
+    min-width: 62px;
+    height: 32px;
+    padding: 0 10px;
+    font-size: 13px;
+  }
+
   button:disabled {
     cursor: default;
     opacity: 0.58;
+  }
+
+  .empty-state {
+    padding: 36px 14px;
+    color: #667787;
+    text-align: center;
+  }
+
+  .empty-state.compact {
+    padding: 16px 8px;
+  }
+
+  .actions {
+    justify-content: space-between;
+    gap: 14px;
+  }
+
+  @media (max-width: 980px) {
+    .product-layout {
+      grid-template-columns: 1fr;
+    }
+
+    .toolbar {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .product-row {
+      grid-template-columns: 54px minmax(0, 1fr);
+    }
+
+    .owner-list,
+    .date-cell {
+      grid-column: 2;
+      justify-content: flex-start;
+      text-align: left;
+    }
   }
 
   @media (max-width: 720px) {
@@ -305,14 +1028,24 @@
       border-bottom: 1px solid #d4dde5;
     }
 
+    nav {
+      flex-direction: row;
+    }
+
     .workspace {
       padding: 20px 16px;
     }
 
     .workspace-header,
-    .actions {
+    .header-actions,
+    .actions,
+    .account-row {
       align-items: stretch;
       flex-direction: column;
+    }
+
+    .toolbar {
+      grid-template-columns: 1fr;
     }
 
     button,
