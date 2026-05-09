@@ -3,6 +3,7 @@
 ## 2026-05-10
 
 - Created `docs/todos/2026-05-10.00.add-generic-background-job-system.md` to track the proposed generic background job system. The plan covers a `dm-jobs` crate, cooperative cancellation, snapshots, bounded logs, generic Tauri job commands/events, account-sync migration, frontend job state, observability rules, and later download/archive integration. Validation: documentation-only change; inspected the generated TODO content, no code validation run.
+- Added `docs/designs/2026-05-10.00-background-job-system.md` and the first `crates/dm-jobs` implementation. `dm-jobs` now owns process-local job lifecycle state, snapshots, generic events, bounded logs, cooperative cancellation, and finished-job cleanup without depending on DLsite/storage/Tauri code. `dm-library` now reuses the shared cancellation token through a public re-export. Validation: `cargo fmt --all`, `cargo test -p dm-jobs -p dm-library`, `cargo test --workspace`, `cargo check --workspace`, and `git diff --check` passed. The workspace test run included env-enabled live tests.
 
 ## 2026-05-09
 

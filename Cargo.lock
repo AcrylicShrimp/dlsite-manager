@@ -1053,6 +1053,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dm-jobs"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "dm-library"
 version = "0.1.0"
 dependencies = [
@@ -1060,6 +1072,7 @@ dependencies = [
  "chrono",
  "dm-api",
  "dm-credentials",
+ "dm-jobs",
  "dm-storage",
  "serde_json",
  "thiserror 2.0.18",

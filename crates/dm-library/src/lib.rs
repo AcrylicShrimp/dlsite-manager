@@ -5,16 +5,14 @@ use dm_api::{
     Purchase, Work, WorkId,
 };
 use dm_credentials::{CredentialRef, CredentialStore, CredentialsError};
+pub use dm_jobs::CancellationToken;
 use dm_storage::{
     Account, AccountSyncCommit, AccountUpsert, AccountWork, CachedWork, ProductListPage,
     ProductListQuery, Storage, StorageError, SyncCancellation, SyncFailure,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::Arc,
 };
 use uuid::Uuid;
 
@@ -408,25 +406,6 @@ pub enum SyncProgress {
 
 pub trait SyncProgressSink: Send + Sync {
     fn emit(&self, progress: SyncProgress);
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct CancellationToken {
-    cancelled: Arc<AtomicBool>,
-}
-
-impl CancellationToken {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::SeqCst);
-    }
-
-    pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::SeqCst)
-    }
 }
 
 #[async_trait]

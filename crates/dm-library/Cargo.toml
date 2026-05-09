@@ -10,6 +10,7 @@ async-trait = "0.1.89"
 chrono = "0.4.44"
 dm-api = { path = "../dm-api" }
 dm-credentials = { path = "../dm-credentials" }
+dm-jobs = { path = "../dm-jobs" }
 dm-storage = { path = "../dm-storage" }
 serde_json = "1.0.149"
 thiserror = "2.0.18"
