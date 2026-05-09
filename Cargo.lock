@@ -1050,6 +1050,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "dm-library"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "dm-api",
+ "dm-credentials",
+ "dm-storage",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "dm-storage"
 version = "0.1.0"
 dependencies = [

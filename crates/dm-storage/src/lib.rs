@@ -97,6 +97,14 @@ pub struct SyncFailure {
     pub error_message: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncCancellation {
+    pub sync_run_id: String,
+    pub account_id: String,
+    pub started_at: String,
+    pub completed_at: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncRunStatus {
     Started,
@@ -324,6 +332,14 @@ impl Storage {
     pub async fn record_sync_failure(&self, failure: &SyncFailure) -> Result<()> {
         let mut transaction = self.begin_write().await?;
         transaction.record_sync_failure(failure).await?;
+        transaction.commit().await?;
+
+        Ok(())
+    }
+
+    pub async fn record_sync_cancellation(&self, cancellation: &SyncCancellation) -> Result<()> {
+        let mut transaction = self.begin_write().await?;
+        transaction.record_sync_cancellation(cancellation).await?;
         transaction.commit().await?;
 
         Ok(())
@@ -644,6 +660,23 @@ impl WriteTransaction<'_> {
             Some(&failure.completed_at),
             failure.error_code.as_deref(),
             failure.error_message.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn record_sync_cancellation(
+        &mut self,
+        cancellation: &SyncCancellation,
+    ) -> Result<()> {
+        self.ensure_account_exists(&cancellation.account_id).await?;
+        self.insert_sync_run(
+            &cancellation.sync_run_id,
+            &cancellation.account_id,
+            SyncRunStatus::Cancelled,
+            &cancellation.started_at,
+            Some(&cancellation.completed_at),
+            Some("cancelled"),
+            None,
         )
         .await
     }
@@ -1455,6 +1488,31 @@ mod tests {
         assert_eq!(sync_runs.len(), 2);
         assert_eq!(sync_runs[0].status, SyncRunStatus::Failed);
         assert_eq!(sync_runs[0].error_code, Some("network".to_owned()));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sync_cancellation_is_recorded_with_cancelled_status() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+
+        storage
+            .record_sync_cancellation(&SyncCancellation {
+                sync_run_id: "sync-a-cancelled".to_owned(),
+                account_id: "account-a".to_owned(),
+                started_at: "2026-05-09T00:02:00.000Z".to_owned(),
+                completed_at: "2026-05-09T00:03:00.000Z".to_owned(),
+            })
+            .await?;
+
+        let sync_runs = storage.sync_runs_for_account("account-a").await?;
+
+        assert_eq!(sync_runs.len(), 1);
+        assert_eq!(sync_runs[0].status, SyncRunStatus::Cancelled);
+        assert_eq!(sync_runs[0].error_code, Some("cancelled".to_owned()));
 
         Ok(())
     }
