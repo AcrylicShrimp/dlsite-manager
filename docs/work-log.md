@@ -3,6 +3,7 @@
 ## 2026-05-09
 
 - Captured the unified multi-account product-list design in `docs/designs/2026-05-09.00-unified-product-list-and-accounts.md`. The design treats DLsite accounts as ownership sources under one virtual library, keeps list rendering cache-backed, defers serial/session-sensitive storage, and sets the next implementation slice for account/work ownership storage plus a `dm-library` orchestration crate. Validation: documentation-only change; no code validation run.
+- Added `crates/dm-credentials` for remembered account passwords outside SQLite. The crate defines credential references, a `CredentialStore` trait, a native OS credential-store implementation through `keyring-core` plus target-native store crates, an in-memory test implementation, and an optional env-gated native keychain test. Updated the unified product-list design and milestone TODO so account rows store only non-secret `credential_ref` values. Validation: `cargo fmt --all`, `cargo test -p dm-credentials`, `cargo tree -p dm-credentials --depth 2`, and `cargo check --workspace` passed.
 
 ## 2026-05-07
 
