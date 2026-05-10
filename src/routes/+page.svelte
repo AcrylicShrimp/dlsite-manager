@@ -116,6 +116,12 @@
     missing: boolean;
   };
 
+  type ProductImagePreview = {
+    url: string;
+    title: string;
+    workId: string;
+  };
+
   type View = "library" | "accounts" | "activity" | "settings";
 
   const creditFieldDefinitions = [
@@ -157,6 +163,7 @@
   let jobsLoading = $state(true);
   let jobMessages = $state<Record<string, string>>({});
   let toasts = $state<Toast[]>([]);
+  let productImagePreview = $state<ProductImagePreview | null>(null);
 
   let toastSequence = 0;
   const toastTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -421,6 +428,28 @@
       notifySuccess(`Copied ${field.label}`);
     } catch (err) {
       notifyError(errorMessage(err));
+    }
+  }
+
+  function openProductImage(product: Product) {
+    if (!product.thumbnailUrl) {
+      return;
+    }
+
+    productImagePreview = {
+      url: product.thumbnailUrl,
+      title: product.title,
+      workId: product.workId,
+    };
+  }
+
+  function closeProductImage() {
+    productImagePreview = null;
+  }
+
+  function handleWindowKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape" && productImagePreview) {
+      closeProductImage();
     }
   }
 
@@ -891,6 +920,8 @@
   <title>dlsite-manager</title>
 </svelte:head>
 
+<svelte:window onkeydown={handleWindowKeydown} />
+
 <main class="app-shell">
   <aside class="sidebar" aria-label="Primary">
     <div class="brand">dlsite-manager</div>
@@ -995,13 +1026,21 @@
               {@const typeInfo = productType(product)}
               <article class="product-card" data-tone={typeInfo.tone}>
                 <div class="type-belt" aria-hidden="true"></div>
-                <div class="thumb" aria-hidden="true">
-                  {#if product.thumbnailUrl}
+                {#if product.thumbnailUrl}
+                  <button
+                    class="thumb"
+                    type="button"
+                    title={`Preview ${product.title}`}
+                    aria-label={`Preview image for ${product.title}`}
+                    onclick={() => openProductImage(product)}
+                  >
                     <img src={product.thumbnailUrl} alt="" loading="lazy" />
-                  {:else}
+                  </button>
+                {:else}
+                  <div class="thumb" aria-hidden="true">
                     <span>?</span>
-                  {/if}
-                </div>
+                  </div>
+                {/if}
                 <div class="product-main">
                   <div class="product-title-row">
                     <div class="product-title" title={product.title}>{product.title}</div>
@@ -1386,6 +1425,44 @@
     {/if}
   </section>
 
+  {#if productImagePreview}
+    <div
+      class="image-preview"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="image-preview-title"
+      tabindex="-1"
+    >
+      <button
+        class="image-preview-backdrop"
+        type="button"
+        aria-label="Close image preview"
+        onclick={closeProductImage}
+      ></button>
+      <div class="image-preview-panel">
+        <div class="image-preview-heading">
+          <div>
+            <h2 id="image-preview-title">{productImagePreview.title}</h2>
+            <p>{productImagePreview.workId}</p>
+          </div>
+          <button
+            class="image-preview-close"
+            type="button"
+            aria-label="Close image preview"
+            onclick={closeProductImage}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div class="image-preview-frame">
+          <img src={productImagePreview.url} alt="" />
+        </div>
+      </div>
+    </div>
+  {/if}
+
   {#if toasts.length > 0}
     <section class="toast-stack" aria-label="Notifications" aria-live="polite">
       {#each toasts as toast (toast.id)}
@@ -1645,6 +1722,109 @@
     stroke-width: 2.2;
   }
 
+  .image-preview {
+    position: fixed;
+    z-index: 30;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 28px;
+  }
+
+  .image-preview-backdrop {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: rgb(0 0 0 / 70%);
+    cursor: default;
+  }
+
+  .image-preview-panel {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 14px;
+    width: min(920px, 92vw);
+    max-height: 88vh;
+    padding: 16px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--panel);
+    box-shadow: 0 24px 64px rgb(0 0 0 / 52%);
+  }
+
+  .image-preview-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: start;
+  }
+
+  .image-preview-heading h2 {
+    margin: 0;
+    color: var(--text-strong);
+    font-size: 17px;
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .image-preview-heading p {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: 12px;
+  }
+
+  .image-preview-close {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    padding: 0;
+    border-color: var(--border-strong);
+    color: var(--muted);
+    background: var(--panel-raised);
+  }
+
+  .image-preview-close:hover {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+
+  .image-preview-close svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 2.35;
+  }
+
+  .image-preview-frame {
+    display: grid;
+    place-items: center;
+    min-height: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    overflow: hidden;
+  }
+
+  .image-preview-frame img {
+    display: block;
+    max-width: 100%;
+    max-height: calc(88vh - 110px);
+    object-fit: contain;
+  }
+
   .product-area {
     display: flex;
     flex: 1 1 auto;
@@ -1828,12 +2008,35 @@
   }
 
   .thumb {
+    display: block;
     width: var(--thumb-size);
     height: var(--thumb-size);
+    min-width: 0;
+    padding: 0;
     border: 1px solid var(--border-strong);
     border-radius: 6px;
+    color: inherit;
     background: var(--panel-raised);
+    cursor: pointer;
     overflow: hidden;
+  }
+
+  .thumb:hover {
+    border-color: var(--type-color);
+  }
+
+  .thumb:focus-visible {
+    border-color: var(--type-color);
+    outline: 2px solid var(--type-soft);
+    outline-offset: 2px;
+  }
+
+  .thumb[aria-hidden="true"] {
+    cursor: default;
+  }
+
+  .thumb[aria-hidden="true"]:hover {
+    border-color: var(--border-strong);
   }
 
   .thumb img {
