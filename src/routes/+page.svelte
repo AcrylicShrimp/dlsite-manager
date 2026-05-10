@@ -1433,7 +1433,7 @@
   }
 
   .product-table {
-    display: grid;
+    display: block;
     flex: 1 1 auto;
     min-height: 0;
     overflow: auto;
@@ -1446,14 +1446,16 @@
     --credit-label-width: clamp(60px, 4.1vw, 66px);
     --credit-gap: clamp(5px, 0.7vw, 7px);
     --meta-width: min(100%, clamp(520px, 48vw, 760px));
+    --row-height: 184px;
 
     display: grid;
     grid-template-columns: 5px 112px minmax(0, 1fr);
     gap: 14px;
     align-items: start;
-    min-height: 136px;
+    height: var(--row-height);
     padding: 12px 14px 12px 0;
     border-bottom: 1px solid var(--border);
+    overflow: hidden;
   }
 
   .product-card:hover {
@@ -1518,8 +1520,11 @@
 
   .product-main {
     display: grid;
+    grid-template-rows: auto minmax(0, auto) auto auto;
     gap: 9px;
+    height: 100%;
     min-width: 0;
+    overflow: hidden;
   }
 
   .product-title-row {
@@ -1565,6 +1570,8 @@
     justify-self: start;
     width: var(--meta-width);
     min-width: 0;
+    max-height: 56px;
+    overflow: hidden;
   }
 
   .credit-row,
@@ -1582,6 +1589,7 @@
     align-items: center;
     justify-self: start;
     width: var(--meta-width);
+    min-height: 24px;
   }
 
   .credit-label {
@@ -1653,6 +1661,7 @@
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 12px;
     align-items: center;
+    align-self: end;
     min-width: 0;
   }
 
@@ -1908,9 +1917,9 @@
       --credit-label-width: 62px;
       --credit-gap: 6px;
       --meta-width: 100%;
+      --row-height: 204px;
 
       grid-template-columns: 5px 84px minmax(0, 1fr);
-      min-height: 108px;
       gap: 12px;
     }
 
@@ -1921,6 +1930,7 @@
 
     .product-meta {
       grid-template-columns: 1fr;
+      max-height: 72px;
     }
 
     .product-footer {
@@ -1974,6 +1984,7 @@
     .product-card {
       --credit-label-width: 60px;
       --credit-gap: 5px;
+      --row-height: 220px;
 
       grid-template-columns: 5px 72px minmax(0, 1fr);
       padding-right: 10px;
