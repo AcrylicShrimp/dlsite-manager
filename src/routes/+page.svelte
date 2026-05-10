@@ -3,7 +3,6 @@
   import { listen } from "@tauri-apps/api/event";
   import { downloadDir } from "@tauri-apps/api/path";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import { openPath } from "@tauri-apps/plugin-opener";
   import { onDestroy, onMount } from "svelte";
 
   type AppSettings = {
@@ -656,7 +655,11 @@
     }
 
     try {
-      await openPath(product.download.localPath);
+      await invoke("open_work_download", {
+        request: {
+          workId: product.workId,
+        },
+      });
     } catch (err) {
       notifyError(errorMessage(err));
     }

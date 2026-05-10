@@ -13,11 +13,12 @@ use dm_storage::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_opener::OpenerExt;
 use tokio::sync::broadcast::error::RecvError;
 
 struct AppState {
@@ -247,6 +248,46 @@ async fn start_work_download(
     Ok(StartJobResponse {
         job_id: job_id.to_string(),
     })
+}
+
+#[tauri::command]
+async fn open_work_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: OpenWorkDownloadRequest,
+) -> Result<(), String> {
+    let work_id = normalize_required_id(request.work_id)?;
+    let download = state
+        .storage
+        .work_download_state(&work_id)
+        .await
+        .map_err(command_error)?;
+
+    if download.status != WorkDownloadStatus::Downloaded {
+        return Err(format!("{work_id} is not downloaded"));
+    }
+
+    let local_path = download
+        .local_path
+        .as_deref()
+        .ok_or_else(|| format!("{work_id} does not have a local path"))?;
+    let canonical_path = canonicalize_existing_path(local_path)?;
+    let settings = state.storage.app_settings().await.map_err(command_error)?;
+    let allowed_roots = canonical_open_roots(&app, &settings);
+
+    if !path_is_under_any_root(&canonical_path, &allowed_roots) {
+        return Err(format!(
+            "download path is outside the configured library or staging folders: {}",
+            canonical_path.display()
+        ));
+    }
+
+    app.opener()
+        .open_path(
+            canonical_path.to_string_lossy().into_owned(),
+            None::<String>,
+        )
+        .map_err(command_error)
 }
 
 #[tauri::command]
@@ -645,6 +686,12 @@ struct StartWorkDownloadRequest {
     unpack_policy: Option<UnpackPolicyDto>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenWorkDownloadRequest {
+    work_id: String,
+}
+
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 enum UnpackPolicyDto {
@@ -902,6 +949,36 @@ fn normalize_path_setting(value: Option<String>) -> Result<Option<String>, Strin
     Ok(Some(value))
 }
 
+fn canonicalize_existing_path(path: impl AsRef<Path>) -> Result<PathBuf, String> {
+    let path = path.as_ref();
+
+    path.canonicalize()
+        .map_err(|error| format!("failed to resolve {}: {error}", path.display()))
+}
+
+fn canonical_open_roots(app: &AppHandle, settings: &AppSettings) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+
+    if let Some(root) = &settings.library_root {
+        roots.push(PathBuf::from(root));
+    }
+
+    if let Some(root) = &settings.download_root {
+        roots.push(PathBuf::from(root));
+    } else if let Ok(download_dir) = app.path().download_dir() {
+        roots.push(download_dir);
+    }
+
+    roots
+        .into_iter()
+        .filter_map(|root| canonicalize_existing_path(root).ok())
+        .collect()
+}
+
+fn path_is_under_any_root(path: &Path, roots: &[PathBuf]) -> bool {
+    roots.iter().any(|root| path.starts_with(root))
+}
+
 fn normalize_required_id(value: String) -> Result<String, String> {
     let value = value.trim().to_owned();
 
@@ -1132,6 +1209,23 @@ mod tests {
             Some(true)
         );
     }
+
+    #[test]
+    fn path_root_check_allows_descendant_paths() {
+        let root = PathBuf::from("/Users/example/Downloads/dlsite-manager/library");
+        let path = root.join("RJ01488944");
+
+        assert!(path_is_under_any_root(&path, &[root]));
+    }
+
+    #[test]
+    fn path_root_check_rejects_sibling_prefix_paths() {
+        let root = PathBuf::from("/Users/example/Downloads/dlsite-manager/library");
+        let path =
+            PathBuf::from("/Users/example/Downloads/dlsite-manager/library-other/RJ01488944");
+
+        assert!(!path_is_under_any_root(&path, &[root]));
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1149,6 +1243,7 @@ pub fn run() {
             list_products,
             start_account_sync,
             start_work_download,
+            open_work_download,
             list_jobs,
             get_job,
             cancel_job,
