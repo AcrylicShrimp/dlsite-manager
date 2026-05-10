@@ -1,16 +1,22 @@
 use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, Utc};
 use dm_api::{
-    ContentCount, ContentQuery, Credentials, DlsiteClient, DmApiError, Language, LocalizedText,
-    Purchase, Work, WorkId,
+    ContentCount, ContentQuery, Credentials, DlsiteClient, DmApiError, DownloadPlan, Language,
+    LocalizedText, Purchase, Work, WorkId,
 };
 use dm_credentials::{CredentialRef, CredentialStore, CredentialsError};
+use dm_download::{DownloadJobRequest, DownloadProgress, DownloadedWork, UnpackPolicy};
 pub use dm_jobs::CancellationToken;
 use dm_storage::{
     Account, AccountSyncCommit, AccountUpsert, AccountWork, CachedWork, ProductListPage,
-    ProductListQuery, Storage, StorageError, SyncCancellation, SyncFailure,
+    ProductListQuery, Storage, StorageError, SyncCancellation, SyncFailure, WorkDownloadState,
+    WorkDownloadStatus, WorkDownloadUpdate,
 };
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use uuid::Uuid;
 
 pub type Result<T> = std::result::Result<T, LibraryError>;
@@ -35,6 +41,14 @@ pub enum LibraryError {
     MissingPassword(String),
     #[error("sync was cancelled")]
     Cancelled,
+    #[error("download error")]
+    Download(#[from] dm_download::DownloadError),
+    #[error("work is not owned by an enabled account: {0}")]
+    DownloadAccountNotFound(String),
+    #[error("download final path already exists: {0}")]
+    DownloadTargetExists(PathBuf),
+    #[error("I/O error")]
+    Io(#[from] std::io::Error),
     #[error("json error")]
     Json(#[from] serde_json::Error),
 }
@@ -51,6 +65,10 @@ impl LibraryError {
             Self::MissingLoginName(_) => "missing_login_name",
             Self::MissingPassword(_) => "missing_password",
             Self::Cancelled => "cancelled",
+            Self::Download(_) => "download",
+            Self::DownloadAccountNotFound(_) => "download_account_not_found",
+            Self::DownloadTargetExists(_) => "download_target_exists",
+            Self::Io(_) => "io",
             Self::Json(_) => "json",
         }
     }
@@ -123,6 +141,74 @@ impl Library {
 
     pub async fn list_products(&self, query: &ProductListQuery) -> Result<ProductListPage> {
         Ok(self.storage.list_products(query).await?)
+    }
+
+    pub async fn download_work_with_source<S>(
+        &self,
+        request: WorkDownloadRequest<'_>,
+        source: &S,
+    ) -> Result<WorkDownloadReport>
+    where
+        S: WorkDownloadSource + Sync,
+    {
+        let account = self
+            .storage
+            .download_account_for_work(request.work_id, request.account_id)
+            .await
+            .map_err(|error| match error {
+                StorageError::NotFound { .. } => {
+                    LibraryError::DownloadAccountNotFound(request.work_id.to_owned())
+                }
+                error => LibraryError::Storage(error),
+            })?;
+        let started_at = now_string();
+        let work_id = WorkId::from(request.work_id.to_owned());
+        let staging_dir = request.download_root.join(request.work_id);
+        let final_dir = request.library_root.join(request.work_id);
+        let unpack_policy = request.unpack_policy;
+        let result = self
+            .download_work_inner(
+                &account,
+                &work_id,
+                &staging_dir,
+                &final_dir,
+                &started_at,
+                request,
+                source,
+            )
+            .await;
+
+        if let Err(error) = &result {
+            let completed_at = now_string();
+            let status = if matches!(error, LibraryError::Cancelled)
+                || matches!(
+                    error,
+                    LibraryError::Download(dm_download::DownloadError::Cancelled)
+                ) {
+                WorkDownloadStatus::Cancelled
+            } else {
+                WorkDownloadStatus::Failed
+            };
+            let _ = self
+                .storage
+                .save_work_download(&WorkDownloadUpdate {
+                    work_id: request.work_id.to_owned(),
+                    status,
+                    local_path: Some(final_dir.to_string_lossy().into_owned()),
+                    staging_path: Some(staging_dir.to_string_lossy().into_owned()),
+                    unpack_policy: unpack_policy_storage_value(unpack_policy).to_owned(),
+                    bytes_received: 0,
+                    bytes_total: None,
+                    error_code: Some(error.failure_code().to_owned()),
+                    error_message: Some(error.to_string()),
+                    started_at: Some(started_at),
+                    completed_at: Some(completed_at.clone()),
+                    updated_at: completed_at,
+                })
+                .await;
+        }
+
+        result
     }
 
     pub async fn sync_account_with_source<S>(
@@ -255,6 +341,112 @@ impl Library {
         Ok(report)
     }
 
+    async fn download_work_inner<S>(
+        &self,
+        account: &Account,
+        work_id: &WorkId,
+        staging_dir: &Path,
+        final_dir: &Path,
+        started_at: &str,
+        request: WorkDownloadRequest<'_>,
+        source: &S,
+    ) -> Result<WorkDownloadReport>
+    where
+        S: WorkDownloadSource + Sync,
+    {
+        request.check_cancelled()?;
+        request.emit(WorkDownloadProgress::LoggingIn);
+
+        let login_name = account
+            .login_name
+            .as_deref()
+            .ok_or_else(|| LibraryError::MissingLoginName(account.id.clone()))?;
+        let password = self.password_for_account(account, request.password)?;
+        let credentials = Credentials::new(login_name, password);
+
+        source.login(&credentials).await?;
+        self.storage
+            .record_account_login(&account.id, &now_string())
+            .await?;
+
+        request.check_cancelled()?;
+        request.emit(WorkDownloadProgress::ResolvingPlan);
+        let plan = source.download_plan(work_id).await?;
+
+        request.check_cancelled()?;
+        self.storage
+            .save_work_download(&WorkDownloadUpdate {
+                work_id: request.work_id.to_owned(),
+                status: WorkDownloadStatus::Downloading,
+                local_path: Some(final_dir.to_string_lossy().into_owned()),
+                staging_path: Some(staging_dir.to_string_lossy().into_owned()),
+                unpack_policy: unpack_policy_storage_value(request.unpack_policy).to_owned(),
+                bytes_received: 0,
+                bytes_total: None,
+                error_code: None,
+                error_message: None,
+                started_at: Some(started_at.to_owned()),
+                completed_at: None,
+                updated_at: now_string(),
+            })
+            .await?;
+
+        let download_cancellation = dm_download::CancellationToken::new();
+        let job = DownloadJobRequest {
+            work_id: work_id.clone(),
+            target_root: request.download_root.to_path_buf(),
+            unpack_policy: request.unpack_policy,
+        };
+        let downloaded = source
+            .download_files(&job, &plan, &download_cancellation, &mut |progress| {
+                if request.is_cancelled() {
+                    download_cancellation.cancel();
+                }
+
+                request.emit(WorkDownloadProgress::Download(progress));
+            })
+            .await?;
+
+        request.check_cancelled()?;
+        request.emit(WorkDownloadProgress::Finalizing);
+        move_downloaded_work_dir(staging_dir, final_dir).await?;
+
+        let completed_at = now_string();
+        let bytes_received = downloaded
+            .files
+            .iter()
+            .map(|file| file.bytes_written)
+            .sum::<u64>();
+
+        self.storage
+            .save_work_download(&WorkDownloadUpdate {
+                work_id: request.work_id.to_owned(),
+                status: WorkDownloadStatus::Downloaded,
+                local_path: Some(final_dir.to_string_lossy().into_owned()),
+                staging_path: Some(staging_dir.to_string_lossy().into_owned()),
+                unpack_policy: unpack_policy_storage_value(request.unpack_policy).to_owned(),
+                bytes_received,
+                bytes_total: Some(bytes_received),
+                error_code: None,
+                error_message: None,
+                started_at: Some(started_at.to_owned()),
+                completed_at: Some(completed_at.clone()),
+                updated_at: completed_at,
+            })
+            .await?;
+
+        request.emit(WorkDownloadProgress::Completed);
+
+        Ok(WorkDownloadReport {
+            work_id: request.work_id.to_owned(),
+            account_id: account.id.clone(),
+            local_path: final_dir.to_path_buf(),
+            file_count: downloaded.files.len(),
+            archive_extracted: downloaded.archive_extraction.is_some(),
+            download_state: self.storage.work_download_state(request.work_id).await?,
+        })
+    }
+
     async fn find_account(&self, account_id: &str) -> Result<Account> {
         self.storage
             .accounts()
@@ -382,6 +574,128 @@ pub struct AccountSyncReport {
     pub missing_detail_count: usize,
     pub page_limit: Option<usize>,
     pub concurrency: Option<usize>,
+}
+
+#[derive(Clone, Copy)]
+pub struct WorkDownloadRequest<'a> {
+    pub work_id: &'a str,
+    pub account_id: Option<&'a str>,
+    pub password: Option<&'a str>,
+    pub library_root: &'a Path,
+    pub download_root: &'a Path,
+    pub unpack_policy: UnpackPolicy,
+    pub cancellation_token: Option<&'a CancellationToken>,
+    pub progress_sink: Option<&'a dyn WorkDownloadProgressSink>,
+}
+
+impl<'a> WorkDownloadRequest<'a> {
+    pub fn new(work_id: &'a str, library_root: &'a Path, download_root: &'a Path) -> Self {
+        Self {
+            work_id,
+            account_id: None,
+            password: None,
+            library_root,
+            download_root,
+            unpack_policy: UnpackPolicy::UnpackWhenRecognized,
+            cancellation_token: None,
+            progress_sink: None,
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancellation_token
+            .is_some_and(CancellationToken::is_cancelled)
+    }
+
+    fn check_cancelled(&self) -> Result<()> {
+        if self.is_cancelled() {
+            Err(LibraryError::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn emit(&self, progress: WorkDownloadProgress) {
+        if let Some(sink) = self.progress_sink {
+            sink.emit(progress);
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkDownloadReport {
+    pub work_id: String,
+    pub account_id: String,
+    pub local_path: PathBuf,
+    pub file_count: usize,
+    pub archive_extracted: bool,
+    pub download_state: WorkDownloadState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkDownloadProgress {
+    LoggingIn,
+    ResolvingPlan,
+    Download(DownloadProgress),
+    Finalizing,
+    Completed,
+}
+
+pub trait WorkDownloadProgressSink: Send + Sync {
+    fn emit(&self, progress: WorkDownloadProgress);
+}
+
+#[async_trait]
+pub trait WorkDownloadSource {
+    async fn login(&self, credentials: &Credentials) -> Result<()>;
+    async fn download_plan(&self, work_id: &WorkId) -> Result<DownloadPlan>;
+    async fn download_files(
+        &self,
+        job: &DownloadJobRequest,
+        plan: &DownloadPlan,
+        cancellation: &dm_download::CancellationToken,
+        progress_sink: &mut (dyn FnMut(DownloadProgress) + Send),
+    ) -> Result<DownloadedWork>;
+}
+
+#[derive(Clone)]
+pub struct DlsiteWorkDownloadSource {
+    client: DlsiteClient,
+}
+
+impl DlsiteWorkDownloadSource {
+    pub fn new(client: DlsiteClient) -> Self {
+        Self { client }
+    }
+}
+
+#[async_trait]
+impl WorkDownloadSource for DlsiteWorkDownloadSource {
+    async fn login(&self, credentials: &Credentials) -> Result<()> {
+        self.client.login(credentials).await?;
+        Ok(())
+    }
+
+    async fn download_plan(&self, work_id: &WorkId) -> Result<DownloadPlan> {
+        Ok(self.client.download_plan(work_id).await?)
+    }
+
+    async fn download_files(
+        &self,
+        job: &DownloadJobRequest,
+        plan: &DownloadPlan,
+        cancellation: &dm_download::CancellationToken,
+        progress_sink: &mut (dyn FnMut(DownloadProgress) + Send),
+    ) -> Result<DownloadedWork> {
+        Ok(dm_download::download_work_files(
+            self.client.clone(),
+            job,
+            plan,
+            cancellation,
+            progress_sink,
+        )
+        .await?)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -571,6 +885,68 @@ fn datetime_to_string(value: DateTime<Utc>) -> String {
     value.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
+fn unpack_policy_storage_value(policy: UnpackPolicy) -> &'static str {
+    match policy {
+        UnpackPolicy::KeepArchives => "keep_archives",
+        UnpackPolicy::UnpackWhenRecognized => "unpack_when_recognized",
+    }
+}
+
+async fn move_downloaded_work_dir(source: &Path, destination: &Path) -> Result<()> {
+    if destination.try_exists()? {
+        return Err(LibraryError::DownloadTargetExists(
+            destination.to_path_buf(),
+        ));
+    }
+
+    if let Some(parent) = destination.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    match tokio::fs::rename(source, destination).await {
+        Ok(()) => Ok(()),
+        Err(rename_error) => {
+            let source = source.to_path_buf();
+            let destination = destination.to_path_buf();
+            tokio::task::spawn_blocking(move || {
+                copy_dir_recursively(&source, &destination)?;
+                std::fs::remove_dir_all(&source)?;
+                Ok::<(), std::io::Error>(())
+            })
+            .await
+            .map_err(|err| LibraryError::Io(std::io::Error::other(err)))??;
+            drop(rename_error);
+            Ok(())
+        }
+    }
+}
+
+fn copy_dir_recursively(source: &Path, destination: &Path) -> std::io::Result<()> {
+    if destination.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("destination already exists: {}", destination.display()),
+        ));
+    }
+
+    std::fs::create_dir_all(destination)?;
+
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let entry_source = entry.path();
+        let entry_destination = destination.join(entry.file_name());
+        let file_type = entry.file_type()?;
+
+        if file_type.is_dir() {
+            copy_dir_recursively(&entry_source, &entry_destination)?;
+        } else if file_type.is_file() {
+            std::fs::copy(&entry_source, &entry_destination)?;
+        }
+    }
+
+    Ok(())
+}
+
 fn now_string() -> String {
     datetime_to_string(Utc::now())
 }
@@ -578,10 +954,17 @@ fn now_string() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dm_api::{AgeCategory, Maker, WorkKind, WorkThumbnail};
+    use dm_api::{
+        AgeCategory, DownloadFile, DownloadFileKind, DownloadPlan, DownloadStreamRequest, Maker,
+        WorkKind, WorkThumbnail,
+    };
     use dm_credentials::InMemoryCredentialStore;
-    use dm_storage::{ProductSort, SyncRunStatus};
-    use std::sync::Mutex;
+    use dm_download::{DownloadPhase, DownloadedFile};
+    use dm_storage::{ProductSort, SyncRunStatus, WorkDownloadStatus};
+    use std::{
+        sync::Mutex,
+        time::{SystemTime, UNIX_EPOCH},
+    };
     use url::Url;
 
     #[derive(Debug, Clone)]
@@ -636,6 +1019,66 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone, Default)]
+    struct FakeDownloadSource;
+
+    #[async_trait]
+    impl WorkDownloadSource for FakeDownloadSource {
+        async fn login(&self, credentials: &Credentials) -> Result<()> {
+            assert_eq!(credentials.username, "user@example.test");
+            assert_eq!(credentials.password, "secret");
+            Ok(())
+        }
+
+        async fn download_plan(&self, work_id: &WorkId) -> Result<DownloadPlan> {
+            Ok(DownloadPlan {
+                work_id: work_id.clone(),
+                files: vec![DownloadFile {
+                    kind: DownloadFileKind::Direct,
+                    stream_request: DownloadStreamRequest {
+                        url: Url::parse(
+                            "https://download.example.test/get/=/file/RJ000001.zip/_/1",
+                        )
+                        .unwrap(),
+                    },
+                }],
+                serial_numbers: Vec::new(),
+            })
+        }
+
+        async fn download_files(
+            &self,
+            job: &DownloadJobRequest,
+            _plan: &DownloadPlan,
+            _cancellation: &dm_download::CancellationToken,
+            progress_sink: &mut (dyn FnMut(DownloadProgress) + Send),
+        ) -> Result<DownloadedWork> {
+            let target_dir = job.target_root.join(job.work_id.as_ref());
+            let path = target_dir.join("RJ000001.txt");
+            tokio::fs::create_dir_all(&target_dir).await?;
+            tokio::fs::write(&path, b"downloaded").await?;
+            progress_sink(DownloadProgress {
+                phase: DownloadPhase::Downloading,
+                file_index: Some(0),
+                file_kind: Some(DownloadFileKind::Direct),
+                bytes_received: 10,
+                bytes_total: Some(10),
+            });
+
+            Ok(DownloadedWork {
+                work_id: job.work_id.clone(),
+                target_dir,
+                files: vec![DownloadedFile {
+                    file_name: "RJ000001.txt".to_owned(),
+                    path,
+                    bytes_written: 10,
+                    resumed_from: 0,
+                }],
+                archive_extraction: None,
+            })
+        }
+    }
+
     #[derive(Debug, Default)]
     struct RecordingProgressSink {
         events: Mutex<Vec<SyncProgress>>,
@@ -643,6 +1086,17 @@ mod tests {
 
     impl SyncProgressSink for RecordingProgressSink {
         fn emit(&self, progress: SyncProgress) {
+            self.events.lock().expect("events lock").push(progress);
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingDownloadProgressSink {
+        events: Mutex<Vec<WorkDownloadProgress>>,
+    }
+
+    impl WorkDownloadProgressSink for RecordingDownloadProgressSink {
+        fn emit(&self, progress: WorkDownloadProgress) {
             self.events.lock().expect("events lock").push(progress);
         }
     }
@@ -741,6 +1195,18 @@ mod tests {
         }
     }
 
+    fn test_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("dm-library-{name}-{}-{unique}", std::process::id()));
+
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
     #[tokio::test]
     async fn saves_account_and_password_reference() -> Result<()> {
         let library = migrated_library().await?;
@@ -802,6 +1268,58 @@ mod tests {
                 ..
             })
         ));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn downloads_owned_work_and_records_local_path() -> Result<()> {
+        let library = migrated_library().await?;
+        let root = test_dir("download-owned-work");
+        let library_root = root.join("library");
+        let download_root = root.join("downloads");
+        library.save_account(save_account_request(true)).await?;
+        library
+            .sync_account_with_source(AccountSyncRequest::new("account-a"), &sync_source())
+            .await?;
+        let sink = RecordingDownloadProgressSink::default();
+
+        let report = library
+            .download_work_with_source(
+                WorkDownloadRequest {
+                    progress_sink: Some(&sink),
+                    ..WorkDownloadRequest::new("RJ000001", &library_root, &download_root)
+                },
+                &FakeDownloadSource,
+            )
+            .await?;
+        let page = library.list_products(&ProductListQuery::default()).await?;
+        let events = sink.events.lock().expect("download events lock");
+
+        assert_eq!(report.work_id, "RJ000001");
+        assert_eq!(report.account_id, "account-a");
+        assert_eq!(report.file_count, 1);
+        assert_eq!(report.download_state.status, WorkDownloadStatus::Downloaded);
+        assert!(library_root.join("RJ000001/RJ000001.txt").exists());
+        assert!(!download_root.join("RJ000001").exists());
+        assert_eq!(
+            page.products[0].download.status,
+            WorkDownloadStatus::Downloaded
+        );
+        assert_eq!(
+            page.products[0].download.local_path,
+            Some(library_root.join("RJ000001").to_string_lossy().into_owned())
+        );
+        assert!(matches!(
+            events.first(),
+            Some(WorkDownloadProgress::LoggingIn)
+        ));
+        assert!(matches!(
+            events.last(),
+            Some(WorkDownloadProgress::Completed)
+        ));
+
+        std::fs::remove_dir_all(root).unwrap();
 
         Ok(())
     }

@@ -1,12 +1,14 @@
 use dm_credentials::{CredentialStore, InMemoryCredentialStore, KeyringCredentialStore};
 use dm_jobs::{JobContext, JobFailure, JobId, JobLogPage, JobManager, JobMetadata, JobProgress};
 use dm_library::{
-    AccountSyncRequest, DlsiteSyncSource, Library, SaveAccountRequest, SyncProgress,
-    SyncProgressSink,
+    AccountSyncRequest, DlsiteSyncSource, DlsiteWorkDownloadSource, Library, SaveAccountRequest,
+    SyncProgress, SyncProgressSink, WorkDownloadProgress, WorkDownloadProgressSink,
+    WorkDownloadRequest,
 };
 use dm_storage::{
     Account, AppSettings, ProductAgeCategory, ProductCreditGroup, ProductListItem, ProductListPage,
-    ProductListQuery, ProductOwner, ProductSort, ProductTypeGroup, Storage,
+    ProductListQuery, ProductOwner, ProductSort, ProductTypeGroup, Storage, WorkDownloadState,
+    WorkDownloadStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -152,6 +154,87 @@ async fn start_account_sync(
                 ));
             }
             context.info(format!("Synced {} works", report.cached_work_count));
+
+            Ok(output)
+        },
+    );
+
+    Ok(StartJobResponse {
+        job_id: job_id.to_string(),
+    })
+}
+
+#[tauri::command]
+async fn start_work_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: StartWorkDownloadRequest,
+) -> Result<StartJobResponse, String> {
+    let work_id = normalize_required_id(request.work_id)?;
+    let account_id = normalize_optional_id(request.account_id)?;
+    let password = normalize_secret(request.password)?;
+    let settings = state.storage.app_settings().await.map_err(command_error)?;
+    let library_root = settings
+        .library_root
+        .map(PathBuf::from)
+        .ok_or_else(|| "Library folder is required before downloading".to_owned())?;
+    let download_root = settings
+        .download_root
+        .map(PathBuf::from)
+        .or_else(|| app.path().download_dir().ok())
+        .ok_or_else(|| "Download staging folder is required before downloading".to_owned())?;
+    let unpack_policy = request.unpack_policy.unwrap_or_default().into();
+    let library = state.library.clone();
+    let mut metadata = JobMetadata::new();
+
+    metadata.insert("workId".to_owned(), json!(work_id));
+    if let Some(account_id) = &account_id {
+        metadata.insert("accountId".to_owned(), json!(account_id));
+    }
+
+    let job_work_id = work_id.clone();
+    let job_id = state.jobs.spawn(
+        "workDownload",
+        format!("Download {job_work_id}"),
+        metadata,
+        move |context| async move {
+            context.info("Preparing download");
+            let client = dm_api::DlsiteClient::new(dm_api::DlsiteClientConfig::default())
+                .map_err(|error| JobFailure::with_code("api_client", error.to_string()))?;
+            let source = DlsiteWorkDownloadSource::new(client);
+            let progress_sink = JobWorkDownloadProgressSink {
+                context: context.clone(),
+            };
+            let report = library
+                .download_work_with_source(
+                    WorkDownloadRequest {
+                        work_id: &job_work_id,
+                        account_id: account_id.as_deref(),
+                        password: password.as_deref(),
+                        library_root: &library_root,
+                        download_root: &download_root,
+                        unpack_policy,
+                        cancellation_token: Some(context.cancellation_token()),
+                        progress_sink: Some(&progress_sink),
+                    },
+                    &source,
+                )
+                .await
+                .map_err(work_download_failure)?;
+            let mut output = JobMetadata::new();
+
+            output.insert("workId".to_owned(), json!(report.work_id));
+            output.insert("accountId".to_owned(), json!(report.account_id));
+            output.insert(
+                "localPath".to_owned(),
+                json!(report.local_path.to_string_lossy().to_string()),
+            );
+            output.insert("fileCount".to_owned(), json!(report.file_count));
+            output.insert(
+                "archiveExtracted".to_owned(),
+                json!(report.archive_extracted),
+            );
+            context.info(format!("Downloaded {}", job_work_id));
 
             Ok(output)
         },
@@ -418,6 +501,7 @@ struct ProductListItemDto {
     earliest_purchased_at: Option<String>,
     latest_purchased_at: Option<String>,
     credit_groups: Vec<ProductCreditGroupDto>,
+    download: WorkDownloadStateDto,
     owners: Vec<ProductOwnerDto>,
 }
 
@@ -439,11 +523,68 @@ impl From<ProductListItem> for ProductListItemDto {
                 .into_iter()
                 .map(ProductCreditGroupDto::from)
                 .collect(),
+            download: WorkDownloadStateDto::from(product.download),
             owners: product
                 .owners
                 .into_iter()
                 .map(ProductOwnerDto::from)
                 .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkDownloadStateDto {
+    status: WorkDownloadStatusDto,
+    local_path: Option<String>,
+    staging_path: Option<String>,
+    unpack_policy: Option<String>,
+    bytes_received: u64,
+    bytes_total: Option<u64>,
+    error_code: Option<String>,
+    error_message: Option<String>,
+    started_at: Option<String>,
+    completed_at: Option<String>,
+    updated_at: Option<String>,
+}
+
+impl From<WorkDownloadState> for WorkDownloadStateDto {
+    fn from(state: WorkDownloadState) -> Self {
+        Self {
+            status: WorkDownloadStatusDto::from(state.status),
+            local_path: state.local_path,
+            staging_path: state.staging_path,
+            unpack_policy: state.unpack_policy,
+            bytes_received: state.bytes_received,
+            bytes_total: state.bytes_total,
+            error_code: state.error_code,
+            error_message: state.error_message,
+            started_at: state.started_at,
+            completed_at: state.completed_at,
+            updated_at: state.updated_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum WorkDownloadStatusDto {
+    NotDownloaded,
+    Downloading,
+    Downloaded,
+    Failed,
+    Cancelled,
+}
+
+impl From<WorkDownloadStatus> for WorkDownloadStatusDto {
+    fn from(status: WorkDownloadStatus) -> Self {
+        match status {
+            WorkDownloadStatus::NotDownloaded => Self::NotDownloaded,
+            WorkDownloadStatus::Downloading => Self::Downloading,
+            WorkDownloadStatus::Downloaded => Self::Downloaded,
+            WorkDownloadStatus::Failed => Self::Failed,
+            WorkDownloadStatus::Cancelled => Self::Cancelled,
         }
     }
 }
@@ -489,6 +630,32 @@ impl From<ProductOwner> for ProductOwnerDto {
 struct StartAccountSyncRequest {
     account_id: String,
     password: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartWorkDownloadRequest {
+    work_id: String,
+    account_id: Option<String>,
+    password: Option<String>,
+    unpack_policy: Option<UnpackPolicyDto>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum UnpackPolicyDto {
+    KeepArchives,
+    #[default]
+    UnpackWhenRecognized,
+}
+
+impl From<UnpackPolicyDto> for dm_download::UnpackPolicy {
+    fn from(policy: UnpackPolicyDto) -> Self {
+        match policy {
+            UnpackPolicyDto::KeepArchives => Self::KeepArchives,
+            UnpackPolicyDto::UnpackWhenRecognized => Self::UnpackWhenRecognized,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -566,6 +733,57 @@ impl SyncProgressSink for JobSyncProgressSink {
                 self.context.info(format!(
                     "Sync run {sync_run_id} cached {cached_work_count} works"
                 ));
+            }
+        }
+    }
+}
+
+struct JobWorkDownloadProgressSink {
+    context: JobContext,
+}
+
+impl WorkDownloadProgressSink for JobWorkDownloadProgressSink {
+    fn emit(&self, progress: WorkDownloadProgress) {
+        match progress {
+            WorkDownloadProgress::LoggingIn => {
+                self.context.set_phase("loggingIn");
+                self.context.clear_progress();
+                self.context.info("Signing in for download");
+            }
+            WorkDownloadProgress::ResolvingPlan => {
+                self.context.set_phase("resolvingDownload");
+                self.context.clear_progress();
+                self.context.info("Resolving download files");
+            }
+            WorkDownloadProgress::Download(progress) => {
+                match progress.phase {
+                    dm_download::DownloadPhase::ResolvingPlan => {
+                        self.context.set_phase("resolvingDownload")
+                    }
+                    dm_download::DownloadPhase::ProbingMetadata => {
+                        self.context.set_phase("probingDownload")
+                    }
+                    dm_download::DownloadPhase::Downloading => {
+                        self.context.set_phase("downloading")
+                    }
+                    dm_download::DownloadPhase::Finalizing => self.context.set_phase("finalizing"),
+                    dm_download::DownloadPhase::Unpacking => self.context.set_phase("unpacking"),
+                }
+
+                self.context.set_progress(JobProgress::bytes(
+                    Some(progress.bytes_received),
+                    progress.bytes_total,
+                ));
+            }
+            WorkDownloadProgress::Finalizing => {
+                self.context.set_phase("finalizing");
+                self.context.clear_progress();
+                self.context.info("Moving files into the library");
+            }
+            WorkDownloadProgress::Completed => {
+                self.context.set_phase("completed");
+                self.context.clear_progress();
+                self.context.info("Download completed");
             }
         }
     }
@@ -680,6 +898,40 @@ fn account_sync_failure(error: dm_library::LibraryError) -> JobFailure {
         dm_library::LibraryError::MissingLoginName(_) => "missing_login_name",
         dm_library::LibraryError::MissingPassword(_) => "missing_password",
         dm_library::LibraryError::Cancelled => "cancelled",
+        dm_library::LibraryError::Download(_) => "download",
+        dm_library::LibraryError::DownloadAccountNotFound(_) => "download_account_not_found",
+        dm_library::LibraryError::DownloadTargetExists(_) => "download_target_exists",
+        dm_library::LibraryError::Io(_) => "io",
+        dm_library::LibraryError::Json(_) => "json",
+    };
+
+    JobFailure::with_code(code, error.to_string())
+}
+
+fn work_download_failure(error: dm_library::LibraryError) -> JobFailure {
+    if matches!(error, dm_library::LibraryError::Cancelled)
+        || matches!(
+            error,
+            dm_library::LibraryError::Download(dm_download::DownloadError::Cancelled)
+        )
+    {
+        return JobFailure::cancelled();
+    }
+
+    let code = match &error {
+        dm_library::LibraryError::Storage(_) => "storage",
+        dm_library::LibraryError::Credentials(_) => "credentials",
+        dm_library::LibraryError::Api(_) => "api",
+        dm_library::LibraryError::SyncSource(_) => "sync_source",
+        dm_library::LibraryError::AccountNotFound(_) => "account_not_found",
+        dm_library::LibraryError::AccountDisabled(_) => "account_disabled",
+        dm_library::LibraryError::MissingLoginName(_) => "missing_login_name",
+        dm_library::LibraryError::MissingPassword(_) => "missing_password",
+        dm_library::LibraryError::Cancelled => "cancelled",
+        dm_library::LibraryError::Download(_) => "download",
+        dm_library::LibraryError::DownloadAccountNotFound(_) => "download_account_not_found",
+        dm_library::LibraryError::DownloadTargetExists(_) => "download_target_exists",
+        dm_library::LibraryError::Io(_) => "io",
         dm_library::LibraryError::Json(_) => "json",
     };
 
@@ -754,6 +1006,7 @@ pub fn run() {
             set_account_enabled,
             list_products,
             start_account_sync,
+            start_work_download,
             list_jobs,
             get_job,
             cancel_job,

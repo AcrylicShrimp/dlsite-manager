@@ -20,6 +20,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 dm-api = { path = "../crates/dm-api" }
 dm-credentials = { path = "../crates/dm-credentials" }
+dm-download = { path = "../crates/dm-download" }
 dm-jobs = { path = "../crates/dm-jobs" }
 dm-library = { path = "../crates/dm-library" }
 dm-storage = { path = "../crates/dm-storage" }

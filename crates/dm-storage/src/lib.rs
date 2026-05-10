@@ -27,6 +27,89 @@ pub enum StorageError {
     InvalidStoredValue { field: &'static str, value: String },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkDownloadStatus {
+    NotDownloaded,
+    Downloading,
+    Downloaded,
+    Failed,
+    Cancelled,
+}
+
+impl WorkDownloadStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::NotDownloaded => "not_downloaded",
+            Self::Downloading => "downloading",
+            Self::Downloaded => "downloaded",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    fn from_storage_value(value: &str) -> Result<Self> {
+        match value {
+            "downloading" => Ok(Self::Downloading),
+            "downloaded" => Ok(Self::Downloaded),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err(StorageError::InvalidStoredValue {
+                field: "work_downloads.status",
+                value: value.to_owned(),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkDownloadState {
+    pub status: WorkDownloadStatus,
+    pub local_path: Option<String>,
+    pub staging_path: Option<String>,
+    pub unpack_policy: Option<String>,
+    pub bytes_received: u64,
+    pub bytes_total: Option<u64>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+impl Default for WorkDownloadState {
+    fn default() -> Self {
+        Self {
+            status: WorkDownloadStatus::NotDownloaded,
+            local_path: None,
+            staging_path: None,
+            unpack_policy: None,
+            bytes_received: 0,
+            bytes_total: None,
+            error_code: None,
+            error_message: None,
+            started_at: None,
+            completed_at: None,
+            updated_at: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkDownloadUpdate {
+    pub work_id: String,
+    pub status: WorkDownloadStatus,
+    pub local_path: Option<String>,
+    pub staging_path: Option<String>,
+    pub unpack_policy: String,
+    pub bytes_received: u64,
+    pub bytes_total: Option<u64>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AppSettings {
     pub library_root: Option<String>,
@@ -239,6 +322,7 @@ pub struct ProductListItem {
     pub earliest_purchased_at: Option<String>,
     pub latest_purchased_at: Option<String>,
     pub credit_groups: Vec<ProductCreditGroup>,
+    pub download: WorkDownloadState,
     pub owners: Vec<ProductOwner>,
 }
 
@@ -412,6 +496,68 @@ impl Storage {
         rows.into_iter().map(sync_run_from_row).collect()
     }
 
+    pub async fn download_account_for_work(
+        &self,
+        work_id: &str,
+        account_id: Option<&str>,
+    ) -> Result<Account> {
+        let mut builder = QueryBuilder::<Sqlite>::new(
+            "SELECT a.id, a.label, a.login_name, a.credential_ref, a.enabled,
+                    a.created_at, a.updated_at, a.last_login_at, a.last_sync_at
+             FROM account_works aw
+             JOIN accounts a ON a.id = aw.account_id
+             WHERE aw.work_id = ",
+        );
+
+        builder.push_bind(work_id.to_owned());
+        builder.push(" AND aw.is_current = 1 AND a.enabled = 1");
+
+        if let Some(account_id) = account_id {
+            builder.push(" AND aw.account_id = ");
+            builder.push_bind(account_id.to_owned());
+        }
+
+        builder.push(" ORDER BY lower(a.label) ASC, a.id ASC LIMIT 1");
+
+        builder
+            .build()
+            .fetch_optional(&self.pool)
+            .await?
+            .map(account_from_row)
+            .transpose()?
+            .ok_or_else(|| StorageError::NotFound {
+                entity: "download account for work",
+                id: match account_id {
+                    Some(account_id) => format!("{work_id}/{account_id}"),
+                    None => work_id.to_owned(),
+                },
+            })
+    }
+
+    pub async fn work_download_state(&self, work_id: &str) -> Result<WorkDownloadState> {
+        let row = sqlx::query(
+            "SELECT status, local_path, staging_path, unpack_policy, bytes_received,
+                    bytes_total, error_code, error_message, started_at, completed_at,
+                    updated_at
+             FROM work_downloads
+             WHERE work_id = ?1",
+        )
+        .bind(work_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        row.map(work_download_state_from_row)
+            .transpose()
+            .map(|state| state.unwrap_or_default())
+    }
+
+    pub async fn save_work_download(&self, download: &WorkDownloadUpdate) -> Result<()> {
+        let mut transaction = self.begin_write().await?;
+
+        transaction.save_work_download(download).await?;
+        transaction.commit().await
+    }
+
     pub async fn list_products(&self, query: &ProductListQuery) -> Result<ProductListPage> {
         let total_count = self.count_products(query).await?;
         let products = self.fetch_product_page(query).await?;
@@ -477,11 +623,23 @@ impl Storage {
                 w.raw_json,
                 vw.earliest_purchased_at,
                 vw.latest_purchased_at,
+                wd.status AS download_status,
+                wd.local_path AS download_local_path,
+                wd.staging_path AS download_staging_path,
+                wd.unpack_policy AS download_unpack_policy,
+                wd.bytes_received AS download_bytes_received,
+                wd.bytes_total AS download_bytes_total,
+                wd.error_code AS download_error_code,
+                wd.error_message AS download_error_message,
+                wd.started_at AS download_started_at,
+                wd.completed_at AS download_completed_at,
+                wd.updated_at AS download_updated_at,
                 aw.account_id,
                 a.label AS account_label,
                 aw.purchased_at
              FROM visible_works vw
              JOIN works w ON w.work_id = vw.work_id
+             LEFT JOIN work_downloads wd ON wd.work_id = w.work_id
              JOIN account_works aw ON aw.work_id = w.work_id
              JOIN accounts a ON a.id = aw.account_id
              WHERE aw.is_current = 1 AND a.enabled = 1
@@ -522,6 +680,7 @@ impl Storage {
                 earliest_purchased_at: row.try_get("earliest_purchased_at")?,
                 latest_purchased_at: row.try_get("latest_purchased_at")?,
                 credit_groups: product_credit_groups_from_raw_json(&raw_json),
+                download: work_download_state_from_product_row(&row)?,
                 owners: vec![owner],
             });
         }
@@ -736,6 +895,59 @@ impl WriteTransaction<'_> {
         .await
     }
 
+    pub async fn save_work_download(&mut self, download: &WorkDownloadUpdate) -> Result<()> {
+        self.ensure_work_exists(&download.work_id).await?;
+        let transaction = self
+            .transaction
+            .as_mut()
+            .ok_or(StorageError::TransactionFinished)?;
+
+        sqlx::query(
+            "INSERT INTO work_downloads (
+                work_id, status, local_path, staging_path, unpack_policy,
+                bytes_received, bytes_total, error_code, error_message,
+                started_at, completed_at, updated_at
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             ON CONFLICT(work_id) DO UPDATE SET
+                status = excluded.status,
+                local_path = excluded.local_path,
+                staging_path = excluded.staging_path,
+                unpack_policy = excluded.unpack_policy,
+                bytes_received = excluded.bytes_received,
+                bytes_total = excluded.bytes_total,
+                error_code = excluded.error_code,
+                error_message = excluded.error_message,
+                started_at = excluded.started_at,
+                completed_at = excluded.completed_at,
+                updated_at = excluded.updated_at",
+        )
+        .bind(&download.work_id)
+        .bind(download.status.as_str())
+        .bind(&download.local_path)
+        .bind(&download.staging_path)
+        .bind(&download.unpack_policy)
+        .bind(u64_to_i64(
+            download.bytes_received,
+            "work_downloads.bytes_received",
+        )?)
+        .bind(
+            download
+                .bytes_total
+                .map(|value| u64_to_i64(value, "work_downloads.bytes_total"))
+                .transpose()?,
+        )
+        .bind(&download.error_code)
+        .bind(&download.error_message)
+        .bind(&download.started_at)
+        .bind(&download.completed_at)
+        .bind(&download.updated_at)
+        .execute(&mut **transaction)
+        .await?;
+
+        Ok(())
+    }
+
     async fn ensure_account_exists(&mut self, account_id: &str) -> Result<()> {
         let transaction = self
             .transaction
@@ -752,6 +964,26 @@ impl WriteTransaction<'_> {
             Err(StorageError::NotFound {
                 entity: "account",
                 id: account_id.to_owned(),
+            })
+        }
+    }
+
+    async fn ensure_work_exists(&mut self, work_id: &str) -> Result<()> {
+        let transaction = self
+            .transaction
+            .as_mut()
+            .ok_or(StorageError::TransactionFinished)?;
+        let row = sqlx::query("SELECT 1 FROM works WHERE work_id = ?1")
+            .bind(work_id)
+            .fetch_optional(&mut **transaction)
+            .await?;
+
+        if row.is_some() {
+            Ok(())
+        } else {
+            Err(StorageError::NotFound {
+                entity: "work",
+                id: work_id.to_owned(),
             })
         }
     }
@@ -954,6 +1186,58 @@ fn sync_run_from_row(row: sqlx::sqlite::SqliteRow) -> Result<SyncRun> {
         completed_at: row.try_get("completed_at")?,
         error_code: row.try_get("error_code")?,
         error_message: row.try_get("error_message")?,
+    })
+}
+
+fn work_download_state_from_row(row: sqlx::sqlite::SqliteRow) -> Result<WorkDownloadState> {
+    let status: String = row.try_get("status")?;
+
+    Ok(WorkDownloadState {
+        status: WorkDownloadStatus::from_storage_value(&status)?,
+        local_path: row.try_get("local_path")?,
+        staging_path: row.try_get("staging_path")?,
+        unpack_policy: row.try_get("unpack_policy")?,
+        bytes_received: i64_to_u64(
+            row.try_get("bytes_received")?,
+            "work_downloads.bytes_received",
+        )?,
+        bytes_total: row
+            .try_get::<Option<i64>, _>("bytes_total")?
+            .map(|value| i64_to_u64(value, "work_downloads.bytes_total"))
+            .transpose()?,
+        error_code: row.try_get("error_code")?,
+        error_message: row.try_get("error_message")?,
+        started_at: row.try_get("started_at")?,
+        completed_at: row.try_get("completed_at")?,
+        updated_at: row.try_get("updated_at")?,
+    })
+}
+
+fn work_download_state_from_product_row(
+    row: &sqlx::sqlite::SqliteRow,
+) -> Result<WorkDownloadState> {
+    let Some(status) = row.try_get::<Option<String>, _>("download_status")? else {
+        return Ok(WorkDownloadState::default());
+    };
+
+    Ok(WorkDownloadState {
+        status: WorkDownloadStatus::from_storage_value(&status)?,
+        local_path: row.try_get("download_local_path")?,
+        staging_path: row.try_get("download_staging_path")?,
+        unpack_policy: row.try_get("download_unpack_policy")?,
+        bytes_received: i64_to_u64(
+            row.try_get("download_bytes_received")?,
+            "work_downloads.bytes_received",
+        )?,
+        bytes_total: row
+            .try_get::<Option<i64>, _>("download_bytes_total")?
+            .map(|value| i64_to_u64(value, "work_downloads.bytes_total"))
+            .transpose()?,
+        error_code: row.try_get("download_error_code")?,
+        error_message: row.try_get("download_error_message")?,
+        started_at: row.try_get("download_started_at")?,
+        completed_at: row.try_get("download_completed_at")?,
+        updated_at: row.try_get("download_updated_at")?,
     })
 }
 
@@ -1253,6 +1537,20 @@ fn i64_to_bool(value: i64, field: &'static str) -> Result<bool> {
     }
 }
 
+fn u64_to_i64(value: u64, field: &'static str) -> Result<i64> {
+    i64::try_from(value).map_err(|_| StorageError::InvalidStoredValue {
+        field,
+        value: value.to_string(),
+    })
+}
+
+fn i64_to_u64(value: i64, field: &'static str) -> Result<u64> {
+    u64::try_from(value).map_err(|_| StorageError::InvalidStoredValue {
+        field,
+        value: value.to_string(),
+    })
+}
+
 fn ensure_changed(result: SqliteQueryResult, entity: &'static str, id: &str) -> Result<()> {
     if result.rows_affected() == 0 {
         Err(StorageError::NotFound {
@@ -1373,7 +1671,7 @@ mod tests {
             .fetch_one(&storage.pool)
             .await?;
 
-        assert_eq!(migration_count, 3);
+        assert_eq!(migration_count, 4);
 
         Ok(())
     }
@@ -2266,6 +2564,111 @@ mod tests {
             ["RJ000004", "RJ000006"]
         );
         assert_eq!(other_page.products[0].work_id, "RJ000005");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn product_list_includes_download_state() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-1",
+                vec![work(
+                    "RJ000001",
+                    "Downloaded Work",
+                    "Circle One",
+                    "2026-01-01T00:00:00Z",
+                )],
+                vec![account_work("RJ000001", "2026-02-01T00:00:00Z")],
+            ))
+            .await?;
+
+        let initial_page = storage.list_products(&ProductListQuery::default()).await?;
+
+        assert_eq!(
+            initial_page.products[0].download.status,
+            WorkDownloadStatus::NotDownloaded
+        );
+
+        storage
+            .save_work_download(&WorkDownloadUpdate {
+                work_id: "RJ000001".to_owned(),
+                status: WorkDownloadStatus::Downloaded,
+                local_path: Some("/library/RJ000001".to_owned()),
+                staging_path: Some("/downloads/RJ000001".to_owned()),
+                unpack_policy: "unpack_when_recognized".to_owned(),
+                bytes_received: 42,
+                bytes_total: Some(42),
+                error_code: None,
+                error_message: None,
+                started_at: Some("2026-05-11T00:00:00.000Z".to_owned()),
+                completed_at: Some("2026-05-11T00:01:00.000Z".to_owned()),
+                updated_at: "2026-05-11T00:01:00.000Z".to_owned(),
+            })
+            .await?;
+
+        let page = storage.list_products(&ProductListQuery::default()).await?;
+        let state = &page.products[0].download;
+
+        assert_eq!(state.status, WorkDownloadStatus::Downloaded);
+        assert_eq!(state.local_path, Some("/library/RJ000001".to_owned()));
+        assert_eq!(state.bytes_received, 42);
+        assert_eq!(state.bytes_total, Some(42));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_account_for_work_uses_enabled_current_owner() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+        storage
+            .save_account(&account("account-b", "Account B"))
+            .await?;
+        storage.set_account_enabled("account-a", false).await?;
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-1",
+                vec![work(
+                    "RJ000001",
+                    "Owned Work",
+                    "Circle One",
+                    "2026-01-01T00:00:00Z",
+                )],
+                vec![account_work("RJ000001", "2026-02-01T00:00:00Z")],
+            ))
+            .await?;
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-b",
+                "sync-b-1",
+                vec![work(
+                    "RJ000001",
+                    "Owned Work",
+                    "Circle One",
+                    "2026-01-01T00:00:00Z",
+                )],
+                vec![account_work("RJ000001", "2026-02-02T00:00:00Z")],
+            ))
+            .await?;
+
+        let account = storage.download_account_for_work("RJ000001", None).await?;
+
+        assert_eq!(account.id, "account-b");
+        assert!(matches!(
+            storage
+                .download_account_for_work("RJ000001", Some("account-a"))
+                .await,
+            Err(StorageError::NotFound { .. })
+        ));
 
         Ok(())
     }

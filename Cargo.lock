@@ -988,6 +988,7 @@ version = "0.1.0"
 dependencies = [
  "dm-api",
  "dm-credentials",
+ "dm-download",
  "dm-jobs",
  "dm-library",
  "dm-storage",
@@ -1075,6 +1076,7 @@ dependencies = [
  "chrono",
  "dm-api",
  "dm-credentials",
+ "dm-download",
  "dm-jobs",
  "dm-storage",
  "serde_json",

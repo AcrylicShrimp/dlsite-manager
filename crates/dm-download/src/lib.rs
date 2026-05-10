@@ -372,6 +372,20 @@ where
     let staging_path = staging_dir.join(&request.file_name);
 
     if target_path.try_exists()? {
+        let existing_size = fs::metadata(&target_path).await?.len();
+
+        if request
+            .expected_size
+            .is_some_and(|expected_size| existing_size == expected_size)
+        {
+            return Ok(DownloadedFile {
+                file_name: request.file_name.clone(),
+                path: target_path,
+                bytes_written: existing_size,
+                resumed_from: existing_size,
+            });
+        }
+
         return Err(DownloadError::TargetAlreadyExists { path: target_path });
     }
 
@@ -728,6 +742,24 @@ mod tests {
         assert_eq!(downloaded.resumed_from, 3);
         assert_eq!(std::fs::read(dir.join("RJ123456.zip")).unwrap(), b"abcdef");
         assert_eq!(source.starts(), vec![3]);
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn reuses_existing_finalized_file_when_size_matches() {
+        let dir = test_dir("existing-final");
+        std::fs::write(dir.join("RJ123456.zip"), b"abcdef").unwrap();
+        let mut source = ScriptedSource::new(vec![]);
+        let request = request(&dir, "RJ123456.zip", Some(6));
+
+        let downloaded = download_file(&mut source, &request, &CancellationToken::new(), |_| {})
+            .await
+            .unwrap();
+
+        assert_eq!(downloaded.bytes_written, 6);
+        assert_eq!(downloaded.resumed_from, 6);
+        assert_eq!(source.starts(), Vec::<u64>::new());
 
         std::fs::remove_dir_all(dir).unwrap();
     }

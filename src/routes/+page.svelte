@@ -2,7 +2,8 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { downloadDir } from "@tauri-apps/api/path";
-  import { open } from "@tauri-apps/plugin-dialog";
+  import { open as openDialog } from "@tauri-apps/plugin-dialog";
+  import { openPath } from "@tauri-apps/plugin-opener";
   import { onDestroy, onMount } from "svelte";
 
   type AppSettings = {
@@ -28,6 +29,27 @@
     purchasedAt: string | null;
   };
 
+  type WorkDownloadStatus =
+    | "notDownloaded"
+    | "downloading"
+    | "downloaded"
+    | "failed"
+    | "cancelled";
+
+  type ProductDownload = {
+    status: WorkDownloadStatus;
+    localPath: string | null;
+    stagingPath: string | null;
+    unpackPolicy: string | null;
+    bytesReceived: number;
+    bytesTotal: number | null;
+    errorCode: string | null;
+    errorMessage: string | null;
+    startedAt: string | null;
+    completedAt: string | null;
+    updatedAt: string | null;
+  };
+
   type ProductCreditGroup = {
     kind: string;
     label: string;
@@ -46,6 +68,7 @@
     earliestPurchasedAt: string | null;
     latestPurchasedAt: string | null;
     creditGroups: ProductCreditGroup[];
+    download: ProductDownload;
     owners: ProductOwner[];
   };
 
@@ -341,7 +364,7 @@
     try {
       const fallbackRoot = await systemDownloadRoot();
       const currentRoot = kind === "library" ? libraryRoot : downloadRoot;
-      const selected = await open({
+      const selected = await openDialog({
         directory: true,
         multiple: false,
         canCreateDirectories: true,
@@ -502,6 +525,10 @@
     if (event.kind === "accountSync" && isTerminalJob(event.snapshot)) {
       await Promise.all([loadAccounts(), loadProducts()]);
     }
+
+    if (event.kind === "workDownload" && isTerminalJob(event.snapshot)) {
+      await loadProducts();
+    }
   }
 
   async function searchProducts(event: Event) {
@@ -596,6 +623,43 @@
     }
 
     await cancelJob(job);
+  }
+
+  async function startWorkDownload(product: Product) {
+    if (activeWorkDownloadJob(product.workId)) {
+      return;
+    }
+
+    try {
+      const response = await invoke<StartJobResponse>("start_work_download", {
+        request: {
+          workId: product.workId,
+          accountId: selectedAccountId || null,
+          password: null,
+          unpackPolicy: "unpackWhenRecognized",
+        },
+      });
+      notifyInfo("Download queued");
+      jobMessages = {
+        ...jobMessages,
+        [response.jobId]: "Download queued",
+      };
+      await loadJobs();
+    } catch (err) {
+      notifyError(errorMessage(err));
+    }
+  }
+
+  async function openDownloadedProduct(product: Product) {
+    if (!product.download.localPath) {
+      return;
+    }
+
+    try {
+      await openPath(product.download.localPath);
+    } catch (err) {
+      notifyError(errorMessage(err));
+    }
   }
 
   async function cancelJob(job: JobSnapshot) {
@@ -729,6 +793,14 @@
     return [...accountSyncJobs(accountId)].reverse()[0] ?? null;
   }
 
+  function workDownloadJobs(workId: string) {
+    return jobs.filter((job) => job.kind === "workDownload" && jobWorkId(job) === workId);
+  }
+
+  function activeWorkDownloadJob(workId: string) {
+    return [...workDownloadJobs(workId)].reverse().find(isActiveJob) ?? null;
+  }
+
   function visibleJobs(limit = 20) {
     return [...jobs].reverse().slice(0, limit);
   }
@@ -750,7 +822,16 @@
     return typeof accountId === "string" ? accountId : null;
   }
 
+  function jobWorkId(job: JobSnapshot) {
+    const workId = job.metadata.workId;
+    return typeof workId === "string" ? workId : null;
+  }
+
   function jobAccountLabel(job: JobSnapshot) {
+    if (job.kind === "workDownload") {
+      return jobWorkId(job) ?? job.title;
+    }
+
     const accountId = jobAccountId(job);
     const account = accounts.find((item) => item.id === accountId);
     return account?.label ?? accountId ?? job.title;
@@ -774,6 +855,10 @@
     }
 
     if (job.status === "succeeded") {
+      if (job.kind === "workDownload") {
+        return "Downloaded";
+      }
+
       const cachedCount = jobOutputNumber(job, "cachedWorkCount");
       return typeof cachedCount === "number" ? `Synced ${cachedCount} works` : "Synced";
     }
@@ -791,8 +876,18 @@
         return "Saving cache";
       case "completed":
         return "Completing";
+      case "resolvingDownload":
+        return "Resolving download";
+      case "probingDownload":
+        return "Checking file";
+      case "downloading":
+        return downloadJobProgressLabel(job);
+      case "unpacking":
+        return "Unpacking";
+      case "finalizing":
+        return "Finalizing";
       default:
-        return "Syncing";
+        return job.kind === "workDownload" ? "Downloading" : "Syncing";
     }
   }
 
@@ -807,6 +902,75 @@
   function jobOutputNumber(job: JobSnapshot, key: string) {
     const value = job.output?.[key];
     return typeof value === "number" ? value : null;
+  }
+
+  function downloadJobProgressLabel(job: JobSnapshot) {
+    if (job.progress?.unit !== "bytes") {
+      return "Downloading";
+    }
+
+    const current = job.progress.current ?? 0;
+    const total = job.progress.total;
+
+    if (typeof total === "number" && total > 0) {
+      return `Downloading ${Math.min(100, Math.floor((current * 100) / total))}%`;
+    }
+
+    return "Downloading";
+  }
+
+  function productDownloadActionLabel(product: Product, job: JobSnapshot | null) {
+    if (job) {
+      if (job.status === "queued") {
+        return "Queued";
+      }
+
+      if (job.status === "cancelling") {
+        return "Cancelling";
+      }
+
+      return downloadJobProgressLabel(job);
+    }
+
+    switch (product.download.status) {
+      case "downloaded":
+        return "Open";
+      case "failed":
+      case "cancelled":
+      case "downloading":
+        return "Retry";
+      default:
+        return "Download";
+    }
+  }
+
+  function productDownloadActionTitle(product: Product, job: JobSnapshot | null) {
+    if (job) {
+      return jobLabel(job);
+    }
+
+    if (product.download.status === "downloaded" && product.download.localPath) {
+      return `Open ${product.download.localPath}`;
+    }
+
+    if (product.download.errorMessage) {
+      return product.download.errorMessage;
+    }
+
+    return "Download this work";
+  }
+
+  function productDownloadActionDisabled(product: Product, job: JobSnapshot | null) {
+    return !!job || (product.download.status === "downloaded" && !product.download.localPath);
+  }
+
+  async function runProductDownloadAction(product: Product) {
+    if (product.download.status === "downloaded") {
+      await openDownloadedProduct(product);
+      return;
+    }
+
+    await startWorkDownload(product);
   }
 
   function productType(product: Product): ProductTypeInfo {
@@ -1205,6 +1369,7 @@
           <div class="product-table" aria-label="Cached products">
             {#each products as product (product.workId)}
               {@const typeInfo = productType(product)}
+              {@const downloadJob = activeWorkDownloadJob(product.workId)}
               <article class="product-card" data-tone={typeInfo.tone}>
                 <div class="type-belt" aria-hidden="true"></div>
                 {#if product.thumbnailUrl}
@@ -1291,8 +1456,14 @@
                       </div>
                     </div>
                     <div class="product-actions" aria-label="Actions">
-                      <button class="small" type="button" disabled title="Download handling is a later slice">
-                        Download
+                      <button
+                        class="small"
+                        type="button"
+                        title={productDownloadActionTitle(product, downloadJob)}
+                        disabled={productDownloadActionDisabled(product, downloadJob)}
+                        onclick={() => runProductDownloadAction(product)}
+                      >
+                        {productDownloadActionLabel(product, downloadJob)}
                       </button>
                       <button class="secondary small menu-button" type="button" disabled title="More actions">
                         ...
