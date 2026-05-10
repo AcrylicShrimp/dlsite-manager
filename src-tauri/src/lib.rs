@@ -6,7 +6,7 @@ use dm_library::{
 };
 use dm_storage::{
     Account, AppSettings, ProductAgeCategory, ProductCreditGroup, ProductListItem, ProductListPage,
-    ProductListQuery, ProductOwner, ProductSort, Storage,
+    ProductListQuery, ProductOwner, ProductSort, ProductTypeGroup, Storage,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -304,6 +304,7 @@ struct SetAccountEnabledRequest {
 struct ListProductsRequest {
     search: Option<String>,
     account_id: Option<String>,
+    type_group: Option<ProductTypeGroupDto>,
     age_category: Option<ProductAgeCategoryDto>,
     sort: Option<ProductSortDto>,
     limit: Option<u32>,
@@ -315,6 +316,7 @@ impl ListProductsRequest {
         Ok(ProductListQuery {
             search: normalize_optional_string(self.search)?,
             account_id: normalize_optional_id(self.account_id)?,
+            type_group: self.type_group.map(Into::into),
             age_category: self.age_category.map(Into::into),
             sort: self.sort.unwrap_or_default().into(),
             limit: self.limit.unwrap_or(100).clamp(1, 500),
@@ -356,6 +358,28 @@ impl From<ProductAgeCategoryDto> for ProductAgeCategory {
             ProductAgeCategoryDto::All => Self::All,
             ProductAgeCategoryDto::R15 => Self::R15,
             ProductAgeCategoryDto::R18 => Self::R18,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum ProductTypeGroupDto {
+    Audio,
+    Video,
+    Game,
+    Image,
+    Other,
+}
+
+impl From<ProductTypeGroupDto> for ProductTypeGroup {
+    fn from(type_group: ProductTypeGroupDto) -> Self {
+        match type_group {
+            ProductTypeGroupDto::Audio => Self::Audio,
+            ProductTypeGroupDto::Video => Self::Video,
+            ProductTypeGroupDto::Game => Self::Game,
+            ProductTypeGroupDto::Image => Self::Image,
+            ProductTypeGroupDto::Other => Self::Other,
         }
     }
 }

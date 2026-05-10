@@ -156,6 +156,7 @@
   let productsLoading = $state(true);
   let productSearch = $state("");
   let selectedAccountId = $state("");
+  let selectedProductType = $state("");
   let selectedAgeCategory = $state("");
   let productSort = $state("titleAsc");
 
@@ -362,6 +363,7 @@
         request: {
           search: valueOrNull(productSearch),
           accountId: selectedAccountId || null,
+          typeGroup: selectedProductType || null,
           ageCategory: selectedAgeCategory || null,
           sort: productSort,
           limit: 100,
@@ -974,7 +976,7 @@
             type="search"
             autocomplete="off"
             spellcheck="false"
-            placeholder="Search title, maker, work ID"
+            placeholder="Search title, maker, credit, tag, work ID"
             bind:value={productSearch}
           />
           <select bind:value={selectedAccountId} onchange={loadProducts}>
@@ -982,6 +984,14 @@
             {#each accounts as account (account.id)}
               <option value={account.id}>{account.label}</option>
             {/each}
+          </select>
+          <select bind:value={selectedProductType} onchange={loadProducts}>
+            <option value="">Any type</option>
+            <option value="audio">Audio</option>
+            <option value="video">Video</option>
+            <option value="game">Game</option>
+            <option value="image">Image / comic</option>
+            <option value="other">Other</option>
           </select>
           <select bind:value={selectedAgeCategory} onchange={loadProducts}>
             <option value="">Any age</option>
@@ -1927,7 +1937,7 @@
   .toolbar {
     display: grid;
     flex: 0 0 auto;
-    grid-template-columns: minmax(220px, 1fr) 170px 130px 160px auto auto auto;
+    grid-template-columns: minmax(220px, 1fr) 160px 130px 130px 150px auto auto auto;
     gap: 10px;
     padding: 14px;
     border-bottom: 1px solid var(--border);

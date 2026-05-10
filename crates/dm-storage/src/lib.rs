@@ -174,10 +174,32 @@ impl ProductAgeCategory {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductTypeGroup {
+    Audio,
+    Video,
+    Game,
+    Image,
+    Other,
+}
+
+impl ProductTypeGroup {
+    fn as_storage_value(self) -> &'static str {
+        match self {
+            Self::Audio => "audio",
+            Self::Video => "video",
+            Self::Game => "game",
+            Self::Image => "image",
+            Self::Other => "other",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductListQuery {
     pub search: Option<String>,
     pub account_id: Option<String>,
+    pub type_group: Option<ProductTypeGroup>,
     pub age_category: Option<ProductAgeCategory>,
     pub sort: ProductSort,
     pub limit: u32,
@@ -189,6 +211,7 @@ impl Default for ProductListQuery {
         Self {
             search: None,
             account_id: None,
+            type_group: None,
             age_category: None,
             sort: ProductSort::TitleAsc,
             limit: 100,
@@ -955,6 +978,13 @@ fn push_product_filters(builder: &mut QueryBuilder<Sqlite>, query: &ProductListQ
         builder.push_bind(age_category.as_storage_value());
     }
 
+    if let Some(type_group) = query.type_group {
+        builder.push(" AND ");
+        builder.push(product_type_group_case_sql());
+        builder.push(" = ");
+        builder.push_bind(type_group.as_storage_value());
+    }
+
     if let Some(search) = query
         .search
         .as_deref()
@@ -976,9 +1006,73 @@ fn push_product_filters(builder: &mut QueryBuilder<Sqlite>, query: &ProductListQ
             " ESCAPE '\\'
                 OR w.maker_name LIKE ",
         );
+        builder.push_bind(pattern.clone());
+        builder.push(
+            " ESCAPE '\\'
+                OR EXISTS (
+                    SELECT 1
+                    FROM json_each(
+                        CASE
+                            WHEN json_valid(w.raw_json) THEN w.raw_json
+                            ELSE '{\"tags\":[]}'
+                        END,
+                        '$.tags'
+                    ) AS tag
+                    WHERE json_extract(tag.value, '$.name') LIKE ",
+        );
         builder.push_bind(pattern);
-        builder.push(" ESCAPE '\\')");
+        builder.push(" ESCAPE '\\'))");
     }
+}
+
+fn product_type_group_case_sql() -> &'static str {
+    "CASE
+        WHEN lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%sou%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%audio%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%voice%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%asmr%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%music%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%sound%'
+            THEN 'audio'
+        WHEN lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%mov%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%movie%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%video%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%anime%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%voicecomic%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%vcomic%'
+            THEN 'video'
+        WHEN lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%gam%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%game%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%rpg%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%adv%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%action%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%acn%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%puzzle%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%puz%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%quiz%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%simulation%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%slg%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%shooter%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%stg%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%tabletop%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%typing%'
+            THEN 'game'
+        WHEN lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%cg%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%icg%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%image%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%illust%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%comic%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%com%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%manga%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%mng%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%gekiga%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%pdf%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%novel%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%digitalnovel%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%book%'
+            THEN 'image'
+        ELSE 'other'
+    END"
 }
 
 fn push_product_sort(builder: &mut QueryBuilder<Sqlite>, sort: ProductSort) {
@@ -1195,6 +1289,19 @@ mod tests {
             updated_at: Some(published_at.to_owned()),
             raw_json: format!(r#"{{"workno":"{work_id}"}}"#),
             last_detail_sync_at: "2026-05-09T00:00:00.000Z".to_owned(),
+        }
+    }
+
+    fn work_with_type(
+        work_id: &str,
+        title: &str,
+        maker_name: &str,
+        published_at: &str,
+        work_type: &str,
+    ) -> CachedWork {
+        CachedWork {
+            work_type: Some(work_type.to_owned()),
+            ..work(work_id, title, maker_name, published_at)
         }
     }
 
@@ -1913,6 +2020,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn product_list_searches_cached_tag_names() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-1",
+                vec![work_with_raw_json(
+                    "RJ000001",
+                    "Tagged Work",
+                    "Circle One",
+                    "2026-01-01T00:00:00Z",
+                    r#"{
+                        "workno": "RJ000001",
+                        "tags": [
+                            { "class": "genre", "name": "Deep Sleep" },
+                            { "class": "voice_by", "name": "Voice Person" }
+                        ]
+                    }"#,
+                )],
+                vec![account_work("RJ000001", "2026-02-01T00:00:00Z")],
+            ))
+            .await?;
+
+        let genre_page = storage
+            .list_products(&ProductListQuery {
+                search: Some("Deep Sleep".to_owned()),
+                ..ProductListQuery::default()
+            })
+            .await?;
+        let credit_page = storage
+            .list_products(&ProductListQuery {
+                search: Some("Voice Person".to_owned()),
+                ..ProductListQuery::default()
+            })
+            .await?;
+
+        assert_eq!(genre_page.total_count, 1);
+        assert_eq!(genre_page.products[0].work_id, "RJ000001");
+        assert_eq!(credit_page.total_count, 1);
+        assert_eq!(credit_page.products[0].work_id, "RJ000001");
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn product_list_can_filter_by_age_category() -> Result<()> {
         let storage = migrated_storage().await?;
         storage
@@ -1978,6 +2133,103 @@ mod tests {
         assert_eq!(r15_page.products[0].work_id, "RJ000002");
         assert_eq!(r18_page.total_count, 1);
         assert_eq!(r18_page.products[0].work_id, "RJ000003");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn product_list_can_filter_by_type_group() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-1",
+                vec![
+                    work_with_type(
+                        "RJ000001",
+                        "Voice Work",
+                        "Circle One",
+                        "2026-01-01T00:00:00Z",
+                        "SOU",
+                    ),
+                    work_with_type(
+                        "RJ000002",
+                        "Video Work",
+                        "Circle Two",
+                        "2026-01-02T00:00:00Z",
+                        "MOV",
+                    ),
+                    work_with_type(
+                        "RJ000003",
+                        "Game Work",
+                        "Circle Three",
+                        "2026-01-03T00:00:00Z",
+                        "RPG",
+                    ),
+                    work_with_type(
+                        "RJ000004",
+                        "Comic Work",
+                        "Circle Four",
+                        "2026-01-04T00:00:00Z",
+                        "COM",
+                    ),
+                    work_with_type(
+                        "RJ000005",
+                        "Other Work",
+                        "Circle Five",
+                        "2026-01-05T00:00:00Z",
+                        "ETC",
+                    ),
+                ],
+                vec![
+                    account_work("RJ000001", "2026-02-01T00:00:00Z"),
+                    account_work("RJ000002", "2026-02-02T00:00:00Z"),
+                    account_work("RJ000003", "2026-02-03T00:00:00Z"),
+                    account_work("RJ000004", "2026-02-04T00:00:00Z"),
+                    account_work("RJ000005", "2026-02-05T00:00:00Z"),
+                ],
+            ))
+            .await?;
+
+        let audio_page = storage
+            .list_products(&ProductListQuery {
+                type_group: Some(ProductTypeGroup::Audio),
+                ..ProductListQuery::default()
+            })
+            .await?;
+        let video_page = storage
+            .list_products(&ProductListQuery {
+                type_group: Some(ProductTypeGroup::Video),
+                ..ProductListQuery::default()
+            })
+            .await?;
+        let game_page = storage
+            .list_products(&ProductListQuery {
+                type_group: Some(ProductTypeGroup::Game),
+                ..ProductListQuery::default()
+            })
+            .await?;
+        let image_page = storage
+            .list_products(&ProductListQuery {
+                type_group: Some(ProductTypeGroup::Image),
+                ..ProductListQuery::default()
+            })
+            .await?;
+        let other_page = storage
+            .list_products(&ProductListQuery {
+                type_group: Some(ProductTypeGroup::Other),
+                ..ProductListQuery::default()
+            })
+            .await?;
+
+        assert_eq!(audio_page.products[0].work_id, "RJ000001");
+        assert_eq!(video_page.products[0].work_id, "RJ000002");
+        assert_eq!(game_page.products[0].work_id, "RJ000003");
+        assert_eq!(image_page.products[0].work_id, "RJ000004");
+        assert_eq!(other_page.products[0].work_id, "RJ000005");
 
         Ok(())
     }
