@@ -1986,12 +1986,11 @@
 
   .account-row {
     display: grid;
-    grid-template-columns: minmax(260px, 0.9fr) minmax(280px, 1fr);
-    grid-template-rows: auto minmax(0, 1fr) auto;
-    gap: 18px 28px;
-    align-items: start;
-    min-height: 188px;
-    padding: 18px 20px;
+    grid-template-columns: minmax(104px, auto) minmax(180px, 0.85fr) minmax(300px, 1.15fr) auto;
+    gap: 14px;
+    align-items: center;
+    min-height: 78px;
+    padding: 12px 14px;
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--panel-soft);
@@ -2008,13 +2007,13 @@
 
   .account-name {
     display: grid;
-    grid-column: 1;
-    grid-row: 2 / 4;
+    grid-column: 2;
+    grid-row: 1;
     align-self: center;
     justify-items: stretch;
     min-width: 0;
     height: auto;
-    min-height: 38px;
+    min-height: 0;
     padding: 0;
     border: 0;
     color: inherit;
@@ -2040,14 +2039,14 @@
 
   .account-identity {
     display: grid;
-    gap: 10px;
+    gap: 3px;
     min-width: 0;
   }
 
   .account-identity span {
     max-width: 100%;
     color: var(--text);
-    font-size: 24px;
+    font-size: 14px;
     font-weight: 650;
     line-height: 1.1;
     overflow: hidden;
@@ -2057,7 +2056,7 @@
 
   .account-identity small {
     color: var(--muted);
-    font-size: 15px;
+    font-size: 12px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -2070,16 +2069,16 @@
     grid-row: 1;
     justify-content: flex-start;
     justify-self: start;
-    gap: 8px;
-    min-width: 130px;
+    gap: 6px;
+    min-width: 104px;
     height: auto;
-    min-height: 34px;
-    padding: 4px 13px;
+    min-height: 28px;
+    padding: 3px 10px;
     border: 1px solid rgb(112 165 120 / 58%);
     border-radius: 5px;
     color: var(--accent);
     background: var(--accent-muted);
-    font-size: 15px;
+    font-size: 12px;
     font-weight: 650;
     line-height: 1.1;
     cursor: pointer;
@@ -2087,8 +2086,8 @@
 
   .account-enabled-pill::before {
     content: "";
-    width: 11px;
-    height: 11px;
+    width: 9px;
+    height: 9px;
     border: 2px solid currentColor;
     border-radius: 999px;
     background: rgb(160 198 164 / 24%);
@@ -2106,42 +2105,40 @@
 
   .account-meta-grid {
     display: grid;
-    grid-column: 2;
-    grid-row: 2;
+    grid-column: 3;
+    grid-row: 1;
     align-self: center;
-    grid-template-columns: 1fr;
-    gap: 14px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
     min-width: 0;
   }
 
   .account-meta-grid div {
     display: grid;
-    grid-template-columns: minmax(110px, 0.55fr) minmax(140px, 1fr);
-    gap: 18px;
-    align-items: baseline;
+    gap: 3px;
     min-width: 0;
   }
 
   .account-meta-grid span {
     color: var(--muted);
-    font-size: 15px;
-    font-weight: 650;
+    font-size: 11px;
+    font-weight: 600;
   }
 
   .account-meta-grid strong {
     min-width: 0;
     color: var(--text);
-    font-size: 15px;
-    font-weight: 650;
+    font-size: 12px;
+    font-weight: 600;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .account-actions {
-    grid-column: 2;
-    grid-row: 3;
-    align-self: end;
+    grid-column: 4;
+    grid-row: 1;
+    align-self: center;
     justify-content: flex-end;
     flex-wrap: wrap;
   }
@@ -2306,22 +2303,23 @@
 
   @media (max-width: 1220px) {
     .account-row {
-      grid-template-columns: minmax(0, 1fr);
+      grid-template-columns: minmax(104px, auto) minmax(180px, 1fr) auto;
     }
 
     .account-name {
-      grid-row: 2;
+      grid-column: 2;
+      grid-row: 1;
     }
 
     .account-meta-grid {
       grid-column: 1 / -1;
-      grid-row: 3;
+      grid-row: 2;
     }
 
     .account-actions {
-      grid-column: 1 / -1;
-      grid-row: 4;
-      justify-content: flex-start;
+      grid-column: 3;
+      grid-row: 1;
+      justify-content: flex-end;
     }
   }
 
@@ -2417,7 +2415,12 @@
       grid-template-columns: 1fr;
     }
 
+    .account-enabled-pill,
+    .account-name,
+    .account-meta-grid,
     .account-actions {
+      grid-column: 1;
+      grid-row: auto;
       justify-content: flex-start;
     }
 
@@ -2457,6 +2460,9 @@
 
     .product-actions button,
     .product-actions button.secondary,
+    .account-enabled-pill,
+    .account-actions button,
+    .account-actions button.secondary,
     .work-id {
       width: auto;
     }
