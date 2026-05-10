@@ -930,9 +930,26 @@
   }
 
   :global(body) {
+    --accent: #95c29b;
+    --accent-strong: #6fa579;
+    --accent-muted: rgb(149 194 155 / 16%);
+    --bg: #101214;
+    --border: #2c343a;
+    --border-strong: #46515a;
+    --danger: #f87171;
+    --field: #121518;
+    --field-disabled: #1a1f23;
+    --muted: #9aa5ae;
+    --panel: #181c20;
+    --panel-raised: #20252a;
+    --panel-soft: #15181b;
+    --text: #edf2f6;
+    --text-strong: #ffffff;
+    --text-subtle: #707b85;
+
     margin: 0;
-    color: #1f2933;
-    background: #eef2f5;
+    color: var(--text);
+    background: var(--bg);
     font-family:
       Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     font-size: 15px;
@@ -957,9 +974,9 @@
     flex-direction: column;
     gap: 24px;
     padding: 24px 18px;
-    border-right: 1px solid #d4dde5;
-    background: #17212b;
-    color: #f8fafc;
+    border-right: 1px solid var(--border);
+    background: #111417;
+    color: var(--text);
   }
 
   .brand {
@@ -977,13 +994,14 @@
     width: 100%;
     justify-content: flex-start;
     border-color: transparent;
-    color: #cbd5df;
+    color: var(--muted);
     background: transparent;
   }
 
   nav button.active {
-    background: #2a3947;
-    color: #ffffff;
+    border-color: var(--border);
+    background: var(--accent-muted);
+    color: var(--text-strong);
   }
 
   .workspace {
@@ -1013,7 +1031,7 @@
 
   .eyebrow {
     margin: 0 0 4px;
-    color: #667787;
+    color: var(--muted);
     font-size: 13px;
     font-weight: 600;
   }
@@ -1021,7 +1039,7 @@
   h1,
   h2 {
     margin: 0;
-    color: #111827;
+    color: var(--text-strong);
     font-weight: 700;
   }
 
@@ -1036,22 +1054,22 @@
   .status-line {
     min-height: 22px;
     margin: 0 0 14px;
-    color: #2f6f4f;
+    color: var(--accent);
     overflow-wrap: anywhere;
   }
 
   .status-line.error {
-    color: #b42318;
+    color: var(--danger);
   }
 
   .product-area,
   .accounts-panel,
   .activity-panel,
   .settings-panel {
-    border: 1px solid #d8e0e7;
+    border: 1px solid var(--border);
     border-radius: 8px;
-    background: #ffffff;
-    box-shadow: 0 1px 2px rgb(15 23 42 / 8%);
+    background: var(--panel);
+    box-shadow: 0 16px 40px rgb(0 0 0 / 18%);
   }
 
   .product-area {
@@ -1092,15 +1110,16 @@
     grid-template-columns: minmax(180px, 1fr) 170px 130px 160px auto;
     gap: 10px;
     padding: 14px;
-    border-bottom: 1px solid #e2e8f0;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel-soft);
   }
 
   .list-header {
     display: flex;
     justify-content: flex-end;
     padding: 9px 14px;
-    border-bottom: 1px solid #e2e8f0;
-    color: #667787;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
     font-size: 13px;
   }
 
@@ -1115,7 +1134,11 @@
     align-items: center;
     min-height: 78px;
     padding: 10px 14px;
-    border-bottom: 1px solid #edf2f7;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .product-row:hover {
+    background: var(--panel-soft);
   }
 
   .product-row:last-child {
@@ -1125,9 +1148,9 @@
   .thumb {
     width: 48px;
     height: 48px;
-    border: 1px solid #dbe3eb;
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
-    background: #f4f7f9;
+    background: var(--panel-raised);
     overflow: hidden;
   }
 
@@ -1143,7 +1166,7 @@
     place-items: center;
     width: 100%;
     height: 100%;
-    color: #5f7080;
+    color: var(--text-subtle);
     font-weight: 700;
   }
 
@@ -1152,7 +1175,7 @@
   }
 
   .product-title {
-    color: #111827;
+    color: var(--text);
     font-weight: 650;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1163,7 +1186,7 @@
   .owner-list,
   .date-cell,
   .account-name small {
-    color: #667787;
+    color: var(--muted);
     font-size: 12px;
   }
 
@@ -1186,10 +1209,10 @@
   .owner-list span {
     max-width: 150px;
     padding: 3px 7px;
-    border: 1px solid #cbd5df;
+    border: 1px solid var(--border-strong);
     border-radius: 999px;
-    color: #334155;
-    background: #f8fafc;
+    color: var(--text);
+    background: var(--panel-raised);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1216,9 +1239,9 @@
     gap: 8px;
     align-items: center;
     padding: 9px;
-    border: 1px solid #e0e7ef;
+    border: 1px solid var(--border);
     border-radius: 8px;
-    background: #fbfcfd;
+    background: var(--panel-soft);
   }
 
   .account-row.disabled {
@@ -1239,7 +1262,7 @@
 
   .account-name span {
     max-width: 100%;
-    color: #111827;
+    color: var(--text);
     font-weight: 650;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1262,7 +1285,7 @@
     align-items: center;
     min-height: 56px;
     padding: 10px 0;
-    border-bottom: 1px solid #edf2f7;
+    border-bottom: 1px solid var(--border);
   }
 
   .job-row:last-child {
@@ -1270,11 +1293,11 @@
   }
 
   .job-row.failed .job-title {
-    color: #b42318;
+    color: var(--danger);
   }
 
   .job-title {
-    color: #111827;
+    color: var(--text);
     font-size: 13px;
     font-weight: 650;
     overflow: hidden;
@@ -1284,7 +1307,7 @@
 
   .job-detail {
     margin-top: 2px;
-    color: #667787;
+    color: var(--muted);
     font-size: 12px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1292,13 +1315,13 @@
   }
 
   .job-row > span {
-    color: #667787;
+    color: var(--muted);
     font-size: 12px;
     white-space: nowrap;
   }
 
   .job-row > span.active {
-    color: #275f46;
+    color: var(--accent);
     font-weight: 650;
   }
 
@@ -1308,7 +1331,7 @@
   }
 
   label span {
-    color: #334155;
+    color: var(--text);
     font-size: 13px;
     font-weight: 650;
   }
@@ -1322,6 +1345,7 @@
   .check-row input {
     width: 16px;
     height: 16px;
+    accent-color: var(--accent-strong);
   }
 
   input,
@@ -1330,22 +1354,22 @@
     min-width: 0;
     height: 38px;
     padding: 0 10px;
-    border: 1px solid #cbd5df;
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
-    color: #111827;
-    background: #fbfcfd;
+    color: var(--text);
+    background: var(--field);
   }
 
   input:focus,
   select:focus {
-    border-color: #38658f;
-    outline: 2px solid rgb(56 101 143 / 16%);
+    border-color: var(--accent-strong);
+    outline: 2px solid var(--accent-muted);
   }
 
   input:disabled,
   select:disabled {
-    color: #7b8794;
-    background: #f4f7f9;
+    color: var(--text-subtle);
+    background: var(--field-disabled);
   }
 
   button {
@@ -1355,17 +1379,17 @@
     min-width: 84px;
     height: 38px;
     padding: 0 13px;
-    border: 1px solid #203142;
+    border: 1px solid var(--accent);
     border-radius: 6px;
-    color: #ffffff;
-    background: #203142;
+    color: #09110c;
+    background: var(--accent);
     cursor: pointer;
   }
 
   button.secondary {
-    border-color: #c5d0da;
-    color: #1f2933;
-    background: #ffffff;
+    border-color: var(--border-strong);
+    color: var(--text);
+    background: var(--panel-raised);
   }
 
   button.small {
@@ -1382,7 +1406,7 @@
 
   .empty-state {
     padding: 36px 14px;
-    color: #667787;
+    color: var(--muted);
     text-align: center;
   }
 
@@ -1428,7 +1452,7 @@
     .sidebar {
       padding: 14px 16px;
       border-right: 0;
-      border-bottom: 1px solid #d4dde5;
+      border-bottom: 1px solid var(--border);
     }
 
     nav {
