@@ -92,9 +92,9 @@
     jobId: string;
   };
 
-  type View = "products" | "accounts" | "activity" | "settings";
+  type View = "library" | "accounts" | "activity" | "settings";
 
-  let activeView = $state<View>("products");
+  let activeView = $state<View>("library");
 
   let libraryRoot = $state("");
   let downloadRoot = $state("");
@@ -544,8 +544,8 @@
 
   function viewEyebrow(view: View) {
     switch (view) {
-      case "products":
-        return "Library";
+      case "library":
+        return "Collection";
       case "accounts":
         return "Sources";
       case "activity":
@@ -557,8 +557,8 @@
 
   function viewTitle(view: View) {
     switch (view) {
-      case "products":
-        return "Products";
+      case "library":
+        return "Library";
       case "accounts":
         return "Accounts";
       case "activity":
@@ -593,13 +593,13 @@
 <main class="app-shell">
   <aside class="sidebar" aria-label="Primary">
     <div class="brand">dlsite-manager</div>
-    <nav>
+    <nav class="main-nav" aria-label="Main">
       <button
-        class:active={activeView === "products"}
+        class:active={activeView === "library"}
         type="button"
-        onclick={() => (activeView = "products")}
+        onclick={() => (activeView = "library")}
       >
-        Products
+        Library
       </button>
       <button
         class:active={activeView === "accounts"}
@@ -609,18 +609,20 @@
         Accounts
       </button>
       <button
-        class:active={activeView === "activity"}
-        type="button"
-        onclick={() => (activeView = "activity")}
-      >
-        Activity
-      </button>
-      <button
         class:active={activeView === "settings"}
         type="button"
         onclick={() => (activeView = "settings")}
       >
         Settings
+      </button>
+    </nav>
+    <nav class="utility-nav" aria-label="Utility">
+      <button
+        class:active={activeView === "activity"}
+        type="button"
+        onclick={() => (activeView = "activity")}
+      >
+        Activity
       </button>
     </nav>
   </aside>
@@ -632,7 +634,7 @@
         <h1>{viewTitle(activeView)}</h1>
       </div>
       <div class="header-actions">
-        {#if activeView === "products"}
+        {#if activeView === "library"}
           <button
             class="secondary"
             type="button"
@@ -680,8 +682,8 @@
       <p class:error={Boolean(error)} class="status-line" aria-live="polite">{error || status}</p>
     {/if}
 
-    {#if activeView === "products"}
-      <section class="product-area" aria-label="Products">
+    {#if activeView === "library"}
+      <section class="product-area" aria-label="Library">
         <form class="toolbar" onsubmit={searchProducts}>
           <input
             type="search"
@@ -988,6 +990,12 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
+  }
+
+  .utility-nav {
+    margin-top: auto;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
   }
 
   nav button {
