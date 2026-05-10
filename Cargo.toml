@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/dm-archive",
+    "crates/dm-audit",
     "crates/dm-api",
     "crates/dm-credentials",
     "crates/dm-download",

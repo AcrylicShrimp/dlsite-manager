@@ -123,6 +123,21 @@
     jobId: string;
   };
 
+  type AuditOutcome = "queued" | "succeeded" | "failed" | "cancelled";
+
+  type AuditLevel = "info" | "warn" | "error";
+
+  type AuditEvent = {
+    at: string;
+    level: AuditLevel;
+    operation: string;
+    outcome: AuditOutcome;
+    message: string;
+    errorCode: string | null;
+    errorMessage: string | null;
+    details: Record<string, unknown>;
+  };
+
   type ToastKind = "success" | "error" | "info";
 
   type Toast = {
@@ -294,6 +309,9 @@
   let jobs = $state<JobSnapshot[]>([]);
   let jobsLoading = $state(true);
   let jobMessages = $state<Record<string, string>>({});
+  let auditEvents = $state<AuditEvent[]>([]);
+  let auditLoading = $state(true);
+  let auditLogDir = $state("");
   let toasts = $state<Toast[]>([]);
   let productImagePreview = $state<ProductImagePreview | null>(null);
   let productActionMenu = $state<ProductActionMenu | null>(null);
@@ -332,7 +350,14 @@
   });
 
   async function loadInitial() {
-    await Promise.all([loadSettings(), loadAccounts(), loadProducts(), loadJobs()]);
+    await Promise.all([
+      loadSettings(),
+      loadAccounts(),
+      loadProducts(),
+      loadJobs(),
+      loadAuditLogDir(),
+      loadAuditEvents(),
+    ]);
   }
 
   async function loadSettings() {
@@ -535,11 +560,11 @@
     }
 
     if (event.kind === "accountSync" && isTerminalJob(event.snapshot)) {
-      await Promise.all([loadAccounts(), loadProducts()]);
+      await Promise.all([loadAccounts(), loadProducts(), loadAuditEvents()]);
     }
 
     if (event.kind === "workDownload" && isTerminalJob(event.snapshot)) {
-      await loadProducts();
+      await Promise.all([loadProducts(), loadAuditEvents()]);
     }
   }
 
@@ -805,6 +830,39 @@
     }
   }
 
+  async function loadAuditEvents() {
+    auditLoading = true;
+
+    try {
+      auditEvents = await invoke<AuditEvent[]>("list_audit_events", {
+        request: {
+          limit: 80,
+        },
+      });
+    } catch (err) {
+      notifyError(errorMessage(err));
+    } finally {
+      auditLoading = false;
+    }
+  }
+
+  async function loadAuditLogDir() {
+    try {
+      const result = await invoke<{ path: string }>("get_audit_log_dir");
+      auditLogDir = result.path;
+    } catch (err) {
+      notifyError(errorMessage(err));
+    }
+  }
+
+  async function openAuditLogDir() {
+    try {
+      await invoke("open_audit_log_dir");
+    } catch (err) {
+      notifyError(errorMessage(err));
+    }
+  }
+
   function accountStatusLabel(account: Account) {
     const activeJob = activeAccountSyncJob(account.id);
 
@@ -923,6 +981,27 @@
 
   function visibleJobs(limit = 20) {
     return [...jobs].reverse().slice(0, limit);
+  }
+
+  function visibleAuditEvents(limit = 30) {
+    return auditEvents.slice(0, limit);
+  }
+
+  function auditOutcomeLabel(outcome: AuditOutcome) {
+    switch (outcome) {
+      case "queued":
+        return "Queued";
+      case "succeeded":
+        return "Succeeded";
+      case "failed":
+        return "Failed";
+      case "cancelled":
+        return "Cancelled";
+    }
+  }
+
+  function auditDetail(event: AuditEvent) {
+    return event.errorMessage ?? event.message;
   }
 
   function hasSyncableEnabledAccount() {
@@ -1796,47 +1875,97 @@
         </section>
       </div>
     {:else if activeView === "activity"}
-      <section class="activity-panel" aria-label="Activity">
-        <div class="panel-title">
-          <h2>Jobs</h2>
-          <div class="panel-actions">
-            <button class="secondary small" type="button" onclick={loadJobs} disabled={jobsLoading}>
-              Reload
-            </button>
-            <button class="small" type="button" onclick={clearFinishedJobs} disabled={jobsLoading}>
-              Clear
-            </button>
+      <div class="activity-layout">
+        <section class="activity-panel" aria-label="Jobs">
+          <div class="panel-title">
+            <h2>Jobs</h2>
+            <div class="panel-actions">
+              <button class="secondary small" type="button" onclick={loadJobs} disabled={jobsLoading}>
+                Reload
+              </button>
+              <button class="small" type="button" onclick={clearFinishedJobs} disabled={jobsLoading}>
+                Clear
+              </button>
+            </div>
           </div>
-        </div>
 
-        {#if jobsLoading}
-          <div class="empty-state">Loading</div>
-        {:else if visibleJobs().length === 0}
-          <div class="empty-state">No jobs</div>
-        {:else}
-          <div class="job-list large">
-            {#each visibleJobs() as job (job.id)}
-              <article class="job-row" class:failed={job.status === "failed"}>
-                <div>
-                  <div class="job-title">{jobAccountLabel(job)}</div>
-                  <div class="job-detail">{jobDetail(job)}</div>
-                </div>
-                <span class:active={isActiveJob(job)}>{jobLabel(job)}</span>
-                {#if isActiveJob(job)}
-                  <button
-                    class="secondary small"
-                    type="button"
-                    onclick={() => cancelJob(job)}
-                    disabled={!job.cancellable || job.status === "cancelling"}
-                  >
-                    Cancel
-                  </button>
-                {/if}
-              </article>
-            {/each}
+          {#if jobsLoading}
+            <div class="empty-state">Loading</div>
+          {:else if visibleJobs().length === 0}
+            <div class="empty-state">No jobs</div>
+          {:else}
+            <div class="job-list large">
+              {#each visibleJobs() as job (job.id)}
+                <article class="job-row" class:failed={job.status === "failed"}>
+                  <div>
+                    <div class="job-title">{jobAccountLabel(job)}</div>
+                    <div class="job-detail">{jobDetail(job)}</div>
+                  </div>
+                  <span class:active={isActiveJob(job)}>{jobLabel(job)}</span>
+                  {#if isActiveJob(job)}
+                    <button
+                      class="secondary small"
+                      type="button"
+                      onclick={() => cancelJob(job)}
+                      disabled={!job.cancellable || job.status === "cancelling"}
+                    >
+                      Cancel
+                    </button>
+                  {/if}
+                </article>
+              {/each}
+            </div>
+          {/if}
+        </section>
+
+        <section class="activity-panel" aria-label="Audit log">
+          <div class="panel-title">
+            <div>
+              <h2>Audit log</h2>
+              <p>{auditLogDir || "App log directory"}</p>
+            </div>
+            <div class="panel-actions">
+              <button
+                class="secondary small"
+                type="button"
+                onclick={openAuditLogDir}
+                disabled={!auditLogDir}
+              >
+                Open folder
+              </button>
+              <button
+                class="secondary small"
+                type="button"
+                onclick={loadAuditEvents}
+                disabled={auditLoading}
+              >
+                Reload
+              </button>
+            </div>
           </div>
-        {/if}
-      </section>
+
+          {#if auditLoading}
+            <div class="empty-state">Loading</div>
+          {:else if visibleAuditEvents().length === 0}
+            <div class="empty-state">No audit events</div>
+          {:else}
+            <div class="audit-list">
+              {#each visibleAuditEvents() as event, index (`${event.at}-${event.operation}-${index}`)}
+                <article class="audit-row" data-level={event.level} data-outcome={event.outcome}>
+                  <div>
+                    <div class="audit-title">
+                      <span>{event.operation}</span>
+                      <strong>{auditOutcomeLabel(event.outcome)}</strong>
+                    </div>
+                    <div class="audit-detail">{auditDetail(event)}</div>
+                  </div>
+                  <time datetime={event.at}>{shortDate(event.at)}</time>
+                </article>
+              {/each}
+            </div>
+          {/if}
+        </section>
+      </div>
     {:else}
       <form class="settings-panel" onsubmit={saveSettings}>
         <div class="panel-title">
@@ -3097,6 +3226,12 @@
     gap: 0;
   }
 
+  .activity-layout {
+    display: grid;
+    gap: 18px;
+    min-width: 0;
+  }
+
   .job-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto auto;
@@ -3142,6 +3277,75 @@
   .job-row > span.active {
     color: var(--accent);
     font-weight: 650;
+  }
+
+  .audit-list {
+    display: grid;
+    gap: 0;
+  }
+
+  .audit-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 14px;
+    align-items: center;
+    min-height: 58px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .audit-row:last-child {
+    border-bottom: 0;
+  }
+
+  .audit-title {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+  }
+
+  .audit-title span {
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 650;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .audit-title strong {
+    flex: 0 0 auto;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .audit-row[data-outcome="succeeded"] .audit-title strong {
+    color: var(--accent);
+  }
+
+  .audit-row[data-outcome="failed"] .audit-title strong {
+    color: var(--danger);
+  }
+
+  .audit-row[data-outcome="cancelled"] .audit-title strong {
+    color: #d8a62d;
+  }
+
+  .audit-detail {
+    margin-top: 2px;
+    color: var(--muted);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .audit-row time {
+    color: var(--text-subtle);
+    font-size: 12px;
+    white-space: nowrap;
   }
 
   label {
