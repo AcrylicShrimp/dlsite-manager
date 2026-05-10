@@ -26,6 +26,12 @@
     purchasedAt: string | null;
   };
 
+  type ProductCreditGroup = {
+    kind: string;
+    label: string;
+    names: string[];
+  };
+
   type Product = {
     workId: string;
     title: string;
@@ -37,6 +43,7 @@
     updatedAt: string | null;
     earliestPurchasedAt: string | null;
     latestPurchasedAt: string | null;
+    creditGroups: ProductCreditGroup[];
     owners: ProductOwner[];
   };
 
@@ -326,6 +333,17 @@
     await loadProducts();
   }
 
+  async function copyWorkId(workId: string) {
+    error = "";
+
+    try {
+      await navigator.clipboard.writeText(workId);
+      status = `Copied ${workId}`;
+    } catch (err) {
+      error = errorMessage(err);
+    }
+  }
+
   async function syncAccount(account: Account) {
     error = "";
     status = "";
@@ -529,6 +547,85 @@
     return typeof value === "number" ? value : null;
   }
 
+  function productType(product: Product) {
+    const raw = product.workType?.trim() || "";
+    const upper = raw.toUpperCase();
+    const normalized = raw.toLowerCase().replace(/[\s_-]+/g, "");
+
+    if (matchesAny(normalized, ["sou", "audio", "voice", "asmr", "music", "sound"])) {
+      return { label: upper === "SOU" ? "Voice" : raw || "Audio", tone: "audio" };
+    }
+
+    if (matchesAny(normalized, ["mov", "movie", "video", "anime", "voicecomic", "vcomic"])) {
+      return { label: raw || "Video", tone: "video" };
+    }
+
+    if (
+      matchesAny(normalized, [
+        "gam",
+        "game",
+        "rpg",
+        "adv",
+        "action",
+        "acn",
+        "puzzle",
+        "puz",
+        "quiz",
+        "simulation",
+        "slg",
+        "shooter",
+        "stg",
+        "tabletop",
+        "typing",
+      ])
+    ) {
+      return { label: raw || "Game", tone: "game" };
+    }
+
+    if (
+      matchesAny(normalized, [
+        "cg",
+        "icg",
+        "image",
+        "illust",
+        "comic",
+        "com",
+        "manga",
+        "mng",
+        "gekiga",
+        "pdf",
+        "novel",
+        "digitalnovel",
+        "book",
+      ])
+    ) {
+      return { label: raw || "Comic", tone: "image" };
+    }
+
+    if (matchesAny(normalized, ["software", "tool", "utility", "etc", "other"])) {
+      return { label: raw || "Other", tone: "other" };
+    }
+
+    return { label: raw || "Other", tone: "other" };
+  }
+
+  function matchesAny(value: string, needles: string[]) {
+    return needles.some((needle) => value.includes(needle));
+  }
+
+  function ageTone(value: string | null) {
+    switch (value) {
+      case "all":
+        return "all";
+      case "r15":
+        return "r15";
+      case "r18":
+        return "r18";
+      default:
+        return "unknown";
+    }
+  }
+
   function ageLabel(value: string | null) {
     switch (value) {
       case "all":
@@ -540,6 +637,14 @@
       default:
         return "";
     }
+  }
+
+  function creditText(group: ProductCreditGroup) {
+    return group.names.join(", ");
+  }
+
+  function creditTooltip(label: string, value: string) {
+    return `${label}: ${value}`;
   }
 
   function viewEyebrow(view: View) {
@@ -695,7 +800,9 @@
         {:else}
           <div class="product-table" aria-label="Cached products">
             {#each products as product (product.workId)}
-              <article class="product-row">
+              {@const typeInfo = productType(product)}
+              <article class="product-card" data-tone={typeInfo.tone}>
+                <div class="type-belt" aria-hidden="true"></div>
                 <div class="thumb" aria-hidden="true">
                   {#if product.thumbnailUrl}
                     <img src={product.thumbnailUrl} alt="" loading="lazy" />
@@ -704,26 +811,57 @@
                   {/if}
                 </div>
                 <div class="product-main">
-                  <div class="product-title">{product.title}</div>
+                  <div class="product-title-row">
+                    <div class="product-title" title={product.title}>{product.title}</div>
+                    <button
+                      class="work-id"
+                      type="button"
+                      title={`Copy ${product.workId}`}
+                      onclick={() => copyWorkId(product.workId)}
+                    >
+                      {product.workId}
+                    </button>
+                  </div>
                   <div class="product-meta">
-                    <span>{product.workId}</span>
                     {#if product.makerName}
-                      <span>{product.makerName}</span>
+                      <div class="credit-row" title={creditTooltip("Maker", product.makerName)}>
+                        <span class="credit-label">Maker</span>
+                        <span class="credit-value">{product.makerName}</span>
+                      </div>
                     {/if}
-                    {#if product.workType}
-                      <span>{product.workType}</span>
-                    {/if}
+                    {#each product.creditGroups ?? [] as group (group.kind)}
+                      <div class="credit-row" title={creditTooltip(group.label, creditText(group))}>
+                        <span class="credit-label">{group.label}</span>
+                        <span class="credit-value">{creditText(group)}</span>
+                      </div>
+                    {/each}
+                  </div>
+                  <div class="chip-row" aria-label="Classifications">
+                    <span class="chip type-chip">{typeInfo.label}</span>
                     {#if ageLabel(product.ageCategory)}
-                      <span>{ageLabel(product.ageCategory)}</span>
+                      <span class="chip age-chip" data-age={ageTone(product.ageCategory)}>
+                        {ageLabel(product.ageCategory)}
+                      </span>
                     {/if}
                   </div>
+                  <div class="product-footer">
+                    <div class="owner-list" aria-label="Owners">
+                      {#each product.owners as owner (owner.accountId)}
+                        <span title={owner.purchasedAt ? `${owner.label}: ${shortDate(owner.purchasedAt)}` : owner.label}>
+                          {owner.label}
+                        </span>
+                      {/each}
+                    </div>
+                    <div class="product-actions" aria-label="Actions">
+                      <button class="small" type="button" disabled title="Download handling is a later slice">
+                        Download
+                      </button>
+                      <button class="secondary small menu-button" type="button" disabled title="More actions">
+                        ...
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                <div class="owner-list" aria-label="Owners">
-                  {#each product.owners as owner (owner.accountId)}
-                    <span>{owner.label}</span>
-                  {/each}
-                </div>
-                <div class="date-cell">{shortDate(product.latestPurchasedAt)}</div>
               </article>
             {/each}
           </div>
@@ -1144,27 +1282,57 @@
     display: grid;
   }
 
-  .product-row {
+  .product-card {
+    --type-color: #6b7177;
+    --type-soft: rgb(107 113 119 / 18%);
+
     display: grid;
-    grid-template-columns: 54px minmax(0, 1fr) minmax(110px, 190px) 150px;
-    gap: 12px;
-    align-items: center;
-    min-height: 78px;
-    padding: 10px 14px;
+    grid-template-columns: 5px 112px minmax(0, 1fr);
+    gap: 14px;
+    align-items: start;
+    min-height: 136px;
+    padding: 12px 14px 12px 0;
     border-bottom: 1px solid var(--border);
   }
 
-  .product-row:hover {
+  .product-card:hover {
     background: var(--panel-soft);
   }
 
-  .product-row:last-child {
+  .product-card:last-child {
     border-bottom: 0;
   }
 
+  .product-card[data-tone="audio"] {
+    --type-color: #d8a62d;
+    --type-soft: rgb(216 166 45 / 17%);
+  }
+
+  .product-card[data-tone="video"] {
+    --type-color: #d64b92;
+    --type-soft: rgb(214 75 146 / 17%);
+  }
+
+  .product-card[data-tone="game"] {
+    --type-color: #9863df;
+    --type-soft: rgb(152 99 223 / 17%);
+  }
+
+  .product-card[data-tone="image"] {
+    --type-color: #4fb85b;
+    --type-soft: rgb(79 184 91 / 16%);
+  }
+
+  .type-belt {
+    align-self: stretch;
+    width: 5px;
+    border-radius: 0 6px 6px 0;
+    background: var(--type-color);
+  }
+
   .thumb {
-    width: 48px;
-    height: 48px;
+    width: 112px;
+    height: 112px;
     border: 1px solid var(--border-strong);
     border-radius: 6px;
     background: var(--panel-raised);
@@ -1188,39 +1356,146 @@
   }
 
   .product-main {
+    display: grid;
+    gap: 9px;
+    min-width: 0;
+  }
+
+  .product-title-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: start;
     min-width: 0;
   }
 
   .product-title {
+    min-width: 0;
+    color: var(--text-strong);
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .work-id {
+    min-width: 102px;
+    height: 27px;
+    padding: 0 8px;
+    border-color: var(--border-strong);
+    color: var(--muted);
+    background: var(--field);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .work-id:hover {
+    border-color: var(--type-color);
     color: var(--text);
+  }
+
+  .product-meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 16px;
+    min-width: 0;
+  }
+
+  .credit-row {
+    display: grid;
+    grid-template-columns: 66px minmax(0, 1fr);
+    gap: 8px;
+    min-width: 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .credit-label {
+    color: var(--text-subtle);
     font-weight: 650;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .product-meta,
+  .credit-value {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    max-width: 190px;
+    padding: 2px 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    color: var(--muted);
+    background: var(--panel-raised);
+    font-size: 12px;
+    font-weight: 650;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .type-chip {
+    border-color: var(--type-color);
+    color: var(--type-color);
+    background: var(--type-soft);
+  }
+
+  .age-chip[data-age="all"] {
+    border-color: rgb(112 165 120 / 58%);
+    color: #9bc89f;
+    background: rgb(112 165 120 / 14%);
+  }
+
+  .age-chip[data-age="r15"] {
+    border-color: rgb(204 166 61 / 58%);
+    color: #d2b56c;
+    background: rgb(204 166 61 / 14%);
+  }
+
+  .age-chip[data-age="r18"] {
+    border-color: rgb(185 64 64 / 62%);
+    color: #d77b7b;
+    background: rgb(185 64 64 / 16%);
+  }
+
+  .product-footer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    min-width: 0;
+  }
+
   .owner-list,
-  .date-cell,
   .account-name small {
     color: var(--muted);
     font-size: 12px;
-  }
-
-  .product-meta {
-    display: flex;
-    gap: 9px;
-    margin-top: 4px;
-    min-width: 0;
-    overflow: hidden;
-    white-space: nowrap;
   }
 
   .owner-list {
     display: flex;
     flex-wrap: wrap;
     gap: 5px;
-    justify-content: flex-end;
+    min-width: 0;
   }
 
   .owner-list span {
@@ -1235,8 +1510,15 @@
     white-space: nowrap;
   }
 
-  .date-cell {
-    text-align: right;
+  .product-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  .menu-button {
+    min-width: 42px;
+    padding: 0 10px;
   }
 
   .panel-title {
@@ -1449,15 +1731,28 @@
       grid-template-columns: 1fr 1fr;
     }
 
-    .product-row {
-      grid-template-columns: 54px minmax(0, 1fr);
+    .product-card {
+      grid-template-columns: 5px 84px minmax(0, 1fr);
+      min-height: 108px;
+      gap: 12px;
     }
 
-    .owner-list,
-    .date-cell {
-      grid-column: 2;
+    .thumb {
+      width: 84px;
+      height: 84px;
+    }
+
+    .product-meta {
+      grid-template-columns: 1fr;
+    }
+
+    .product-footer {
+      grid-template-columns: 1fr;
+      align-items: start;
+    }
+
+    .product-actions {
       justify-content: flex-start;
-      text-align: left;
     }
   }
 
@@ -1498,6 +1793,32 @@
       grid-template-columns: 1fr;
     }
 
+    .product-card {
+      grid-template-columns: 5px 72px minmax(0, 1fr);
+      padding-right: 10px;
+    }
+
+    .thumb {
+      width: 72px;
+      height: 72px;
+    }
+
+    .product-title-row {
+      grid-template-columns: 1fr;
+      gap: 6px;
+    }
+
+    .work-id,
+    .product-actions,
+    .product-actions button,
+    .product-actions button.secondary {
+      width: auto;
+    }
+
+    .work-id {
+      justify-self: start;
+    }
+
     .job-row {
       grid-template-columns: 1fr;
     }
@@ -1505,6 +1826,12 @@
     button,
     button.secondary {
       width: 100%;
+    }
+
+    .product-actions button,
+    .product-actions button.secondary,
+    .work-id {
+      width: auto;
     }
   }
 </style>

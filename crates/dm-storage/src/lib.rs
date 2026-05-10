@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use sqlx::{
     migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteQueryResult},
@@ -213,7 +214,15 @@ pub struct ProductListItem {
     pub updated_at: Option<String>,
     pub earliest_purchased_at: Option<String>,
     pub latest_purchased_at: Option<String>,
+    pub credit_groups: Vec<ProductCreditGroup>,
     pub owners: Vec<ProductOwner>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductCreditGroup {
+    pub kind: String,
+    pub label: String,
+    pub names: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -441,6 +450,7 @@ impl Storage {
                 w.thumbnail_url,
                 w.published_at,
                 w.updated_at,
+                w.raw_json,
                 vw.earliest_purchased_at,
                 vw.latest_purchased_at,
                 aw.account_id,
@@ -461,6 +471,7 @@ impl Storage {
 
         for row in rows {
             let work_id: String = row.try_get("work_id")?;
+            let raw_json: String = row.try_get("raw_json")?;
             let owner = ProductOwner {
                 account_id: row.try_get("account_id")?,
                 label: row.try_get("account_label")?,
@@ -486,6 +497,7 @@ impl Storage {
                 updated_at: row.try_get("updated_at")?,
                 earliest_purchased_at: row.try_get("earliest_purchased_at")?,
                 latest_purchased_at: row.try_get("latest_purchased_at")?,
+                credit_groups: product_credit_groups_from_raw_json(&raw_json),
                 owners: vec![owner],
             });
         }
@@ -1002,6 +1014,86 @@ fn escape_like(value: &str) -> String {
     escaped
 }
 
+fn product_credit_groups_from_raw_json(raw_json: &str) -> Vec<ProductCreditGroup> {
+    let Ok(work) = serde_json::from_str::<RawWorkCredits>(raw_json) else {
+        return Vec::new();
+    };
+
+    let mut groups = credit_group_templates();
+
+    for tag in work.tags {
+        let Some((kind, _label)) = credit_kind_and_label(&tag.class) else {
+            continue;
+        };
+        let name = tag.name.trim();
+
+        if name.is_empty() {
+            continue;
+        }
+
+        if let Some((_kind, _label, names)) = groups
+            .iter_mut()
+            .find(|(group_kind, _, _)| *group_kind == kind)
+        {
+            if !names.iter().any(|existing| existing.as_str() == name) {
+                names.push(name.to_owned());
+            }
+        }
+    }
+
+    groups
+        .into_iter()
+        .filter_map(|(kind, label, names)| {
+            if names.is_empty() {
+                None
+            } else {
+                Some(ProductCreditGroup {
+                    kind: kind.to_owned(),
+                    label: label.to_owned(),
+                    names,
+                })
+            }
+        })
+        .collect()
+}
+
+fn credit_group_templates() -> Vec<(&'static str, &'static str, Vec<String>)> {
+    vec![
+        ("voice", "CV", Vec::new()),
+        ("illust", "Illust", Vec::new()),
+        ("scenario", "Scenario", Vec::new()),
+        ("creator", "Creator", Vec::new()),
+        ("music", "Music", Vec::new()),
+        ("other", "Other", Vec::new()),
+    ]
+}
+
+fn credit_kind_and_label(class: &str) -> Option<(&'static str, &'static str)> {
+    match class {
+        "voice_by" => Some(("voice", "CV")),
+        "illust_by" => Some(("illust", "Illust")),
+        "scenario_by" => Some(("scenario", "Scenario")),
+        "created_by" => Some(("creator", "Creator")),
+        "music_by" => Some(("music", "Music")),
+        "other_by" => Some(("other", "Other")),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawWorkCredits {
+    #[serde(default)]
+    tags: Vec<RawWorkCreditTag>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawWorkCreditTag {
+    #[serde(rename = "class")]
+    class: String,
+    #[serde(rename = "name")]
+    name: String,
+}
+
 fn bool_to_i64(value: bool) -> i64 {
     if value {
         1
@@ -1078,6 +1170,19 @@ mod tests {
             updated_at: Some(published_at.to_owned()),
             raw_json: format!(r#"{{"workno":"{work_id}"}}"#),
             last_detail_sync_at: "2026-05-09T00:00:00.000Z".to_owned(),
+        }
+    }
+
+    fn work_with_raw_json(
+        work_id: &str,
+        title: &str,
+        maker_name: &str,
+        published_at: &str,
+        raw_json: &str,
+    ) -> CachedWork {
+        CachedWork {
+            raw_json: raw_json.to_owned(),
+            ..work(work_id, title, maker_name, published_at)
         }
     }
 
@@ -1424,6 +1529,58 @@ mod tests {
         assert_eq!(page.products[0].work_id, "RJ000001");
         assert_eq!(page.products[0].owners.len(), 1);
         assert_eq!(page.products[0].owners[0].account_id, "account-b");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn product_list_groups_source_credits_from_raw_json() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-1",
+                vec![work_with_raw_json(
+                    "RJ000001",
+                    "Credit Work",
+                    "Maker One",
+                    "2026-01-01T00:00:00Z",
+                    r#"{
+                        "workno": "RJ000001",
+                        "tags": [
+                            { "class": "genre", "name": "ASMR" },
+                            { "class": "voice_by", "name": "Voice One" },
+                            { "class": "voice_by", "name": "Voice One" },
+                            { "class": "voice_by", "name": "Voice Two" },
+                            { "class": "illust_by", "name": "Illust One" },
+                            { "class": "scenario_by", "name": "Scenario One" },
+                            { "class": "created_by", "name": "Creator One" },
+                            { "class": "music_by", "name": "Music One" },
+                            { "class": "other_by", "name": "Other One" }
+                        ]
+                    }"#,
+                )],
+                vec![account_work("RJ000001", "2026-02-01T00:00:00Z")],
+            ))
+            .await?;
+
+        let page = storage.list_products(&ProductListQuery::default()).await?;
+
+        assert_eq!(page.products[0].credit_groups.len(), 6);
+        assert_eq!(page.products[0].credit_groups[0].kind, "voice");
+        assert_eq!(page.products[0].credit_groups[0].label, "CV");
+        assert_eq!(
+            page.products[0].credit_groups[0].names,
+            vec!["Voice One".to_owned(), "Voice Two".to_owned()]
+        );
+        assert_eq!(page.products[0].credit_groups[1].kind, "illust");
+        assert_eq!(page.products[0].credit_groups[2].kind, "scenario");
+        assert_eq!(page.products[0].credit_groups[3].kind, "creator");
+        assert_eq!(page.products[0].credit_groups[4].kind, "music");
+        assert_eq!(page.products[0].credit_groups[5].kind, "other");
 
         Ok(())
     }

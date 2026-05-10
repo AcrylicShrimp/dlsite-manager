@@ -5,8 +5,8 @@ use dm_library::{
     SyncProgressSink,
 };
 use dm_storage::{
-    Account, AppSettings, ProductAgeCategory, ProductListItem, ProductListPage, ProductListQuery,
-    ProductOwner, ProductSort, Storage,
+    Account, AppSettings, ProductAgeCategory, ProductCreditGroup, ProductListItem, ProductListPage,
+    ProductListQuery, ProductOwner, ProductSort, Storage,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -393,6 +393,7 @@ struct ProductListItemDto {
     updated_at: Option<String>,
     earliest_purchased_at: Option<String>,
     latest_purchased_at: Option<String>,
+    credit_groups: Vec<ProductCreditGroupDto>,
     owners: Vec<ProductOwnerDto>,
 }
 
@@ -409,11 +410,34 @@ impl From<ProductListItem> for ProductListItemDto {
             updated_at: product.updated_at,
             earliest_purchased_at: product.earliest_purchased_at,
             latest_purchased_at: product.latest_purchased_at,
+            credit_groups: product
+                .credit_groups
+                .into_iter()
+                .map(ProductCreditGroupDto::from)
+                .collect(),
             owners: product
                 .owners
                 .into_iter()
                 .map(ProductOwnerDto::from)
                 .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProductCreditGroupDto {
+    kind: String,
+    label: String,
+    names: Vec<String>,
+}
+
+impl From<ProductCreditGroup> for ProductCreditGroupDto {
+    fn from(group: ProductCreditGroup) -> Self {
+        Self {
+            kind: group.kind,
+            label: group.label,
+            names: group.names,
         }
     }
 }
