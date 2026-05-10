@@ -1285,6 +1285,9 @@
   .product-card {
     --type-color: #6b7177;
     --type-soft: rgb(107 113 119 / 18%);
+    --meta-column-gap: clamp(8px, 1.15vw, 14px);
+    --credit-label-width: clamp(54px, 4.1vw, 60px);
+    --credit-gap: clamp(5px, 0.7vw, 7px);
 
     display: grid;
     grid-template-columns: 5px 112px minmax(0, 1fr);
@@ -1400,14 +1403,14 @@
   .product-meta {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 4px 16px;
+    gap: 4px var(--meta-column-gap);
     min-width: 0;
   }
 
   .credit-row {
     display: grid;
-    grid-template-columns: 66px minmax(0, 1fr);
-    gap: 8px;
+    grid-template-columns: var(--credit-label-width) minmax(0, 1fr);
+    gap: var(--credit-gap);
     min-width: 0;
     color: var(--muted);
     font-size: 12px;
@@ -1732,6 +1735,10 @@
     }
 
     .product-card {
+      --meta-column-gap: 8px;
+      --credit-label-width: 56px;
+      --credit-gap: 6px;
+
       grid-template-columns: 5px 84px minmax(0, 1fr);
       min-height: 108px;
       gap: 12px;
@@ -1794,6 +1801,9 @@
     }
 
     .product-card {
+      --credit-label-width: 52px;
+      --credit-gap: 5px;
+
       grid-template-columns: 5px 72px minmax(0, 1fr);
       padding-right: 10px;
     }
