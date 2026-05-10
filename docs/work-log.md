@@ -17,6 +17,7 @@
 - Tightened the Library product-card metadata grid spacing. The maker/credit rows now use responsive CSS variables for metadata column gaps, label width, and label/value gaps so the grid compacts at narrower widths without changing the data contract. Validation: `pnpm check`, `pnpm build`, and `git diff --check` passed.
 - Constrained the Library product-card metadata block width after wide-screen review showed the second credit column drifting too far right. The maker/source-credit grid now stays left-aligned with a responsive max width on large screens and falls back to full width on narrower layouts. Validation: `pnpm check`, `pnpm build`, and `git diff --check` passed.
 - Replaced the inline page status line with a frontend toast stack. Success/info/error feedback now appears as fixed bottom-right popup notifications with auto-dismiss, manual dismiss, and alert semantics for errors; sync-all sequencing no longer depends on a rendered error string. Validation: `pnpm check`, `pnpm build`, `git diff --check`, and `pnpm tauri dev` smoke passed. The first smoke attempt found a stale repo-local dev process on port 1420; stopping it and rerunning succeeded.
+- Replaced the toast close button text with an icon-only SVG close control while preserving the accessible dismiss label. Validation: `pnpm check` and `pnpm build` passed.
 
 ## 2026-05-09
 

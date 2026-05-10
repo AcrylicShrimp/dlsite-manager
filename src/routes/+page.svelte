@@ -1120,7 +1120,9 @@
             aria-label="Dismiss notification"
             onclick={() => dismissToast(toast.id)}
           >
-            x
+            <svg class="toast-close-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
           </button>
         </article>
       {/each}
@@ -1339,6 +1341,16 @@
     border-color: var(--border-strong);
     color: var(--text);
     background: var(--toast-bg);
+  }
+
+  .toast-close-icon {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 2.2;
   }
 
   .product-area {
