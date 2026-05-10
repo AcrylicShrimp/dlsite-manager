@@ -446,11 +446,15 @@
     }
   }
 
-  function phaseLabel(account: Account) {
+  function accountStatusLabel(account: Account) {
     const activeJob = activeAccountSyncJob(account.id);
 
     if (activeJob) {
       return jobLabel(activeJob);
+    }
+
+    if (!account.enabled) {
+      return "Disabled";
     }
 
     const latestJob = latestAccountSyncJob(account.id);
@@ -464,10 +468,66 @@
     }
 
     if (account.lastSyncAt) {
-      return shortDate(account.lastSyncAt);
+      return "Synced";
     }
 
     return "Not synced";
+  }
+
+  function accountStatusTone(account: Account) {
+    const activeJob = activeAccountSyncJob(account.id);
+
+    if (activeJob) {
+      return "syncing";
+    }
+
+    if (!account.enabled) {
+      return "disabled";
+    }
+
+    const latestJob = latestAccountSyncJob(account.id);
+
+    if (latestJob?.status === "failed") {
+      return "failed";
+    }
+
+    if (latestJob?.status === "cancelled") {
+      return "warning";
+    }
+
+    if (account.lastSyncAt) {
+      return "synced";
+    }
+
+    return "idle";
+  }
+
+  function accountLoginLabel(account: Account) {
+    return account.loginName?.trim() || "No login name";
+  }
+
+  function accountLastSyncLabel(account: Account) {
+    return account.lastSyncAt ? shortDate(account.lastSyncAt) : "Never synced";
+  }
+
+  function accountCredentialLabel(account: Account) {
+    return account.hasCredential ? "Saved" : "Not saved";
+  }
+
+  function accountEnabledLabel(account: Account) {
+    return account.enabled ? "Enabled" : "Disabled";
+  }
+
+  function enabledAccountCount() {
+    return accounts.filter((account) => account.enabled).length;
+  }
+
+  function credentialedAccountCount() {
+    return accounts.filter((account) => account.hasCredential).length;
+  }
+
+  function syncingAccountCount() {
+    return accounts.filter((account) => activeAccountSyncJob(account.id)).length;
   }
 
   function upsertJob(currentJobs: JobSnapshot[], job: JobSnapshot) {
@@ -962,54 +1022,12 @@
       </section>
     {:else if activeView === "accounts"}
       <div class="accounts-layout">
-        <section class="accounts-panel account-editor" aria-label="Account editor">
-          <div class="panel-title">
-            <h2>{editingAccountId ? "Edit account" : "Add account"}</h2>
-            <button class="secondary small" type="button" onclick={resetAccountForm} disabled={accountSaving}>
-              New
-            </button>
-          </div>
-          <form class="account-form" onsubmit={saveAccount}>
-            <label>
-              <span>Label</span>
-              <input type="text" autocomplete="off" bind:value={accountLabel} disabled={accountSaving} />
-            </label>
-            <label>
-              <span>Login</span>
-              <input
-                type="text"
-                autocomplete="username"
-                spellcheck="false"
-                bind:value={accountLoginName}
-                disabled={accountSaving}
-              />
-            </label>
-            <label>
-              <span>Password</span>
-              <input
-                type="password"
-                autocomplete="current-password"
-                bind:value={accountPassword}
-                disabled={accountSaving}
-              />
-            </label>
-            <label class="check-row">
-              <input type="checkbox" bind:checked={accountRememberPassword} disabled={accountSaving} />
-              <span>Remember password</span>
-            </label>
-            <label class="check-row">
-              <input type="checkbox" bind:checked={accountEnabled} disabled={accountSaving} />
-              <span>Enabled</span>
-            </label>
-            <button type="submit" disabled={accountSaving}>
-              {editingAccountId ? "Update" : "Add"}
-            </button>
-          </form>
-        </section>
-
-        <section class="accounts-panel" aria-label="Accounts">
-          <div class="panel-title">
-            <h2>Accounts</h2>
+        <section class="accounts-panel account-list-panel" aria-label="Accounts">
+          <div class="panel-title account-panel-title">
+            <div>
+              <h2>Account sources</h2>
+              <p>{enabledAccountCount()} enabled of {accounts.length}</p>
+            </div>
             <div class="panel-actions">
               <button
                 class="secondary small"
@@ -1029,6 +1047,26 @@
               </button>
             </div>
           </div>
+
+          <div class="account-summary-strip" aria-label="Account summary">
+            <div class="account-stat">
+              <span>{accounts.length}</span>
+              <small>Total</small>
+            </div>
+            <div class="account-stat">
+              <span>{enabledAccountCount()}</span>
+              <small>Enabled</small>
+            </div>
+            <div class="account-stat">
+              <span>{credentialedAccountCount()}</span>
+              <small>Credentials</small>
+            </div>
+            <div class="account-stat">
+              <span>{syncingAccountCount()}</span>
+              <small>Syncing</small>
+            </div>
+          </div>
+
           <div class="account-list">
             {#if accountsLoading}
               <div class="empty-state compact">Loading</div>
@@ -1037,11 +1075,36 @@
             {:else}
               {#each accounts as account (account.id)}
                 {@const activeSyncJob = activeAccountSyncJob(account.id)}
-                <article class="account-row" class:disabled={!account.enabled}>
+                <article
+                  class="account-row"
+                  class:disabled={!account.enabled}
+                  class:selected={editingAccountId === account.id}
+                >
                   <button class="account-name" type="button" onclick={() => editAccount(account)}>
-                    <span>{account.label}</span>
-                    <small>{phaseLabel(account)}</small>
+                    <span class="account-identity">
+                      <span title={account.label}>{account.label}</span>
+                      <small title={accountLoginLabel(account)}>{accountLoginLabel(account)}</small>
+                      <span class:disabled={!account.enabled} class="account-enabled-pill">
+                        {accountEnabledLabel(account)}
+                      </span>
+                    </span>
                   </button>
+                  <div class="account-meta-grid">
+                    <div>
+                      <span>Status</span>
+                      <strong class={`account-status-text ${accountStatusTone(account)}`} title={accountStatusLabel(account)}>
+                        {accountStatusLabel(account)}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Credential</span>
+                      <strong title={accountCredentialLabel(account)}>{accountCredentialLabel(account)}</strong>
+                    </div>
+                    <div>
+                      <span>Last sync</span>
+                      <strong title={accountLastSyncLabel(account)}>{accountLastSyncLabel(account)}</strong>
+                    </div>
+                  </div>
                   <div class="account-actions">
                     <button
                       class="secondary small"
@@ -1075,6 +1138,63 @@
               {/each}
             {/if}
           </div>
+        </section>
+
+        <section class="accounts-panel account-editor" aria-label="Account editor">
+          <div class="panel-title account-panel-title">
+            <div>
+              <h2>{editingAccountId ? "Account details" : "Add account"}</h2>
+              <p>{editingAccountId ? "Editing selected source" : "New DLsite source"}</p>
+            </div>
+            <button class="secondary small" type="button" onclick={resetAccountForm} disabled={accountSaving}>
+              New
+            </button>
+          </div>
+          <form class="account-form" onsubmit={saveAccount}>
+            <div class="account-form-grid">
+              <label>
+                <span>Label</span>
+                <input type="text" autocomplete="off" bind:value={accountLabel} disabled={accountSaving} />
+              </label>
+              <label>
+                <span>Login</span>
+                <input
+                  type="text"
+                  autocomplete="username"
+                  spellcheck="false"
+                  bind:value={accountLoginName}
+                  disabled={accountSaving}
+                />
+              </label>
+              <label>
+                <span>Password</span>
+                <input
+                  type="password"
+                  autocomplete="current-password"
+                  bind:value={accountPassword}
+                  disabled={accountSaving}
+                />
+              </label>
+            </div>
+            <div class="account-option-grid">
+              <label class="check-row">
+                <input type="checkbox" bind:checked={accountRememberPassword} disabled={accountSaving} />
+                <span>Remember password</span>
+              </label>
+              <label class="check-row">
+                <input type="checkbox" bind:checked={accountEnabled} disabled={accountSaving} />
+                <span>Enabled</span>
+              </label>
+            </div>
+            <div class="actions account-form-actions">
+              <span class="form-context">
+                {editingAccountId ? "Update source" : "Create source"}
+              </span>
+              <button type="submit" disabled={accountSaving}>
+                {editingAccountId ? "Save" : "Add"}
+              </button>
+            </div>
+          </form>
         </section>
       </div>
     {:else if activeView === "activity"}
@@ -1451,16 +1571,76 @@
 
   .accounts-layout {
     display: grid;
-    grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
     gap: 18px;
     align-items: start;
     min-height: 0;
     overflow: auto;
   }
 
+  .account-list-panel {
+    min-width: 0;
+  }
+
   .account-editor {
     position: sticky;
     top: 28px;
+  }
+
+  .account-panel-title {
+    align-items: flex-start;
+  }
+
+  .account-panel-title > div {
+    min-width: 0;
+  }
+
+  .account-panel-title p {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .account-summary-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1px;
+    margin-bottom: 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--border);
+    overflow: hidden;
+  }
+
+  .account-stat {
+    display: grid;
+    gap: 2px;
+    padding: 10px 12px;
+    background: var(--panel-soft);
+  }
+
+  .account-stat span {
+    color: var(--text-strong);
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  .account-stat small,
+  .form-context {
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .account-form-grid {
+    display: grid;
+    gap: 14px;
+  }
+
+  .account-option-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
   }
 
   .toolbar {
@@ -1807,12 +1987,19 @@
   .account-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    gap: 8px;
+    grid-template-rows: auto auto;
+    gap: 10px 16px;
     align-items: center;
-    padding: 9px;
+    min-height: 96px;
+    padding: 14px;
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--panel-soft);
+  }
+
+  .account-row.selected {
+    border-color: var(--accent);
+    box-shadow: inset 3px 0 0 var(--accent);
   }
 
   .account-row.disabled {
@@ -1821,7 +2008,10 @@
 
   .account-name {
     display: grid;
-    justify-items: start;
+    grid-column: 1;
+    grid-row: 1;
+    align-items: center;
+    justify-items: stretch;
     min-width: 0;
     height: auto;
     min-height: 38px;
@@ -1829,15 +2019,100 @@
     border: 0;
     color: inherit;
     background: transparent;
+    text-align: left;
   }
 
-  .account-name span {
+  .account-status-text.synced {
+    color: var(--accent);
+  }
+
+  .account-status-text.syncing {
+    color: #d8a62d;
+  }
+
+  .account-status-text.failed {
+    color: var(--danger);
+  }
+
+  .account-status-text.warning {
+    color: #d8a62d;
+  }
+
+  .account-identity {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+  }
+
+  .account-identity span {
     max-width: 100%;
     color: var(--text);
     font-weight: 650;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .account-enabled-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    justify-self: start;
+    width: min(150px, 100%);
+    min-height: 24px;
+    padding: 2px 10px;
+    border: 1px solid rgb(112 165 120 / 58%);
+    border-radius: 999px;
+    color: var(--accent);
+    background: var(--accent-muted);
+    font-size: 12px;
+    font-weight: 650;
+    line-height: 1.1;
+  }
+
+  .account-enabled-pill.disabled {
+    border-color: var(--border-strong);
+    color: var(--text-subtle);
+    background: var(--field-disabled);
+  }
+
+  .account-meta-grid {
+    display: grid;
+    grid-column: 1;
+    grid-row: 2;
+    grid-template-columns: minmax(120px, 0.8fr) minmax(110px, 0.7fr) minmax(190px, 1.2fr);
+    gap: 16px;
+    min-width: 0;
+  }
+
+  .account-meta-grid div {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+  }
+
+  .account-meta-grid span {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 650;
+  }
+
+  .account-meta-grid strong {
+    min-width: 0;
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 650;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .account-actions {
+    grid-column: 2;
+    grid-row: 1 / 3;
+    align-self: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
   }
 
   .job-list {
@@ -1911,6 +2186,14 @@
     display: flex;
     align-items: center;
     gap: 9px;
+  }
+
+  .account-option-grid .check-row {
+    min-height: 40px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--field);
   }
 
   .check-row input {
@@ -1988,6 +2271,22 @@
   .actions {
     justify-content: space-between;
     gap: 14px;
+  }
+
+  @media (max-width: 1220px) {
+    .account-row {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .account-meta-grid {
+      grid-column: 1 / -1;
+    }
+
+    .account-actions {
+      grid-column: 1 / -1;
+      grid-row: auto;
+      justify-content: flex-start;
+    }
   }
 
   @media (max-width: 980px) {
@@ -2070,6 +2369,20 @@
 
     .toolbar {
       grid-template-columns: 1fr;
+    }
+
+    .account-summary-strip {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .account-row,
+    .account-meta-grid,
+    .account-option-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .account-actions {
+      justify-content: flex-start;
     }
 
     .product-card {
