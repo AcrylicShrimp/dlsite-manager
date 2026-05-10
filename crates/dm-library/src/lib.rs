@@ -25,7 +25,7 @@ pub type Result<T> = std::result::Result<T, LibraryError>;
 pub enum LibraryError {
     #[error("storage error")]
     Storage(#[from] StorageError),
-    #[error("credential error")]
+    #[error("credential error: {0}")]
     Credentials(#[from] CredentialsError),
     #[error("dlsite api error")]
     Api(#[from] DmApiError),
@@ -144,6 +144,15 @@ impl Library {
 
     pub async fn list_products(&self, query: &ProductListQuery) -> Result<ProductListPage> {
         Ok(self.storage.list_products(query).await?)
+    }
+
+    pub fn account_has_saved_password(&self, account: &Account) -> Result<bool> {
+        let Some(credential_ref) = account.credential_ref.as_deref() else {
+            return Ok(false);
+        };
+        let credential_ref = CredentialRef::new(credential_ref.to_owned())?;
+
+        Ok(self.credentials.load_password(&credential_ref)?.is_some())
     }
 
     pub async fn download_work_with_source<S>(
@@ -1301,6 +1310,7 @@ mod tests {
             account.credential_ref,
             Some("account:account-a:password".to_owned())
         );
+        assert!(library.account_has_saved_password(&account)?);
 
         Ok(())
     }

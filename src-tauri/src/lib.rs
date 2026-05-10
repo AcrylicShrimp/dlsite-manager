@@ -1,5 +1,5 @@
 use dm_audit::{AuditEvent, AuditLogger};
-use dm_credentials::{CredentialStore, InMemoryCredentialStore, KeyringCredentialStore};
+use dm_credentials::{CredentialStore, LocalCredentialStore};
 use dm_jobs::{
     JobContext, JobEventKind, JobFailure, JobId, JobLogPage, JobManager, JobMetadata, JobProgress,
     JobStatus,
@@ -91,12 +91,19 @@ async fn save_settings(
 
 #[tauri::command]
 async fn list_accounts(state: State<'_, AppState>) -> Result<Vec<AccountDto>, String> {
-    state
-        .library
-        .accounts()
-        .await
-        .map(|accounts| accounts.into_iter().map(AccountDto::from).collect())
-        .map_err(command_error)
+    let accounts = state.library.accounts().await.map_err(command_error)?;
+    let mut dtos = Vec::with_capacity(accounts.len());
+
+    for account in accounts {
+        let has_credential = state
+            .library
+            .account_has_saved_password(&account)
+            .map_err(command_error)?;
+
+        dtos.push(AccountDto::from_account(account, has_credential));
+    }
+
+    Ok(dtos)
 }
 
 #[tauri::command]
@@ -127,17 +134,22 @@ async fn save_account(
 
     match result {
         Ok(account) => {
+            let has_credential = state
+                .library
+                .account_has_saved_password(&account)
+                .map_err(command_error)?;
+
             record_audit(
                 &state.audit,
                 AuditEvent::succeeded("account.save", "Saved account").with_details(json!({
                     "accountId": account.id.clone(),
                     "label": account.label.clone(),
-                    "hasCredential": account.credential_ref.is_some(),
+                    "hasCredential": has_credential,
                     "enabled": account.enabled,
                 })),
             )
             .await;
-            Ok(AccountDto::from(account))
+            Ok(AccountDto::from_account(account, has_credential))
         }
         Err(error) => {
             let message = command_error(error);
@@ -863,13 +875,13 @@ struct AccountDto {
     last_sync_at: Option<String>,
 }
 
-impl From<Account> for AccountDto {
-    fn from(account: Account) -> Self {
+impl AccountDto {
+    fn from_account(account: Account, has_credential: bool) -> Self {
         Self {
             id: account.id,
             label: account.label,
             login_name: account.login_name,
-            has_credential: account.credential_ref.is_some(),
+            has_credential,
             enabled: account.enabled,
             created_at: account.created_at,
             updated_at: account.updated_at,
@@ -1746,13 +1758,9 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         storage.run_migrations().await?;
         dm_storage::Result::Ok(storage)
     })?;
-    let credentials: Arc<dyn CredentialStore> = match KeyringCredentialStore::native_default() {
-        Ok(store) => Arc::new(store),
-        Err(error) => {
-            eprintln!("failed to initialize native credential store: {error}");
-            Arc::new(InMemoryCredentialStore::new())
-        }
-    };
+    let credential_vault_path = app_data_dir.join("credentials").join("vault.json");
+    let credentials: Arc<dyn CredentialStore> =
+        Arc::new(LocalCredentialStore::open(&credential_vault_path)?);
     let library = Library::new(storage.clone(), credentials);
     let jobs = JobManager::default();
 
@@ -1760,6 +1768,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         target: "dlsite_manager::app",
         log_dir = %log_dir.display(),
         data_dir = %app_data_dir.display(),
+        credential_vault = %credential_vault_path.display(),
         "app setup completed"
     );
     tauri::async_runtime::block_on(record_audit(

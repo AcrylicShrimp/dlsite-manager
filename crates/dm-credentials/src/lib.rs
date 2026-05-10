@@ -1,24 +1,23 @@
-use keyring_core::{set_default_store, Entry, Error as KeyringError};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    fmt,
+    fmt, fs, io,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
 pub type Result<T> = std::result::Result<T, CredentialsError>;
 
-pub const DEFAULT_SERVICE: &str = "dlsite-manager";
-
 #[derive(Debug, thiserror::Error)]
 pub enum CredentialsError {
     #[error("invalid credential reference: {0}")]
     InvalidCredentialRef(&'static str),
-    #[error("invalid credential service: {0}")]
-    InvalidService(&'static str),
     #[error("credential store lock is poisoned")]
     StorePoisoned,
-    #[error("keyring error: {0}")]
-    Keyring(#[from] KeyringError),
+    #[error("credential file I/O error: {0}")]
+    Io(#[from] io::Error),
+    #[error("credential file JSON error: {0}")]
+    Json(#[from] serde_json::Error),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -54,52 +53,89 @@ pub trait CredentialStore: Send + Sync {
 }
 
 #[derive(Debug, Clone)]
-pub struct KeyringCredentialStore {
-    service: String,
+pub struct LocalCredentialStore {
+    path: PathBuf,
+    file_lock: Arc<Mutex<()>>,
 }
 
-impl KeyringCredentialStore {
-    pub fn native_default() -> Result<Self> {
-        Self::native(DEFAULT_SERVICE)
+impl LocalCredentialStore {
+    pub fn open(path: impl Into<PathBuf>) -> Result<Self> {
+        let path = path.into();
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+            set_private_dir_permissions(parent)?;
+        }
+
+        if !path.exists() {
+            write_password_file(&path, &PasswordFile::default())?;
+        }
+
+        Ok(Self {
+            path,
+            file_lock: Arc::new(Mutex::new(())),
+        })
     }
 
-    pub fn native(service: impl Into<String>) -> Result<Self> {
-        let service = validate_service(service.into())?;
-
-        use_native_store()?;
-
-        Ok(Self { service })
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
-    pub fn service(&self) -> &str {
-        &self.service
+    fn load_file(&self) -> Result<PasswordFile> {
+        match fs::read_to_string(&self.path) {
+            Ok(content) if content.trim().is_empty() => Ok(PasswordFile::default()),
+            Ok(content) => Ok(serde_json::from_str(&content)?),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(PasswordFile::default()),
+            Err(error) => Err(error.into()),
+        }
     }
 
-    fn entry(&self, credential_ref: &CredentialRef) -> Result<Entry> {
-        Ok(Entry::new(&self.service, credential_ref.as_str())?)
+    fn save_file(&self, file: &PasswordFile) -> Result<()> {
+        write_password_file(&self.path, file)
     }
 }
 
-impl CredentialStore for KeyringCredentialStore {
+impl CredentialStore for LocalCredentialStore {
     fn save_password(&self, credential_ref: &CredentialRef, password: &str) -> Result<()> {
-        self.entry(credential_ref)?.set_password(password)?;
-        Ok(())
+        let _guard = self
+            .file_lock
+            .lock()
+            .map_err(|_| CredentialsError::StorePoisoned)?;
+        let mut file = self.load_file()?;
+
+        file.passwords
+            .insert(credential_ref.as_str().to_owned(), password.to_owned());
+        self.save_file(&file)
     }
 
     fn load_password(&self, credential_ref: &CredentialRef) -> Result<Option<String>> {
-        match self.entry(credential_ref)?.get_password() {
-            Ok(password) => Ok(Some(password)),
-            Err(KeyringError::NoEntry) => Ok(None),
-            Err(error) => Err(error.into()),
-        }
+        let _guard = self
+            .file_lock
+            .lock()
+            .map_err(|_| CredentialsError::StorePoisoned)?;
+        Ok(self
+            .load_file()?
+            .passwords
+            .get(credential_ref.as_str())
+            .cloned())
     }
 
     fn delete_password(&self, credential_ref: &CredentialRef) -> Result<()> {
-        match self.entry(credential_ref)?.delete_credential() {
-            Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
-            Err(error) => Err(error.into()),
-        }
+        let _guard = self
+            .file_lock
+            .lock()
+            .map_err(|_| CredentialsError::StorePoisoned)?;
+        let mut file = self.load_file()?;
+
+        file.passwords.remove(credential_ref.as_str());
+        self.save_file(&file)
     }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct PasswordFile {
+    #[serde(default)]
+    passwords: HashMap<String, String>,
 }
 
 #[derive(Clone, Default)]
@@ -150,55 +186,71 @@ impl CredentialStore for InMemoryCredentialStore {
     }
 }
 
-fn validate_service(value: String) -> Result<String> {
-    validate_identifier(&value).map_err(CredentialsError::InvalidService)?;
-    Ok(value)
+fn write_password_file(path: &Path, file: &PasswordFile) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+        set_private_dir_permissions(parent)?;
+    }
+
+    let temporary_path = path.with_extension("json.tmp");
+    let content = serde_json::to_vec_pretty(file)?;
+
+    write_private_file(&temporary_path, &content)?;
+    fs::rename(&temporary_path, path)?;
+    set_private_file_permissions(path)?;
+
+    Ok(())
 }
 
-fn use_native_store() -> std::result::Result<(), KeyringError> {
-    let config = HashMap::new();
+#[cfg(unix)]
+fn write_private_file(path: &Path, content: &[u8]) -> Result<()> {
+    use std::{fs::OpenOptions, io::Write, os::unix::fs::OpenOptionsExt};
 
-    #[cfg(target_os = "android")]
-    {
-        use android_native_keyring_store::Store;
-        set_default_store(Store::new_with_configuration(&config)?);
-        Ok(())
-    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(content)?;
+    file.sync_all()?;
+    Ok(())
+}
 
-    #[cfg(target_os = "macos")]
-    {
-        use apple_native_keyring_store::keychain::Store;
-        set_default_store(Store::new_with_configuration(&config)?);
-        Ok(())
-    }
+#[cfg(not(unix))]
+fn write_private_file(path: &Path, content: &[u8]) -> Result<()> {
+    use std::io::Write;
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    {
-        use zbus_secret_service_keyring_store::Store;
-        set_default_store(Store::new_with_configuration(&config)?);
-        Ok(())
-    }
+    let mut file = fs::File::create(path)?;
+    file.write_all(content)?;
+    file.sync_all()?;
+    Ok(())
+}
 
-    #[cfg(target_os = "windows")]
-    {
-        use windows_native_keyring_store::Store;
-        set_default_store(Store::new_with_configuration(&config)?);
-        Ok(())
-    }
+#[cfg(unix)]
+fn set_private_file_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
 
-    #[cfg(not(any(
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "windows",
-    )))]
-    {
-        let _ = config;
-        Err(KeyringError::NotSupportedByStore(
-            "native credential store is not configured for this platform".to_owned(),
-        ))
-    }
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_private_file_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_private_dir_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_private_dir_permissions(_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 fn validate_identifier(value: &str) -> std::result::Result<(), &'static str> {
@@ -268,6 +320,65 @@ mod tests {
 
         store.delete_password(&credential_ref)?;
         store.delete_password(&credential_ref)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn local_store_round_trips_passwords_across_reopen() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("credentials").join("vault.json");
+        let credential_ref = CredentialRef::account_password("account-a")?;
+
+        let store = LocalCredentialStore::open(&path)?;
+        assert_eq!(store.load_password(&credential_ref)?, None);
+
+        store.save_password(&credential_ref, "secret")?;
+        assert_eq!(
+            store.load_password(&credential_ref)?,
+            Some("secret".to_owned())
+        );
+
+        let reopened = LocalCredentialStore::open(&path)?;
+        assert_eq!(
+            reopened.load_password(&credential_ref)?,
+            Some("secret".to_owned())
+        );
+
+        reopened.delete_password(&credential_ref)?;
+        assert_eq!(store.load_password(&credential_ref)?, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn local_store_delete_is_idempotent() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let store = LocalCredentialStore::open(directory.path().join("vault.json"))?;
+        let credential_ref = CredentialRef::account_password("account-a")?;
+
+        store.delete_password(&credential_ref)?;
+        store.delete_password(&credential_ref)?;
+
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_store_uses_private_permissions() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir()?;
+        let vault_dir = directory.path().join("credentials");
+        let path = vault_dir.join("vault.json");
+
+        LocalCredentialStore::open(&path)?;
+
+        assert_eq!(
+            fs::metadata(&vault_dir)?.permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o777, 0o600);
 
         Ok(())
     }
