@@ -92,7 +92,7 @@
     jobId: string;
   };
 
-  type View = "products" | "settings";
+  type View = "products" | "accounts" | "activity" | "settings";
 
   let activeView = $state<View>("products");
 
@@ -369,6 +369,10 @@
       return;
     }
 
+    await cancelJob(job);
+  }
+
+  async function cancelJob(job: JobSnapshot) {
     error = "";
     status = "";
 
@@ -445,8 +449,8 @@
     return [...accountSyncJobs(accountId)].reverse()[0] ?? null;
   }
 
-  function visibleJobs() {
-    return [...jobs].reverse().slice(0, 6);
+  function visibleJobs(limit = 20) {
+    return [...jobs].reverse().slice(0, limit);
   }
 
   function hasSyncableEnabledAccount() {
@@ -538,6 +542,32 @@
     }
   }
 
+  function viewEyebrow(view: View) {
+    switch (view) {
+      case "products":
+        return "Library";
+      case "accounts":
+        return "Sources";
+      case "activity":
+        return "Jobs";
+      case "settings":
+        return "Application";
+    }
+  }
+
+  function viewTitle(view: View) {
+    switch (view) {
+      case "products":
+        return "Products";
+      case "accounts":
+        return "Accounts";
+      case "activity":
+        return "Activity";
+      case "settings":
+        return "Settings";
+    }
+  }
+
   function valueOrNull(value: string) {
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
@@ -572,6 +602,20 @@
         Products
       </button>
       <button
+        class:active={activeView === "accounts"}
+        type="button"
+        onclick={() => (activeView = "accounts")}
+      >
+        Accounts
+      </button>
+      <button
+        class:active={activeView === "activity"}
+        type="button"
+        onclick={() => (activeView = "activity")}
+      >
+        Activity
+      </button>
+      <button
         class:active={activeView === "settings"}
         type="button"
         onclick={() => (activeView = "settings")}
@@ -584,8 +628,8 @@
   <section class="workspace">
     <header class="workspace-header">
       <div>
-        <p class="eyebrow">{activeView === "products" ? "Library" : "Application"}</p>
-        <h1>{activeView === "products" ? "Products" : "Settings"}</h1>
+        <p class="eyebrow">{viewEyebrow(activeView)}</p>
+        <h1>{viewTitle(activeView)}</h1>
       </div>
       <div class="header-actions">
         {#if activeView === "products"}
@@ -604,6 +648,21 @@
           >
             Sync
           </button>
+        {:else if activeView === "accounts"}
+          <button
+            class="secondary"
+            type="button"
+            onclick={loadAccounts}
+            disabled={accountsLoading || accountSaving}
+          >
+            Reload
+          </button>
+          <button type="button" onclick={resetAccountForm} disabled={accountSaving}>New</button>
+        {:else if activeView === "activity"}
+          <button class="secondary" type="button" onclick={loadJobs} disabled={jobsLoading}>
+            Reload
+          </button>
+          <button type="button" onclick={clearFinishedJobs} disabled={jobsLoading}>Clear</button>
         {:else}
           <button
             class="secondary"
@@ -622,86 +681,86 @@
     {/if}
 
     {#if activeView === "products"}
-      <div class="product-layout">
-        <section class="product-area" aria-label="Products">
-          <form class="toolbar" onsubmit={searchProducts}>
-            <input
-              type="search"
-              autocomplete="off"
-              spellcheck="false"
-              placeholder="Search title, maker, work ID"
-              bind:value={productSearch}
-            />
-            <select bind:value={selectedAccountId} onchange={loadProducts}>
-              <option value="">All accounts</option>
-              {#each accounts as account (account.id)}
-                <option value={account.id}>{account.label}</option>
-              {/each}
-            </select>
-            <select bind:value={selectedAgeCategory} onchange={loadProducts}>
-              <option value="">Any age</option>
-              <option value="all">All ages</option>
-              <option value="r15">R-15</option>
-              <option value="r18">R-18</option>
-            </select>
-            <select bind:value={productSort} onchange={loadProducts}>
-              <option value="titleAsc">Title</option>
-              <option value="latestPurchaseDesc">Latest purchase</option>
-              <option value="publishedAtDesc">Published</option>
-            </select>
-            <button type="submit" disabled={productsLoading}>Search</button>
-          </form>
+      <section class="product-area" aria-label="Products">
+        <form class="toolbar" onsubmit={searchProducts}>
+          <input
+            type="search"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Search title, maker, work ID"
+            bind:value={productSearch}
+          />
+          <select bind:value={selectedAccountId} onchange={loadProducts}>
+            <option value="">All accounts</option>
+            {#each accounts as account (account.id)}
+              <option value={account.id}>{account.label}</option>
+            {/each}
+          </select>
+          <select bind:value={selectedAgeCategory} onchange={loadProducts}>
+            <option value="">Any age</option>
+            <option value="all">All ages</option>
+            <option value="r15">R-15</option>
+            <option value="r18">R-18</option>
+          </select>
+          <select bind:value={productSort} onchange={loadProducts}>
+            <option value="titleAsc">Title</option>
+            <option value="latestPurchaseDesc">Latest purchase</option>
+            <option value="publishedAtDesc">Published</option>
+          </select>
+          <button type="submit" disabled={productsLoading}>Search</button>
+        </form>
 
-          <div class="list-header">
-            <span>{totalProducts} products</span>
-          </div>
+        <div class="list-header">
+          <span>{totalProducts} products</span>
+        </div>
 
-          {#if productsLoading}
-            <div class="empty-state">Loading</div>
-          {:else if products.length === 0}
-            <div class="empty-state">No products</div>
-          {:else}
-            <div class="product-table" aria-label="Cached products">
-              {#each products as product (product.workId)}
-                <article class="product-row">
-                  <div class="thumb" aria-hidden="true">
-                    {#if product.thumbnailUrl}
-                      <img src={product.thumbnailUrl} alt="" loading="lazy" />
+        {#if productsLoading}
+          <div class="empty-state">Loading</div>
+        {:else if products.length === 0}
+          <div class="empty-state">No products</div>
+        {:else}
+          <div class="product-table" aria-label="Cached products">
+            {#each products as product (product.workId)}
+              <article class="product-row">
+                <div class="thumb" aria-hidden="true">
+                  {#if product.thumbnailUrl}
+                    <img src={product.thumbnailUrl} alt="" loading="lazy" />
+                  {:else}
+                    <span>?</span>
+                  {/if}
+                </div>
+                <div class="product-main">
+                  <div class="product-title">{product.title}</div>
+                  <div class="product-meta">
+                    <span>{product.workId}</span>
+                    {#if product.makerName}
+                      <span>{product.makerName}</span>
+                    {/if}
+                    {#if product.workType}
+                      <span>{product.workType}</span>
+                    {/if}
+                    {#if ageLabel(product.ageCategory)}
+                      <span>{ageLabel(product.ageCategory)}</span>
                     {/if}
                   </div>
-                  <div class="product-main">
-                    <div class="product-title">{product.title}</div>
-                    <div class="product-meta">
-                      <span>{product.workId}</span>
-                      {#if product.makerName}
-                        <span>{product.makerName}</span>
-                      {/if}
-                      {#if product.workType}
-                        <span>{product.workType}</span>
-                      {/if}
-                      {#if ageLabel(product.ageCategory)}
-                        <span>{ageLabel(product.ageCategory)}</span>
-                      {/if}
-                    </div>
-                  </div>
-                  <div class="owner-list" aria-label="Owners">
-                    {#each product.owners as owner (owner.accountId)}
-                      <span>{owner.label}</span>
-                    {/each}
-                  </div>
-                  <div class="date-cell">{shortDate(product.latestPurchasedAt)}</div>
-                </article>
-              {/each}
-            </div>
-          {/if}
-        </section>
-
-        <aside class="accounts-panel" aria-label="Accounts">
-          <div class="panel-title">
-            <h2>Accounts</h2>
-            <button class="secondary small" type="button" onclick={resetAccountForm}>New</button>
+                </div>
+                <div class="owner-list" aria-label="Owners">
+                  {#each product.owners as owner (owner.accountId)}
+                    <span>{owner.label}</span>
+                  {/each}
+                </div>
+                <div class="date-cell">{shortDate(product.latestPurchasedAt)}</div>
+              </article>
+            {/each}
           </div>
-
+        {/if}
+      </section>
+    {:else if activeView === "accounts"}
+      <div class="accounts-layout">
+        <section class="accounts-panel account-editor" aria-label="Account editor">
+          <div class="panel-title">
+            <h2>{editingAccountId ? "Edit account" : "Add account"}</h2>
+          </div>
           <form class="account-form" onsubmit={saveAccount}>
             <label>
               <span>Label</span>
@@ -738,7 +797,20 @@
               {editingAccountId ? "Update" : "Add"}
             </button>
           </form>
+        </section>
 
+        <section class="accounts-panel" aria-label="Accounts">
+          <div class="panel-title">
+            <h2>Accounts</h2>
+            <button
+              class="secondary small"
+              type="button"
+              onclick={syncEnabledAccounts}
+              disabled={accountsLoading || jobsLoading || !hasSyncableEnabledAccount()}
+            >
+              Sync all
+            </button>
+          </div>
           <div class="account-list">
             {#if accountsLoading}
               <div class="empty-state compact">Loading</div>
@@ -785,33 +857,38 @@
               {/each}
             {/if}
           </div>
-
-          <div class="activity-section">
-            <div class="panel-title compact-title">
-              <h2>Activity</h2>
-              <button class="secondary small" type="button" onclick={clearFinishedJobs}>Clear</button>
-            </div>
-
-            {#if jobsLoading}
-              <div class="empty-state compact">Loading</div>
-            {:else if visibleJobs().length === 0}
-              <div class="empty-state compact">No jobs</div>
-            {:else}
-              <div class="job-list">
-                {#each visibleJobs() as job (job.id)}
-                  <article class="job-row" class:failed={job.status === "failed"}>
-                    <div>
-                      <div class="job-title">{jobAccountLabel(job)}</div>
-                      <div class="job-detail">{jobDetail(job)}</div>
-                    </div>
-                    <span class:active={isActiveJob(job)}>{jobLabel(job)}</span>
-                  </article>
-                {/each}
-              </div>
-            {/if}
-          </div>
-        </aside>
+        </section>
       </div>
+    {:else if activeView === "activity"}
+      <section class="activity-panel" aria-label="Activity">
+        {#if jobsLoading}
+          <div class="empty-state">Loading</div>
+        {:else if visibleJobs().length === 0}
+          <div class="empty-state">No jobs</div>
+        {:else}
+          <div class="job-list large">
+            {#each visibleJobs() as job (job.id)}
+              <article class="job-row" class:failed={job.status === "failed"}>
+                <div>
+                  <div class="job-title">{jobAccountLabel(job)}</div>
+                  <div class="job-detail">{jobDetail(job)}</div>
+                </div>
+                <span class:active={isActiveJob(job)}>{jobLabel(job)}</span>
+                {#if isActiveJob(job)}
+                  <button
+                    class="secondary small"
+                    type="button"
+                    onclick={() => cancelJob(job)}
+                    disabled={!job.cancellable || job.status === "cancelling"}
+                  >
+                    Cancel
+                  </button>
+                {/if}
+              </article>
+            {/each}
+          </div>
+        {/if}
+      </section>
     {:else}
       <form class="settings-panel" onsubmit={saveSettings}>
         <label>
@@ -967,15 +1044,9 @@
     color: #b42318;
   }
 
-  .product-layout {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 320px;
-    gap: 18px;
-    align-items: start;
-  }
-
   .product-area,
   .accounts-panel,
+  .activity-panel,
   .settings-panel {
     border: 1px solid #d8e0e7;
     border-radius: 8px;
@@ -989,6 +1060,7 @@
   }
 
   .accounts-panel,
+  .activity-panel,
   .settings-panel {
     padding: 18px;
   }
@@ -1001,6 +1073,18 @@
 
   .settings-panel {
     max-width: 760px;
+  }
+
+  .accounts-layout {
+    display: grid;
+    grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+    gap: 18px;
+    align-items: start;
+  }
+
+  .account-editor {
+    position: sticky;
+    top: 28px;
   }
 
   .toolbar {
@@ -1052,6 +1136,15 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
+  }
+
+  .thumb span {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+    color: #5f7080;
+    font-weight: 700;
   }
 
   .product-main {
@@ -1115,17 +1208,6 @@
   .account-list {
     display: grid;
     gap: 8px;
-    margin-top: 18px;
-  }
-
-  .activity-section {
-    margin-top: 22px;
-    padding-top: 18px;
-    border-top: 1px solid #e2e8f0;
-  }
-
-  .compact-title {
-    margin-bottom: 10px;
   }
 
   .account-row {
@@ -1169,12 +1251,17 @@
     gap: 7px;
   }
 
+  .job-list.large {
+    gap: 0;
+  }
+
   .job-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     gap: 8px;
     align-items: center;
-    padding: 8px 0;
+    min-height: 56px;
+    padding: 10px 0;
     border-bottom: 1px solid #edf2f7;
   }
 
@@ -1309,8 +1396,12 @@
   }
 
   @media (max-width: 980px) {
-    .product-layout {
+    .accounts-layout {
       grid-template-columns: 1fr;
+    }
+
+    .account-editor {
+      position: static;
     }
 
     .toolbar {
@@ -1342,6 +1433,11 @@
 
     nav {
       flex-direction: row;
+      flex-wrap: wrap;
+    }
+
+    nav button {
+      flex: 1 1 130px;
     }
 
     .workspace {
@@ -1357,6 +1453,10 @@
     }
 
     .toolbar {
+      grid-template-columns: 1fr;
+    }
+
+    .job-row {
       grid-template-columns: 1fr;
     }
 
