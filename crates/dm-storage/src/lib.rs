@@ -9,6 +9,7 @@ use std::path::Path;
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 const LIBRARY_ROOT_KEY: &str = "library_root";
 const DOWNLOAD_ROOT_KEY: &str = "download_root";
+const MISSING_WORK_DETAIL_STATUS: &str = "missing_from_content_works";
 
 pub type Result<T> = std::result::Result<T, StorageError>;
 
@@ -934,6 +935,16 @@ fn sync_run_from_row(row: sqlx::sqlite::SqliteRow) -> Result<SyncRun> {
 }
 
 fn push_product_filters(builder: &mut QueryBuilder<Sqlite>, query: &ProductListQuery) {
+    builder.push(
+        " AND COALESCE(
+            CASE
+                WHEN json_valid(w.raw_json) THEN json_extract(w.raw_json, '$.detail_status')
+            END,
+            ''
+        ) <> ",
+    );
+    builder.push_bind(MISSING_WORK_DETAIL_STATUS);
+
     if let Some(account_id) = query.account_id.as_deref() {
         builder.push(" AND aw.account_id = ");
         builder.push_bind(account_id.to_owned());
@@ -1543,6 +1554,72 @@ mod tests {
         assert_eq!(page.products[0].work_id, "RJ000001");
         assert_eq!(page.products[0].owners.len(), 1);
         assert_eq!(page.products[0].owners[0].account_id, "account-b");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn product_list_hides_missing_detail_placeholders_without_deleting_cache() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-1",
+                vec![
+                    work(
+                        "RJ000001",
+                        "Visible Work",
+                        "Maker One",
+                        "2026-01-01T00:00:00Z",
+                    ),
+                    work_with_raw_json(
+                        "RJ000002",
+                        "RJ000002",
+                        "",
+                        "2026-01-02T00:00:00Z",
+                        r#"{
+                            "workno": "RJ000002",
+                            "source": "content/sales",
+                            "detail_status": "missing_from_content_works",
+                            "sales_date": "2026-01-02T00:00:00Z"
+                        }"#,
+                    ),
+                ],
+                vec![
+                    account_work("RJ000001", "2026-02-01T00:00:00Z"),
+                    account_work("RJ000002", "2026-02-02T00:00:00Z"),
+                ],
+            ))
+            .await?;
+
+        let page = storage.list_products(&ProductListQuery::default()).await?;
+        let search_page = storage
+            .list_products(&ProductListQuery {
+                search: Some("RJ000002".to_owned()),
+                ..ProductListQuery::default()
+            })
+            .await?;
+        let cached_placeholder_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM works WHERE work_id = 'RJ000002'")
+                .fetch_one(&storage.pool)
+                .await?;
+        let current_ownership_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM account_works WHERE work_id = 'RJ000002' AND is_current = 1",
+        )
+        .fetch_one(&storage.pool)
+        .await?;
+
+        assert_eq!(page.total_count, 1);
+        assert_eq!(page.products.len(), 1);
+        assert_eq!(page.products[0].work_id, "RJ000001");
+        assert_eq!(search_page.total_count, 0);
+        assert_eq!(search_page.products.len(), 0);
+        assert_eq!(cached_placeholder_count, 1);
+        assert_eq!(current_ownership_count, 1);
 
         Ok(())
     }

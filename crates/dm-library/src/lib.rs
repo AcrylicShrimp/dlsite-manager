@@ -868,7 +868,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_work_details_are_cached_as_placeholders() -> Result<()> {
+    async fn missing_work_details_are_cached_but_hidden_from_product_list() -> Result<()> {
         let library = migrated_library().await?;
         library.save_account(save_account_request(true)).await?;
         let mut source = sync_source();
@@ -880,18 +880,13 @@ mod tests {
 
         let page = library.list_products(&ProductListQuery::default()).await?;
         let sync_runs = library.storage().sync_runs_for_account("account-a").await?;
-        let placeholder = page
-            .products
-            .iter()
-            .find(|product| product.work_id == "RJ000002")
-            .expect("placeholder product");
 
         assert_eq!(report.purchased_count, 2);
         assert_eq!(report.cached_work_count, 2);
         assert_eq!(report.missing_detail_count, 1);
-        assert_eq!(page.total_count, 2);
-        assert_eq!(placeholder.title, "RJ000002");
-        assert_eq!(placeholder.maker_name, None);
+        assert_eq!(page.total_count, 1);
+        assert_eq!(page.products.len(), 1);
+        assert_eq!(page.products[0].work_id, "RJ000001");
         assert_eq!(sync_runs.len(), 1);
         assert_eq!(sync_runs[0].status, SyncRunStatus::Completed);
 
