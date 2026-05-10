@@ -122,6 +122,12 @@
     workId: string;
   };
 
+  type ProductTypeInfo = {
+    label: string;
+    tone: string;
+    tooltip: string;
+  };
+
   type View = "library" | "accounts" | "activity" | "settings";
 
   const creditFieldDefinitions = [
@@ -133,6 +139,71 @@
     { key: "music", label: "Music" },
     { key: "other", label: "Other" },
   ] as const;
+
+  const productTypeCodeDetails: Record<
+    string,
+    { label: string; tone: string; group: string; description: string }
+  > = {
+    ACN: { label: "Action", tone: "game", group: "Game", description: "Action game" },
+    ADL: { label: "Adult", tone: "image", group: "Image / comic", description: "Adult work" },
+    ADV: { label: "Adventure", tone: "game", group: "Game", description: "Adventure game" },
+    AMT: {
+      label: "Audio material",
+      tone: "audio",
+      group: "Audio",
+      description: "Audio material",
+    },
+    COM: { label: "Comic", tone: "image", group: "Image / comic", description: "Comic" },
+    DNV: {
+      label: "Digital novel",
+      tone: "image",
+      group: "Image / comic",
+      description: "Digital novel",
+    },
+    DOH: {
+      label: "Doujinshi",
+      tone: "image",
+      group: "Image / comic",
+      description: "Doujinshi",
+    },
+    ET3: { label: "Other", tone: "other", group: "Other", description: "Other" },
+    ETC: { label: "Other game", tone: "game", group: "Game", description: "Other game" },
+    GAM: { label: "Game", tone: "game", group: "Game", description: "Game" },
+    ICG: {
+      label: "Illustration",
+      tone: "image",
+      group: "Image / comic",
+      description: "Illustration or CG",
+    },
+    IMT: {
+      label: "Image material",
+      tone: "image",
+      group: "Image / comic",
+      description: "Image material",
+    },
+    KSV: {
+      label: "Visual novel",
+      tone: "image",
+      group: "Image / comic",
+      description: "Sexual novel / visual novel",
+    },
+    MNG: { label: "Manga", tone: "image", group: "Image / comic", description: "Manga" },
+    MOV: { label: "Anime", tone: "video", group: "Video", description: "Anime or video" },
+    MUS: { label: "Music", tone: "audio", group: "Audio", description: "Music" },
+    NRE: { label: "Novel", tone: "image", group: "Image / comic", description: "Novel" },
+    PZL: { label: "Puzzle", tone: "game", group: "Game", description: "Puzzle game" },
+    QIZ: { label: "Quiz", tone: "game", group: "Game", description: "Quiz game" },
+    RPG: { label: "RPG", tone: "game", group: "Game", description: "Role-playing game" },
+    SCM: { label: "Gekiga", tone: "image", group: "Image / comic", description: "Gekiga" },
+    SLN: { label: "Simulation", tone: "game", group: "Game", description: "Simulation game" },
+    SOF: { label: "Software", tone: "other", group: "Other", description: "Software" },
+    SOU: { label: "Voice", tone: "audio", group: "Audio", description: "Voice/audio work" },
+    STG: { label: "Shooter", tone: "game", group: "Game", description: "Shooter game" },
+    TBL: { label: "Tabletop", tone: "game", group: "Game", description: "Tabletop game" },
+    TOL: { label: "Utility", tone: "other", group: "Other", description: "Utility/tool" },
+    TYP: { label: "Typing", tone: "game", group: "Game", description: "Typing game" },
+    VCM: { label: "Voice comic", tone: "video", group: "Video", description: "Voice comic" },
+  };
 
   let activeView = $state<View>("library");
 
@@ -711,17 +782,27 @@
     return typeof value === "number" ? value : null;
   }
 
-  function productType(product: Product) {
+  function productType(product: Product): ProductTypeInfo {
     const raw = product.workType?.trim() || "";
     const upper = raw.toUpperCase();
+    const knownType = productTypeCodeDetails[upper];
+
+    if (knownType) {
+      return {
+        label: knownType.label,
+        tone: knownType.tone,
+        tooltip: `${upper}: ${knownType.description}. Grouped under ${knownType.group}.`,
+      };
+    }
+
     const normalized = raw.toLowerCase().replace(/[\s_-]+/g, "");
 
     if (matchesAny(normalized, ["sou", "audio", "voice", "asmr", "music", "sound"])) {
-      return { label: upper === "SOU" ? "Voice" : raw || "Audio", tone: "audio" };
+      return productTypeFallback(raw, "Audio", "audio", "Audio", "Audio-like product type");
     }
 
     if (matchesAny(normalized, ["mov", "movie", "video", "anime", "voicecomic", "vcomic"])) {
-      return { label: raw || "Video", tone: "video" };
+      return productTypeFallback(raw, "Video", "video", "Video", "Video-like product type");
     }
 
     if (
@@ -743,7 +824,7 @@
         "typing",
       ])
     ) {
-      return { label: raw || "Game", tone: "game" };
+      return productTypeFallback(raw, "Game", "game", "Game", "Game-like product type");
     }
 
     if (
@@ -763,14 +844,44 @@
         "book",
       ])
     ) {
-      return { label: raw || "Comic", tone: "image" };
+      return productTypeFallback(
+        raw,
+        "Image / comic",
+        "image",
+        "Image / comic",
+        "Image, comic, manga, or reading-material product type",
+      );
     }
 
     if (matchesAny(normalized, ["software", "tool", "utility", "etc", "other"])) {
-      return { label: raw || "Other", tone: "other" };
+      return productTypeFallback(raw, "Other", "other", "Other", "Tool or other product type");
     }
 
-    return { label: raw || "Other", tone: "other" };
+    return {
+      label: raw || "Other",
+      tone: "other",
+      tooltip: raw
+        ? `${raw}: Unrecognized DLsite product type. Grouped under Other.`
+        : "Unknown DLsite product type. Grouped under Other.",
+    };
+  }
+
+  function productTypeFallback(
+    raw: string,
+    fallbackLabel: string,
+    tone: string,
+    group: string,
+    description: string,
+  ): ProductTypeInfo {
+    const label = raw || fallbackLabel;
+
+    return {
+      label,
+      tone,
+      tooltip: raw
+        ? `${raw}: ${description}. Grouped under ${group}.`
+        : `${description}. Grouped under ${group}.`,
+    };
   }
 
   function matchesAny(value: string, needles: string[]) {
@@ -800,6 +911,19 @@
         return "R-18";
       default:
         return "";
+    }
+  }
+
+  function ageTooltip(value: string | null) {
+    switch (value) {
+      case "all":
+        return "DLsite age rating: all ages.";
+      case "r15":
+        return "DLsite age rating: R-15.";
+      case "r18":
+        return "DLsite age rating: R-18.";
+      default:
+        return "DLsite age rating is unknown.";
     }
   }
 
@@ -1081,9 +1205,15 @@
                   <div class="labeled-row" aria-label="Classifications">
                     <span class="credit-label">Tags</span>
                     <div class="chip-row">
-                      <span class="chip type-chip">{typeInfo.label}</span>
+                      <span class="chip type-chip" title={typeInfo.tooltip}>
+                        {typeInfo.label}
+                      </span>
                       {#if ageLabel(product.ageCategory)}
-                        <span class="chip age-chip" data-age={ageTone(product.ageCategory)}>
+                        <span
+                          class="chip age-chip"
+                          data-age={ageTone(product.ageCategory)}
+                          title={ageTooltip(product.ageCategory)}
+                        >
                           {ageLabel(product.ageCategory)}
                         </span>
                       {/if}

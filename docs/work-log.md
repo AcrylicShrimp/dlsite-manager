@@ -1,5 +1,9 @@
 # Work Log
 
+## 2026-05-11
+
+- Added tooltip help and known DLsite work-type labels for Library classification chips. The frontend now expands codes such as `SLN` to readable labels like `Simulation`, assigns the correct product-family tone, and gives age chips hover help. `dm-storage` also recognizes additional exact DLsite work-type codes when grouping cached products, with `SLN` covered by the game filter. Validation: `cargo fmt --all`, `cargo test -p dm-storage`, `cargo check -p dlsite-manager`, `pnpm check`, `pnpm build`, `cargo test -p dm-library`, and `git diff --check` passed. Did not restart or stop the already-running dev process per user preference.
+
 ## 2026-05-10
 
 - Created `docs/todos/2026-05-10.00.add-generic-background-job-system.md` to track the proposed generic background job system. The plan covers a `dm-jobs` crate, cooperative cancellation, snapshots, bounded logs, generic Tauri job commands/events, account-sync migration, frontend job state, observability rules, and later download/archive integration. Validation: documentation-only change; inspected the generated TODO content, no code validation run.
