@@ -265,6 +265,7 @@ where
     }
 
     let target_dir = job.target_root.join(job.work_id.as_ref());
+    let mut file_metadata = Vec::with_capacity(plan.files.len());
     let mut downloaded_files = Vec::with_capacity(plan.files.len());
 
     for (file_index, file) in plan.files.iter().enumerate() {
@@ -281,16 +282,64 @@ where
         });
 
         let metadata = probe_download_file_metadata(&client, file_index, file).await?;
+        file_metadata.push((metadata, file.stream_request.clone()));
+    }
+
+    let aggregate_bytes_total = total_expected_size(
+        file_metadata
+            .iter()
+            .map(|(metadata, _stream_request)| metadata),
+    );
+    let mut completed_bytes = 0;
+
+    for (metadata, stream_request) in file_metadata {
+        if cancellation.is_cancelled() {
+            return Err(DownloadError::Cancelled);
+        }
+
         let request = metadata.to_file_request(target_dir.clone());
-        let mut source = DlsiteDownloadSource::new(client.clone(), file.stream_request.clone());
+        let mut source = DlsiteDownloadSource::new(client.clone(), stream_request);
+        let file_offset = completed_bytes;
+        let mut aggregate_progress = |progress| {
+            on_progress(aggregate_file_progress(
+                progress,
+                file_offset,
+                aggregate_bytes_total,
+            ));
+        };
         let downloaded =
-            download_file(&mut source, &request, cancellation, &mut on_progress).await?;
+            download_file(&mut source, &request, cancellation, &mut aggregate_progress).await?;
+
+        completed_bytes = completed_bytes.saturating_add(downloaded.bytes_written);
+        on_progress(DownloadProgress {
+            phase: DownloadPhase::Downloading,
+            file_index: Some(metadata.file_index),
+            file_kind: Some(metadata.file_kind.clone()),
+            bytes_received: completed_bytes,
+            bytes_total: aggregate_bytes_total,
+        });
 
         downloaded_files.push(downloaded);
     }
 
-    let archive_extraction = unpack_downloaded_files(
-        &downloaded_files,
+    let archive_plan = plan_downloaded_archive(&downloaded_files);
+    if job.unpack_policy == UnpackPolicy::UnpackWhenRecognized
+        && matches!(
+            archive_plan,
+            ArchivePlan::SingleZip { .. } | ArchivePlan::LegacySplitRar { .. }
+        )
+    {
+        on_progress(DownloadProgress {
+            phase: DownloadPhase::Unpacking,
+            file_index: None,
+            file_kind: None,
+            bytes_received: completed_bytes,
+            bytes_total: aggregate_bytes_total,
+        });
+    }
+
+    let archive_extraction = unpack_downloaded_archive_plan(
+        archive_plan,
         &target_dir,
         job.unpack_policy,
         ArchiveExtractOptions::default(),
@@ -310,16 +359,28 @@ pub fn unpack_downloaded_files(
     unpack_policy: UnpackPolicy,
     options: ArchiveExtractOptions,
 ) -> Result<Option<ArchiveExtraction>, DownloadError> {
-    if unpack_policy == UnpackPolicy::KeepArchives {
-        return Ok(None);
-    }
+    let archive_plan = plan_downloaded_archive(files);
+    unpack_downloaded_archive_plan(archive_plan, target_dir, unpack_policy, options)
+}
 
-    let archive_plan = dm_archive::plan_archive_handling(
+fn plan_downloaded_archive(files: &[DownloadedFile]) -> ArchivePlan {
+    dm_archive::plan_archive_handling(
         files
             .iter()
             .map(|file| file.path.clone())
             .collect::<Vec<_>>(),
-    );
+    )
+}
+
+fn unpack_downloaded_archive_plan(
+    archive_plan: ArchivePlan,
+    target_dir: impl AsRef<Path>,
+    unpack_policy: UnpackPolicy,
+    options: ArchiveExtractOptions,
+) -> Result<Option<ArchiveExtraction>, DownloadError> {
+    if unpack_policy == UnpackPolicy::KeepArchives {
+        return Ok(None);
+    }
 
     match archive_plan {
         ArchivePlan::SingleZip { .. } | ArchivePlan::LegacySplitRar { .. } => {
@@ -329,6 +390,27 @@ pub fn unpack_downloaded_files(
         }
         ArchivePlan::KeepArchives { .. } => Ok(None),
     }
+}
+
+fn total_expected_size<'a>(
+    metadata: impl IntoIterator<Item = &'a DownloadFileMetadata>,
+) -> Option<u64> {
+    metadata.into_iter().try_fold(0u64, |total, metadata| {
+        Some(total.saturating_add(metadata.expected_size?))
+    })
+}
+
+fn aggregate_file_progress(
+    mut progress: DownloadProgress,
+    completed_before_file: u64,
+    aggregate_bytes_total: Option<u64>,
+) -> DownloadProgress {
+    if progress.phase == DownloadPhase::Downloading {
+        progress.bytes_received = completed_before_file.saturating_add(progress.bytes_received);
+        progress.bytes_total = aggregate_bytes_total;
+    }
+
+    progress
 }
 
 pub async fn probe_download_file_metadata(
@@ -628,6 +710,58 @@ mod tests {
     }
 
     #[test]
+    fn aggregates_known_multi_file_progress() {
+        let metadata = vec![
+            download_metadata(0, DownloadFileKind::SplitPart { number: 1 }, Some(100)),
+            download_metadata(1, DownloadFileKind::SplitPart { number: 2 }, Some(250)),
+        ];
+
+        assert_eq!(total_expected_size(metadata.iter()), Some(350));
+
+        let progress = aggregate_file_progress(
+            DownloadProgress {
+                phase: DownloadPhase::Downloading,
+                file_index: Some(1),
+                file_kind: Some(DownloadFileKind::SplitPart { number: 2 }),
+                bytes_received: 75,
+                bytes_total: Some(250),
+            },
+            100,
+            total_expected_size(metadata.iter()),
+        );
+
+        assert_eq!(progress.bytes_received, 175);
+        assert_eq!(progress.bytes_total, Some(350));
+        assert_eq!(progress.percentage(), Some(50));
+    }
+
+    #[test]
+    fn omits_aggregate_total_when_any_file_size_is_unknown() {
+        let metadata = vec![
+            download_metadata(0, DownloadFileKind::SplitPart { number: 1 }, Some(100)),
+            download_metadata(1, DownloadFileKind::SplitPart { number: 2 }, None),
+        ];
+
+        assert_eq!(total_expected_size(metadata.iter()), None);
+    }
+
+    #[test]
+    fn aggregate_progress_keeps_non_download_phases_unchanged() {
+        let progress = DownloadProgress {
+            phase: DownloadPhase::Unpacking,
+            file_index: None,
+            file_kind: None,
+            bytes_received: 100,
+            bytes_total: Some(100),
+        };
+
+        assert_eq!(
+            aggregate_file_progress(progress.clone(), 300, Some(500)),
+            progress
+        );
+    }
+
+    #[test]
     fn cancellation_token_can_be_shared() {
         let token = CancellationToken::new();
         let cloned = token.clone();
@@ -699,6 +833,23 @@ mod tests {
             header_value(&headers, "content-range"),
             Some("bytes 0-0/42")
         );
+    }
+
+    fn download_metadata(
+        file_index: usize,
+        file_kind: DownloadFileKind,
+        expected_size: Option<u64>,
+    ) -> DownloadFileMetadata {
+        DownloadFileMetadata {
+            file_index,
+            file_kind,
+            file_name: format!("part{file_index}.bin"),
+            expected_size,
+            final_url: Url::parse(&format!(
+                "https://download.example.test/file/part{file_index}.bin/_/1"
+            ))
+            .expect("url"),
+        }
     }
 
     #[tokio::test]

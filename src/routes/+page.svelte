@@ -1074,7 +1074,7 @@
       case "downloading":
         return downloadJobProgressLabel(job);
       case "unpacking":
-        return "Unpacking";
+        return "Decompressing";
       case "finalizing":
         return "Finalizing";
       default:
@@ -1120,7 +1120,7 @@
         return "Cancelling";
       }
 
-      return downloadJobProgressLabel(job);
+      return jobLabel(job);
     }
 
     switch (product.download.status) {
