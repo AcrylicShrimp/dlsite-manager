@@ -2343,9 +2343,12 @@
 
   .product-table {
     display: block;
-    flex: 1 1 auto;
+    flex: 1 1 0;
     min-height: 0;
     overflow: auto;
+    overflow-anchor: none;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
   }
 
   .product-card {
@@ -2366,7 +2369,9 @@
     height: var(--row-height);
     padding: 12px 14px 12px 0;
     border-bottom: 1px solid var(--border);
+    contain: layout paint;
     overflow: hidden;
+    overflow-anchor: none;
   }
 
   .product-card:hover {

@@ -12,7 +12,11 @@ use dm_storage::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::broadcast::error::RecvError;
 
@@ -21,6 +25,8 @@ struct AppState {
     library: Library,
     jobs: JobManager,
 }
+
+const WORK_DOWNLOAD_PROGRESS_EVENT_INTERVAL: Duration = Duration::from_secs(1);
 
 #[tauri::command]
 async fn get_settings(state: State<'_, AppState>) -> Result<AppSettingsDto, String> {
@@ -202,9 +208,7 @@ async fn start_work_download(
             let client = dm_api::DlsiteClient::new(dm_api::DlsiteClientConfig::default())
                 .map_err(|error| JobFailure::with_code("api_client", error.to_string()))?;
             let source = DlsiteWorkDownloadSource::new(client);
-            let progress_sink = JobWorkDownloadProgressSink {
-                context: context.clone(),
-            };
+            let progress_sink = JobWorkDownloadProgressSink::new(context.clone());
             let report = library
                 .download_work_with_source(
                     WorkDownloadRequest {
@@ -740,6 +744,66 @@ impl SyncProgressSink for JobSyncProgressSink {
 
 struct JobWorkDownloadProgressSink {
     context: JobContext,
+    throttle: Mutex<WorkDownloadProgressThrottle>,
+}
+
+impl JobWorkDownloadProgressSink {
+    fn new(context: JobContext) -> Self {
+        Self {
+            context,
+            throttle: Mutex::new(WorkDownloadProgressThrottle::default()),
+        }
+    }
+}
+
+#[derive(Default)]
+struct WorkDownloadProgressThrottle {
+    last_download_phase: Option<dm_download::DownloadPhase>,
+    last_download_emit_at: Option<Instant>,
+}
+
+impl WorkDownloadProgressThrottle {
+    fn emit_decision(&mut self, phase: dm_download::DownloadPhase) -> Option<bool> {
+        self.emit_decision_at(phase, Instant::now())
+    }
+
+    fn emit_decision_at(
+        &mut self,
+        phase: dm_download::DownloadPhase,
+        now: Instant,
+    ) -> Option<bool> {
+        let phase_changed = self.last_download_phase != Some(phase);
+
+        if phase_changed {
+            self.last_download_phase = Some(phase);
+            self.last_download_emit_at = Some(now);
+            return Some(true);
+        }
+
+        if phase != dm_download::DownloadPhase::Downloading {
+            self.last_download_emit_at = Some(now);
+            return Some(false);
+        }
+
+        let interval_elapsed = match self.last_download_emit_at {
+            Some(last_emit) => {
+                now.duration_since(last_emit) >= WORK_DOWNLOAD_PROGRESS_EVENT_INTERVAL
+            }
+            None => true,
+        };
+
+        if interval_elapsed {
+            self.last_download_emit_at = Some(now);
+            return Some(false);
+        }
+
+        None
+    }
+
+    fn reset(&mut self) {
+        self.last_download_phase = None;
+        self.last_download_emit_at = None;
+    }
 }
 
 impl WorkDownloadProgressSink for JobWorkDownloadProgressSink {
@@ -756,18 +820,33 @@ impl WorkDownloadProgressSink for JobWorkDownloadProgressSink {
                 self.context.info("Resolving download files");
             }
             WorkDownloadProgress::Download(progress) => {
-                match progress.phase {
-                    dm_download::DownloadPhase::ResolvingPlan => {
-                        self.context.set_phase("resolvingDownload")
+                let Some(phase_changed) = self
+                    .throttle
+                    .lock()
+                    .expect("download progress throttle lock")
+                    .emit_decision(progress.phase)
+                else {
+                    return;
+                };
+
+                if phase_changed {
+                    match progress.phase {
+                        dm_download::DownloadPhase::ResolvingPlan => {
+                            self.context.set_phase("resolvingDownload")
+                        }
+                        dm_download::DownloadPhase::ProbingMetadata => {
+                            self.context.set_phase("probingDownload")
+                        }
+                        dm_download::DownloadPhase::Downloading => {
+                            self.context.set_phase("downloading")
+                        }
+                        dm_download::DownloadPhase::Finalizing => {
+                            self.context.set_phase("finalizing")
+                        }
+                        dm_download::DownloadPhase::Unpacking => {
+                            self.context.set_phase("unpacking")
+                        }
                     }
-                    dm_download::DownloadPhase::ProbingMetadata => {
-                        self.context.set_phase("probingDownload")
-                    }
-                    dm_download::DownloadPhase::Downloading => {
-                        self.context.set_phase("downloading")
-                    }
-                    dm_download::DownloadPhase::Finalizing => self.context.set_phase("finalizing"),
-                    dm_download::DownloadPhase::Unpacking => self.context.set_phase("unpacking"),
                 }
 
                 self.context.set_progress(JobProgress::bytes(
@@ -776,11 +855,19 @@ impl WorkDownloadProgressSink for JobWorkDownloadProgressSink {
                 ));
             }
             WorkDownloadProgress::Finalizing => {
+                self.throttle
+                    .lock()
+                    .expect("download progress throttle lock")
+                    .reset();
                 self.context.set_phase("finalizing");
                 self.context.clear_progress();
                 self.context.info("Moving files into the library");
             }
             WorkDownloadProgress::Completed => {
+                self.throttle
+                    .lock()
+                    .expect("download progress throttle lock")
+                    .reset();
                 self.context.set_phase("completed");
                 self.context.clear_progress();
                 self.context.info("Download completed");
@@ -990,6 +1077,61 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     });
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn work_download_progress_throttle_limits_steady_download_updates() {
+        let start = Instant::now();
+        let mut throttle = WorkDownloadProgressThrottle::default();
+
+        assert_eq!(
+            throttle.emit_decision_at(dm_download::DownloadPhase::Downloading, start),
+            Some(true)
+        );
+        assert_eq!(
+            throttle.emit_decision_at(
+                dm_download::DownloadPhase::Downloading,
+                start + Duration::from_millis(999),
+            ),
+            None
+        );
+        assert_eq!(
+            throttle.emit_decision_at(
+                dm_download::DownloadPhase::Downloading,
+                start + WORK_DOWNLOAD_PROGRESS_EVENT_INTERVAL,
+            ),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn work_download_progress_throttle_keeps_phase_changes_immediate() {
+        let start = Instant::now();
+        let mut throttle = WorkDownloadProgressThrottle::default();
+
+        assert_eq!(
+            throttle.emit_decision_at(dm_download::DownloadPhase::ProbingMetadata, start),
+            Some(true)
+        );
+        assert_eq!(
+            throttle.emit_decision_at(
+                dm_download::DownloadPhase::Downloading,
+                start + Duration::from_millis(1),
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            throttle.emit_decision_at(
+                dm_download::DownloadPhase::Finalizing,
+                start + Duration::from_millis(2),
+            ),
+            Some(true)
+        );
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
