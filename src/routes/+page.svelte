@@ -1133,6 +1133,22 @@
                         Sync
                       </button>
                     {/if}
+                    <button
+                      class="secondary small"
+                      type="button"
+                      title="Update saved credential"
+                      onclick={() => editAccount(account)}
+                    >
+                      Update credential
+                    </button>
+                    <button
+                      class="secondary small"
+                      type="button"
+                      disabled
+                      title="Account removal is not implemented yet"
+                    >
+                      Remove
+                    </button>
                   </div>
                 </article>
               {/each}
@@ -1986,11 +2002,12 @@
 
   .account-row {
     display: grid;
-    grid-template-columns: minmax(104px, auto) minmax(180px, 0.85fr) minmax(300px, 1.15fr) auto;
-    gap: 14px;
-    align-items: center;
-    min-height: 78px;
-    padding: 12px 14px;
+    grid-template-columns: minmax(220px, 1fr) minmax(340px, 0.88fr);
+    grid-template-rows: auto auto auto;
+    gap: 10px 30px;
+    align-items: start;
+    min-height: 132px;
+    padding: 14px 16px;
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--panel-soft);
@@ -2007,10 +2024,12 @@
 
   .account-name {
     display: grid;
-    grid-column: 2;
-    grid-row: 1;
-    align-self: center;
+    grid-column: 1;
+    grid-row: 2 / 4;
+    align-self: start;
+    justify-content: stretch;
     justify-items: stretch;
+    width: 100%;
     min-width: 0;
     height: auto;
     min-height: 0;
@@ -2040,13 +2059,15 @@
   .account-identity {
     display: grid;
     gap: 3px;
+    justify-self: start;
+    width: min(360px, 100%);
     min-width: 0;
   }
 
   .account-identity span {
     max-width: 100%;
     color: var(--text);
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 650;
     line-height: 1.1;
     overflow: hidden;
@@ -2070,7 +2091,7 @@
     justify-content: flex-start;
     justify-self: start;
     gap: 6px;
-    min-width: 104px;
+    min-width: 114px;
     height: auto;
     min-height: 28px;
     padding: 3px 10px;
@@ -2105,30 +2126,32 @@
 
   .account-meta-grid {
     display: grid;
-    grid-column: 3;
-    grid-row: 1;
-    align-self: center;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
+    grid-column: 2;
+    grid-row: 2;
+    align-self: start;
+    grid-template-columns: 1fr;
+    gap: 7px;
     min-width: 0;
   }
 
   .account-meta-grid div {
     display: grid;
-    gap: 3px;
+    grid-template-columns: minmax(92px, 0.42fr) minmax(170px, 1fr);
+    gap: 16px;
+    align-items: baseline;
     min-width: 0;
   }
 
   .account-meta-grid span {
     color: var(--muted);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
   }
 
   .account-meta-grid strong {
     min-width: 0;
     color: var(--text);
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 600;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2136,9 +2159,9 @@
   }
 
   .account-actions {
-    grid-column: 4;
-    grid-row: 1;
-    align-self: center;
+    grid-column: 2;
+    grid-row: 3;
+    align-self: end;
     justify-content: flex-end;
     flex-wrap: wrap;
   }
@@ -2303,23 +2326,23 @@
 
   @media (max-width: 1220px) {
     .account-row {
-      grid-template-columns: minmax(104px, auto) minmax(180px, 1fr) auto;
+      grid-template-columns: minmax(0, 1fr);
     }
 
     .account-name {
-      grid-column: 2;
-      grid-row: 1;
+      grid-column: 1;
+      grid-row: 2;
     }
 
     .account-meta-grid {
       grid-column: 1 / -1;
-      grid-row: 2;
+      grid-row: 3;
     }
 
     .account-actions {
-      grid-column: 3;
-      grid-row: 1;
-      justify-content: flex-end;
+      grid-column: 1 / -1;
+      grid-row: 4;
+      justify-content: flex-start;
     }
   }
 
