@@ -107,7 +107,24 @@
     message: string;
   };
 
+  type ProductCreditField = {
+    key: string;
+    label: string;
+    value: string;
+    missing: boolean;
+  };
+
   type View = "library" | "accounts" | "activity" | "settings";
+
+  const creditFieldDefinitions = [
+    { key: "maker", label: "Maker" },
+    { key: "voice", label: "CV" },
+    { key: "illust", label: "Illust" },
+    { key: "scenario", label: "Scenario" },
+    { key: "creator", label: "Creator" },
+    { key: "music", label: "Music" },
+    { key: "other", label: "Other" },
+  ] as const;
 
   let activeView = $state<View>("library");
 
@@ -640,8 +657,28 @@
     return group.names.join(", ");
   }
 
-  function creditTooltip(label: string, value: string) {
-    return `${label}: ${value}`;
+  function productCreditFields(product: Product): ProductCreditField[] {
+    return creditFieldDefinitions.map((definition) => {
+      const value =
+        definition.key === "maker"
+          ? product.makerName?.trim() || ""
+          : creditTextForKind(product, definition.key);
+
+      return {
+        ...definition,
+        value: value || "-",
+        missing: !value,
+      };
+    });
+  }
+
+  function creditTextForKind(product: Product, kind: string) {
+    const group = product.creditGroups?.find((item) => item.kind === kind);
+    return group ? creditText(group).trim() : "";
+  }
+
+  function creditTooltip(field: ProductCreditField) {
+    return field.missing ? `${field.label}: Not available` : `${field.label}: ${field.value}`;
   }
 
   function notifySuccess(message: string) {
@@ -859,16 +896,10 @@
                     </button>
                   </div>
                   <div class="product-meta">
-                    {#if product.makerName}
-                      <div class="credit-row" title={creditTooltip("Maker", product.makerName)}>
-                        <span class="credit-label">Maker</span>
-                        <span class="credit-value">{product.makerName}</span>
-                      </div>
-                    {/if}
-                    {#each product.creditGroups ?? [] as group (group.kind)}
-                      <div class="credit-row" title={creditTooltip(group.label, creditText(group))}>
-                        <span class="credit-label">{group.label}</span>
-                        <span class="credit-value">{creditText(group)}</span>
+                    {#each productCreditFields(product) as field (field.key)}
+                      <div class="credit-row" title={creditTooltip(field)}>
+                        <span class="credit-label">{field.label}</span>
+                        <span class:missing={field.missing} class="credit-value">{field.value}</span>
                       </div>
                     {/each}
                   </div>
@@ -1446,10 +1477,12 @@
     --credit-label-width: clamp(60px, 4.1vw, 66px);
     --credit-gap: clamp(5px, 0.7vw, 7px);
     --meta-width: min(100%, clamp(520px, 48vw, 760px));
-    --row-height: 184px;
+    --meta-grid-height: 74px;
+    --row-height: 220px;
+    --thumb-size: 112px;
 
     display: grid;
-    grid-template-columns: 5px 112px minmax(0, 1fr);
+    grid-template-columns: 5px var(--thumb-size) minmax(0, 1fr);
     gap: 14px;
     align-items: start;
     height: var(--row-height);
@@ -1494,8 +1527,8 @@
   }
 
   .thumb {
-    width: 112px;
-    height: 112px;
+    width: var(--thumb-size);
+    height: var(--thumb-size);
     border: 1px solid var(--border-strong);
     border-radius: 6px;
     background: var(--panel-raised);
@@ -1520,7 +1553,7 @@
 
   .product-main {
     display: grid;
-    grid-template-rows: auto minmax(0, auto) auto auto;
+    grid-template-rows: auto var(--meta-grid-height) 24px 32px;
     gap: 9px;
     height: 100%;
     min-width: 0;
@@ -1566,11 +1599,13 @@
   .product-meta {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 4px var(--meta-column-gap);
+    grid-template-rows: repeat(4, 15px);
+    align-content: start;
+    gap: 3px var(--meta-column-gap);
     justify-self: start;
+    height: var(--meta-grid-height);
     width: var(--meta-width);
     min-width: 0;
-    max-height: 56px;
     overflow: hidden;
   }
 
@@ -1582,7 +1617,7 @@
     min-width: 0;
     color: var(--muted);
     font-size: 12px;
-    line-height: 1.35;
+    line-height: 1.2;
   }
 
   .labeled-row {
@@ -1607,12 +1642,19 @@
     white-space: nowrap;
   }
 
+  .credit-value.missing {
+    color: var(--text-subtle);
+    opacity: 0.72;
+  }
+
   .chip-row {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 6px;
     min-width: 0;
+    max-height: 24px;
+    overflow: hidden;
   }
 
   .chip {
@@ -1661,7 +1703,7 @@
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 12px;
     align-items: center;
-    align-self: end;
+    height: 32px;
     min-width: 0;
   }
 
@@ -1677,6 +1719,8 @@
     flex-wrap: wrap;
     gap: 5px;
     min-width: 0;
+    max-height: 24px;
+    overflow: hidden;
   }
 
   .owner-list span {
@@ -1917,20 +1961,20 @@
       --credit-label-width: 62px;
       --credit-gap: 6px;
       --meta-width: 100%;
-      --row-height: 204px;
+      --meta-grid-height: 148px;
+      --row-height: 270px;
+      --thumb-size: 84px;
 
-      grid-template-columns: 5px 84px minmax(0, 1fr);
       gap: 12px;
-    }
-
-    .thumb {
-      width: 84px;
-      height: 84px;
     }
 
     .product-meta {
       grid-template-columns: 1fr;
-      max-height: 72px;
+      grid-template-rows: repeat(7, 15px);
+    }
+
+    .product-main {
+      grid-template-rows: auto var(--meta-grid-height) 24px minmax(24px, auto);
     }
 
     .product-footer {
@@ -1984,15 +2028,10 @@
     .product-card {
       --credit-label-width: 60px;
       --credit-gap: 5px;
-      --row-height: 220px;
+      --row-height: 286px;
+      --thumb-size: 72px;
 
-      grid-template-columns: 5px 72px minmax(0, 1fr);
       padding-right: 10px;
-    }
-
-    .thumb {
-      width: 72px;
-      height: 72px;
     }
 
     .product-title-row {

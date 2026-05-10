@@ -1021,8 +1021,13 @@ fn product_credit_groups_from_raw_json(raw_json: &str) -> Vec<ProductCreditGroup
 
     let mut groups = credit_group_templates();
 
-    for tag in work.tags {
-        let Some((kind, _label)) = credit_kind_and_label(&tag.class) else {
+    let mut tags = work.tags;
+    tags.sort_by(|left, right| {
+        credit_sort_key(&left.class, &left.name).cmp(&credit_sort_key(&right.class, &right.name))
+    });
+
+    for tag in tags {
+        let Some((kind, _label, _rank)) = credit_kind_label_and_rank(&tag.class) else {
             continue;
         };
         let name = tag.name.trim();
@@ -1068,14 +1073,23 @@ fn credit_group_templates() -> Vec<(&'static str, &'static str, Vec<String>)> {
     ]
 }
 
-fn credit_kind_and_label(class: &str) -> Option<(&'static str, &'static str)> {
+fn credit_sort_key(class: &str, name: &str) -> (u8, String) {
+    let rank = credit_kind_label_and_rank(class)
+        .map(|(_kind, _label, rank)| rank)
+        .unwrap_or(u8::MAX);
+
+    (rank, name.trim().to_lowercase())
+}
+
+fn credit_kind_label_and_rank(class: &str) -> Option<(&'static str, &'static str, u8)> {
     match class {
-        "voice_by" => Some(("voice", "CV")),
-        "illust_by" => Some(("illust", "Illust")),
-        "scenario_by" => Some(("scenario", "Scenario")),
-        "created_by" => Some(("creator", "Creator")),
-        "music_by" => Some(("music", "Music")),
-        "other_by" => Some(("other", "Other")),
+        "voice_by" => Some(("voice", "CV", 0)),
+        "illust_by" => Some(("illust", "Illust", 1)),
+        "scenario_by" => Some(("scenario", "Scenario", 2)),
+        "created_by" => Some(("creator", "Creator", 3)),
+        "music_by" => Some(("music", "Music", 4)),
+        "other_by" => Some(("other", "Other", 5)),
+        _ if class.ends_with("_by") => Some(("other", "Other", 6)),
         _ => None,
     }
 }
@@ -1559,7 +1573,8 @@ mod tests {
                             { "class": "scenario_by", "name": "Scenario One" },
                             { "class": "created_by", "name": "Creator One" },
                             { "class": "music_by", "name": "Music One" },
-                            { "class": "other_by", "name": "Other One" }
+                            { "class": "other_by", "name": "Other One" },
+                            { "class": "unknown_by", "name": "Unknown Credit" }
                         ]
                     }"#,
                 )],
@@ -1581,6 +1596,10 @@ mod tests {
         assert_eq!(page.products[0].credit_groups[3].kind, "creator");
         assert_eq!(page.products[0].credit_groups[4].kind, "music");
         assert_eq!(page.products[0].credit_groups[5].kind, "other");
+        assert_eq!(
+            page.products[0].credit_groups[5].names,
+            vec!["Other One".to_owned(), "Unknown Credit".to_owned()]
+        );
 
         Ok(())
     }
