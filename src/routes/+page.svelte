@@ -633,49 +633,6 @@
         <p class="eyebrow">{viewEyebrow(activeView)}</p>
         <h1>{viewTitle(activeView)}</h1>
       </div>
-      <div class="header-actions">
-        {#if activeView === "library"}
-          <button
-            class="secondary"
-            type="button"
-            onclick={loadProducts}
-            disabled={productsLoading}
-          >
-            Reload
-          </button>
-          <button
-            type="button"
-            onclick={syncEnabledAccounts}
-            disabled={accountsLoading || jobsLoading || !hasSyncableEnabledAccount()}
-          >
-            Sync
-          </button>
-        {:else if activeView === "accounts"}
-          <button
-            class="secondary"
-            type="button"
-            onclick={loadAccounts}
-            disabled={accountsLoading || accountSaving}
-          >
-            Reload
-          </button>
-          <button type="button" onclick={resetAccountForm} disabled={accountSaving}>New</button>
-        {:else if activeView === "activity"}
-          <button class="secondary" type="button" onclick={loadJobs} disabled={jobsLoading}>
-            Reload
-          </button>
-          <button type="button" onclick={clearFinishedJobs} disabled={jobsLoading}>Clear</button>
-        {:else}
-          <button
-            class="secondary"
-            type="button"
-            onclick={loadSettings}
-            disabled={settingsLoading || settingsSaving}
-          >
-            Reload
-          </button>
-        {/if}
-      </div>
     </header>
 
     {#if error || status}
@@ -710,6 +667,21 @@
             <option value="publishedAtDesc">Published</option>
           </select>
           <button type="submit" disabled={productsLoading}>Search</button>
+          <button
+            class="secondary"
+            type="button"
+            onclick={loadProducts}
+            disabled={productsLoading}
+          >
+            Reload
+          </button>
+          <button
+            type="button"
+            onclick={syncEnabledAccounts}
+            disabled={accountsLoading || jobsLoading || !hasSyncableEnabledAccount()}
+          >
+            Sync
+          </button>
         </form>
 
         <div class="list-header">
@@ -762,6 +734,9 @@
         <section class="accounts-panel account-editor" aria-label="Account editor">
           <div class="panel-title">
             <h2>{editingAccountId ? "Edit account" : "Add account"}</h2>
+            <button class="secondary small" type="button" onclick={resetAccountForm} disabled={accountSaving}>
+              New
+            </button>
           </div>
           <form class="account-form" onsubmit={saveAccount}>
             <label>
@@ -804,14 +779,24 @@
         <section class="accounts-panel" aria-label="Accounts">
           <div class="panel-title">
             <h2>Accounts</h2>
-            <button
-              class="secondary small"
-              type="button"
-              onclick={syncEnabledAccounts}
-              disabled={accountsLoading || jobsLoading || !hasSyncableEnabledAccount()}
-            >
-              Sync all
-            </button>
+            <div class="panel-actions">
+              <button
+                class="secondary small"
+                type="button"
+                onclick={loadAccounts}
+                disabled={accountsLoading || accountSaving}
+              >
+                Reload
+              </button>
+              <button
+                class="small"
+                type="button"
+                onclick={syncEnabledAccounts}
+                disabled={accountsLoading || jobsLoading || !hasSyncableEnabledAccount()}
+              >
+                Sync all
+              </button>
+            </div>
           </div>
           <div class="account-list">
             {#if accountsLoading}
@@ -863,6 +848,18 @@
       </div>
     {:else if activeView === "activity"}
       <section class="activity-panel" aria-label="Activity">
+        <div class="panel-title">
+          <h2>Jobs</h2>
+          <div class="panel-actions">
+            <button class="secondary small" type="button" onclick={loadJobs} disabled={jobsLoading}>
+              Reload
+            </button>
+            <button class="small" type="button" onclick={clearFinishedJobs} disabled={jobsLoading}>
+              Clear
+            </button>
+          </div>
+        </div>
+
         {#if jobsLoading}
           <div class="empty-state">Loading</div>
         {:else if visibleJobs().length === 0}
@@ -893,6 +890,18 @@
       </section>
     {:else}
       <form class="settings-panel" onsubmit={saveSettings}>
+        <div class="panel-title">
+          <h2>Paths</h2>
+          <button
+            class="secondary small"
+            type="button"
+            onclick={loadSettings}
+            disabled={settingsLoading || settingsSaving}
+          >
+            Reload
+          </button>
+        </div>
+
         <label>
           <span>Library root</span>
           <input
@@ -1018,9 +1027,9 @@
   }
 
   .workspace-header,
-  .header-actions,
   .actions,
   .panel-title,
+  .panel-actions,
   .account-actions {
     display: flex;
     align-items: center;
@@ -1032,7 +1041,7 @@
     margin-bottom: 14px;
   }
 
-  .header-actions,
+  .panel-actions,
   .account-actions {
     gap: 8px;
   }
@@ -1115,7 +1124,7 @@
 
   .toolbar {
     display: grid;
-    grid-template-columns: minmax(180px, 1fr) 170px 130px 160px auto;
+    grid-template-columns: minmax(220px, 1fr) 170px 130px 160px auto auto auto;
     gap: 10px;
     padding: 14px;
     border-bottom: 1px solid var(--border);
@@ -1477,8 +1486,9 @@
     }
 
     .workspace-header,
-    .header-actions,
     .actions,
+    .panel-title,
+    .panel-actions,
     .account-row {
       align-items: stretch;
       flex-direction: column;
