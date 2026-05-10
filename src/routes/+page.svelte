@@ -3199,13 +3199,34 @@
   }
 
   .job-list.large {
+    flex: 1 1 auto;
     gap: 0;
+    min-height: 0;
+    padding-right: 4px;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
   }
 
   .activity-layout {
     display: grid;
+    flex: 1 1 auto;
+    grid-template-rows: minmax(120px, 0.42fr) minmax(0, 1fr);
     gap: 18px;
     min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .activity-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .activity-panel > .panel-title {
+    flex: 0 0 auto;
   }
 
   .job-row {
@@ -3257,7 +3278,13 @@
 
   .audit-list {
     display: grid;
+    flex: 1 1 auto;
     gap: 0;
+    min-height: 0;
+    padding-right: 4px;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
   }
 
   .audit-row {
