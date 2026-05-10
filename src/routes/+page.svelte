@@ -555,7 +555,10 @@
       await Promise.all([loadAccounts(), loadProducts(), loadAuditEvents()]);
     }
 
-    if (event.kind === "workDownload" && isTerminalJob(event.snapshot)) {
+    if (
+      (event.kind === "workDownload" || event.kind === "bulkWorkDownload") &&
+      isTerminalJob(event.snapshot)
+    ) {
       await Promise.all([loadProducts(), loadAuditEvents()]);
     }
   }
@@ -686,6 +689,42 @@
       jobMessages = {
         ...jobMessages,
         [response.jobId]: queuedMessage,
+      };
+      await loadJobs();
+    } catch (err) {
+      notifyError(errorMessage(err));
+    }
+  }
+
+  async function startBulkWorkDownload() {
+    if (activeBulkDownloadJob()) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Download matching Library results?\n\nThis queues all ${totalProducts} matching products that are not already downloaded. Downloads run one at a time so each work can resume safely.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const response = await invoke<StartJobResponse>("start_bulk_work_download", {
+        request: {
+          search: valueOrNull(productSearch),
+          accountId: selectedAccountId || null,
+          typeGroup: selectedProductType || null,
+          ageCategory: selectedAgeCategory || null,
+          sort: productSort,
+          unpackPolicy: "unpackWhenRecognized",
+          skipDownloaded: true,
+        },
+      });
+      notifyInfo("Bulk download queued");
+      jobMessages = {
+        ...jobMessages,
+        [response.jobId]: "Bulk download queued",
       };
       await loadJobs();
     } catch (err) {
@@ -971,6 +1010,10 @@
     return [...workDownloadJobs(workId)].reverse().find(isActiveJob) ?? null;
   }
 
+  function activeBulkDownloadJob() {
+    return [...jobs].reverse().find((job) => job.kind === "bulkWorkDownload" && isActiveJob(job)) ?? null;
+  }
+
   function visibleJobs(limit = 20) {
     return [...jobs].reverse().slice(0, limit);
   }
@@ -1019,6 +1062,10 @@
   }
 
   function jobAccountLabel(job: JobSnapshot) {
+    if (job.kind === "bulkWorkDownload") {
+      return "Bulk download";
+    }
+
     if (job.kind === "workDownload") {
       return jobWorkId(job) ?? job.title;
     }
@@ -1050,6 +1097,13 @@
         return "Downloaded";
       }
 
+      if (job.kind === "bulkWorkDownload") {
+        const succeededCount = jobOutputNumber(job, "succeededCount");
+        return typeof succeededCount === "number"
+          ? `Downloaded ${succeededCount} works`
+          : "Downloaded";
+      }
+
       const cachedCount = jobOutputNumber(job, "cachedWorkCount");
       return typeof cachedCount === "number" ? `Synced ${cachedCount} works` : "Synced";
     }
@@ -1063,6 +1117,10 @@
         return "Loading purchases";
       case "loadingWorks":
         return `Loading ${job.progress?.total ?? 0} works`;
+      case "loadingProducts":
+        return "Preparing downloads";
+      case "bulkDownloading":
+        return bulkDownloadJobProgressLabel(job);
       case "committing":
         return "Saving cache";
       case "completed":
@@ -1078,6 +1136,10 @@
       case "finalizing":
         return "Finalizing";
       default:
+        if (job.kind === "bulkWorkDownload") {
+          return "Downloading results";
+        }
+
         return job.kind === "workDownload" ? "Downloading" : "Syncing";
     }
   }
@@ -1108,6 +1170,21 @@
     }
 
     return "Downloading";
+  }
+
+  function bulkDownloadJobProgressLabel(job: JobSnapshot) {
+    if (job.progress?.unit !== "items") {
+      return "Downloading results";
+    }
+
+    const current = job.progress.current ?? 0;
+    const total = job.progress.total;
+
+    if (typeof total === "number" && total > 0) {
+      return `Downloading ${current}/${total}`;
+    }
+
+    return "Downloading results";
   }
 
   function productDownloadActionLabel(product: Product, job: JobSnapshot | null) {
@@ -1545,6 +1622,14 @@
             disabled={accountsLoading || jobsLoading || !hasSyncableEnabledAccount()}
           >
             Sync
+          </button>
+          <button
+            class="secondary download-results-button"
+            type="button"
+            onclick={startBulkWorkDownload}
+            disabled={productsLoading || jobsLoading || totalProducts === 0 || Boolean(activeBulkDownloadJob())}
+          >
+            Download results
           </button>
         </form>
 
@@ -2608,11 +2693,15 @@
   .toolbar {
     display: grid;
     flex: 0 0 auto;
-    grid-template-columns: minmax(220px, 1fr) 160px 130px 130px 150px auto auto auto;
+    grid-template-columns: minmax(220px, 1fr) 150px 130px 130px 140px auto auto auto auto;
     gap: 10px;
     padding: 14px;
     border-bottom: 1px solid var(--border);
     background: var(--panel-soft);
+  }
+
+  .download-results-button {
+    min-width: 128px;
   }
 
   .list-header {

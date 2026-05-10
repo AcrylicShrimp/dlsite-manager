@@ -21,6 +21,8 @@ use uuid::Uuid;
 
 pub type Result<T> = std::result::Result<T, LibraryError>;
 
+const BULK_DOWNLOAD_PAGE_LIMIT: u32 = 500;
+
 #[derive(Debug, thiserror::Error)]
 pub enum LibraryError {
     #[error("storage error")]
@@ -221,6 +223,141 @@ impl Library {
         }
 
         result
+    }
+
+    pub async fn download_products_with_source<S>(
+        &self,
+        request: BulkWorkDownloadRequest<'_>,
+        source: &S,
+    ) -> Result<BulkWorkDownloadReport>
+    where
+        S: WorkDownloadSource + Sync,
+    {
+        request.check_cancelled()?;
+        request.emit(BulkWorkDownloadProgress::Selecting);
+
+        let total_count = self
+            .storage
+            .list_products(&request.query)
+            .await?
+            .total_count;
+        let mut query = request.query.clone();
+        query.limit = BULK_DOWNLOAD_PAGE_LIMIT;
+        query.offset = 0;
+
+        let mut work_ids = Vec::new();
+        let mut skipped_downloaded_count = 0usize;
+
+        loop {
+            request.check_cancelled()?;
+            let page = self.storage.list_products(&query).await?;
+            let page_len = page.products.len();
+
+            for product in page.products {
+                if request.skip_downloaded
+                    && product.download.status == WorkDownloadStatus::Downloaded
+                {
+                    skipped_downloaded_count += 1;
+                    continue;
+                }
+
+                work_ids.push(product.work_id);
+            }
+
+            if page_len == 0 || page_len < query.limit as usize {
+                break;
+            }
+
+            query.offset = query.offset.saturating_add(page_len as u32);
+        }
+
+        let requested_count = work_ids.len();
+        request.emit(BulkWorkDownloadProgress::Selected {
+            total_count,
+            requested_count,
+            skipped_downloaded_count,
+        });
+
+        let mut report = BulkWorkDownloadReport {
+            total_count,
+            requested_count,
+            skipped_downloaded_count,
+            succeeded_count: 0,
+            failed_count: 0,
+            failed_works: Vec::new(),
+        };
+
+        for (index, work_id) in work_ids.into_iter().enumerate() {
+            request.check_cancelled()?;
+            let current = index + 1;
+
+            request.emit(BulkWorkDownloadProgress::WorkStarted {
+                work_id: work_id.clone(),
+                current,
+                total: requested_count,
+            });
+
+            let work_result = self
+                .download_work_with_source(
+                    WorkDownloadRequest {
+                        work_id: &work_id,
+                        account_id: request.query.account_id.as_deref(),
+                        password: None,
+                        library_root: request.library_root,
+                        download_root: request.download_root,
+                        unpack_policy: request.unpack_policy,
+                        replace_existing: false,
+                        cancellation_token: request.cancellation_token,
+                        progress_sink: None,
+                    },
+                    source,
+                )
+                .await;
+
+            match work_result {
+                Ok(_) => {
+                    report.succeeded_count += 1;
+                    request.emit(BulkWorkDownloadProgress::WorkCompleted {
+                        work_id,
+                        current,
+                        total: requested_count,
+                    });
+                }
+                Err(error)
+                    if matches!(error, LibraryError::Cancelled)
+                        || matches!(
+                            error,
+                            LibraryError::Download(dm_download::DownloadError::Cancelled)
+                        ) =>
+                {
+                    return Err(error);
+                }
+                Err(error) => {
+                    let error_code = error.failure_code().to_owned();
+                    let error_message = error.to_string();
+
+                    report.failed_count += 1;
+                    report.failed_works.push(BulkWorkDownloadFailure {
+                        work_id: work_id.clone(),
+                        error_code: error_code.clone(),
+                        error_message: error_message.clone(),
+                    });
+                    request.emit(BulkWorkDownloadProgress::WorkFailed {
+                        work_id,
+                        current,
+                        total: requested_count,
+                        error_code,
+                        error_message,
+                    });
+                }
+            }
+        }
+
+        request.emit(BulkWorkDownloadProgress::Completed {
+            report: report.clone(),
+        });
+
+        Ok(report)
     }
 
     pub async fn remove_work_download(
@@ -693,6 +830,101 @@ pub enum WorkDownloadProgress {
 
 pub trait WorkDownloadProgressSink: Send + Sync {
     fn emit(&self, progress: WorkDownloadProgress);
+}
+
+#[derive(Clone)]
+pub struct BulkWorkDownloadRequest<'a> {
+    pub query: ProductListQuery,
+    pub library_root: &'a Path,
+    pub download_root: &'a Path,
+    pub unpack_policy: UnpackPolicy,
+    pub skip_downloaded: bool,
+    pub cancellation_token: Option<&'a CancellationToken>,
+    pub progress_sink: Option<&'a dyn BulkWorkDownloadProgressSink>,
+}
+
+impl<'a> BulkWorkDownloadRequest<'a> {
+    pub fn new(query: ProductListQuery, library_root: &'a Path, download_root: &'a Path) -> Self {
+        Self {
+            query,
+            library_root,
+            download_root,
+            unpack_policy: UnpackPolicy::UnpackWhenRecognized,
+            skip_downloaded: true,
+            cancellation_token: None,
+            progress_sink: None,
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancellation_token
+            .is_some_and(CancellationToken::is_cancelled)
+    }
+
+    fn check_cancelled(&self) -> Result<()> {
+        if self.is_cancelled() {
+            Err(LibraryError::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn emit(&self, progress: BulkWorkDownloadProgress) {
+        if let Some(sink) = self.progress_sink {
+            sink.emit(progress);
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BulkWorkDownloadReport {
+    pub total_count: u64,
+    pub requested_count: usize,
+    pub skipped_downloaded_count: usize,
+    pub succeeded_count: usize,
+    pub failed_count: usize,
+    pub failed_works: Vec<BulkWorkDownloadFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BulkWorkDownloadFailure {
+    pub work_id: String,
+    pub error_code: String,
+    pub error_message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BulkWorkDownloadProgress {
+    Selecting,
+    Selected {
+        total_count: u64,
+        requested_count: usize,
+        skipped_downloaded_count: usize,
+    },
+    WorkStarted {
+        work_id: String,
+        current: usize,
+        total: usize,
+    },
+    WorkCompleted {
+        work_id: String,
+        current: usize,
+        total: usize,
+    },
+    WorkFailed {
+        work_id: String,
+        current: usize,
+        total: usize,
+        error_code: String,
+        error_message: String,
+    },
+    Completed {
+        report: BulkWorkDownloadReport,
+    },
+}
+
+pub trait BulkWorkDownloadProgressSink: Send + Sync {
+    fn emit(&self, progress: BulkWorkDownloadProgress);
 }
 
 #[async_trait]
@@ -1171,6 +1403,38 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone)]
+    struct FailingDownloadSource {
+        fail_work_id: &'static str,
+    }
+
+    #[async_trait]
+    impl WorkDownloadSource for FailingDownloadSource {
+        async fn login(&self, credentials: &Credentials) -> Result<()> {
+            FakeDownloadSource.login(credentials).await
+        }
+
+        async fn download_plan(&self, work_id: &WorkId) -> Result<DownloadPlan> {
+            FakeDownloadSource.download_plan(work_id).await
+        }
+
+        async fn download_files(
+            &self,
+            job: &DownloadJobRequest,
+            plan: &DownloadPlan,
+            cancellation: &dm_download::CancellationToken,
+            progress_sink: &mut (dyn FnMut(DownloadProgress) + Send),
+        ) -> Result<DownloadedWork> {
+            if job.work_id.as_ref() == self.fail_work_id {
+                return Err(LibraryError::SyncSource("download failed".to_owned()));
+            }
+
+            FakeDownloadSource
+                .download_files(job, plan, cancellation, progress_sink)
+                .await
+        }
+    }
+
     #[derive(Debug, Default)]
     struct RecordingProgressSink {
         events: Mutex<Vec<SyncProgress>>,
@@ -1189,6 +1453,17 @@ mod tests {
 
     impl WorkDownloadProgressSink for RecordingDownloadProgressSink {
         fn emit(&self, progress: WorkDownloadProgress) {
+            self.events.lock().expect("events lock").push(progress);
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingBulkDownloadProgressSink {
+        events: Mutex<Vec<BulkWorkDownloadProgress>>,
+    }
+
+    impl BulkWorkDownloadProgressSink for RecordingBulkDownloadProgressSink {
+        fn emit(&self, progress: BulkWorkDownloadProgress) {
             self.events.lock().expect("events lock").push(progress);
         }
     }
@@ -1483,6 +1758,101 @@ mod tests {
         assert_eq!(report.download_state.status, WorkDownloadStatus::Downloaded);
         assert_eq!(tokio::fs::read(&local_file).await?, b"downloaded");
         assert!(!download_root.join("RJ000001").exists());
+
+        std::fs::remove_dir_all(root).unwrap();
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bulk_download_skips_downloaded_works() -> Result<()> {
+        let library = migrated_library().await?;
+        let root = test_dir("bulk-download-skips");
+        let library_root = root.join("library");
+        let download_root = root.join("downloads");
+        library.save_account(save_account_request(true)).await?;
+        library
+            .sync_account_with_source(AccountSyncRequest::new("account-a"), &sync_source())
+            .await?;
+        library
+            .download_work_with_source(
+                WorkDownloadRequest::new("RJ000001", &library_root, &download_root),
+                &FakeDownloadSource,
+            )
+            .await?;
+        let sink = RecordingBulkDownloadProgressSink::default();
+
+        let report = library
+            .download_products_with_source(
+                BulkWorkDownloadRequest {
+                    progress_sink: Some(&sink),
+                    ..BulkWorkDownloadRequest::new(
+                        ProductListQuery::default(),
+                        &library_root,
+                        &download_root,
+                    )
+                },
+                &FakeDownloadSource,
+            )
+            .await?;
+        let page = library.list_products(&ProductListQuery::default()).await?;
+        let events = sink.events.lock().expect("bulk events lock");
+
+        assert_eq!(report.total_count, 2);
+        assert_eq!(report.requested_count, 1);
+        assert_eq!(report.skipped_downloaded_count, 1);
+        assert_eq!(report.succeeded_count, 1);
+        assert_eq!(report.failed_count, 0);
+        assert!(library_root.join("RJ000002/RJ000001.txt").exists());
+        assert!(page
+            .products
+            .iter()
+            .all(|product| product.download.status == WorkDownloadStatus::Downloaded));
+        assert!(matches!(
+            events.first(),
+            Some(BulkWorkDownloadProgress::Selecting)
+        ));
+        assert!(matches!(
+            events.last(),
+            Some(BulkWorkDownloadProgress::Completed { .. })
+        ));
+
+        std::fs::remove_dir_all(root).unwrap();
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bulk_download_continues_after_work_failure() -> Result<()> {
+        let library = migrated_library().await?;
+        let root = test_dir("bulk-download-failure");
+        let library_root = root.join("library");
+        let download_root = root.join("downloads");
+        library.save_account(save_account_request(true)).await?;
+        library
+            .sync_account_with_source(AccountSyncRequest::new("account-a"), &sync_source())
+            .await?;
+
+        let report = library
+            .download_products_with_source(
+                BulkWorkDownloadRequest::new(
+                    ProductListQuery::default(),
+                    &library_root,
+                    &download_root,
+                ),
+                &FailingDownloadSource {
+                    fail_work_id: "RJ000002",
+                },
+            )
+            .await?;
+        let failed_state = library.storage().work_download_state("RJ000002").await?;
+
+        assert_eq!(report.requested_count, 2);
+        assert_eq!(report.succeeded_count, 1);
+        assert_eq!(report.failed_count, 1);
+        assert_eq!(report.failed_works[0].work_id, "RJ000002");
+        assert_eq!(failed_state.status, WorkDownloadStatus::Failed);
+        assert!(library_root.join("RJ000001/RJ000001.txt").exists());
 
         std::fs::remove_dir_all(root).unwrap();
 

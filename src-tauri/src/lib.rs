@@ -5,9 +5,10 @@ use dm_jobs::{
     JobStatus,
 };
 use dm_library::{
-    AccountSyncRequest, DlsiteSyncSource, DlsiteWorkDownloadSource, Library, SaveAccountRequest,
-    SyncProgress, SyncProgressSink, WorkDownloadProgress, WorkDownloadProgressSink,
-    WorkDownloadRemovalRequest, WorkDownloadRequest,
+    AccountSyncRequest, BulkWorkDownloadProgress, BulkWorkDownloadProgressSink,
+    BulkWorkDownloadReport, BulkWorkDownloadRequest, DlsiteSyncSource, DlsiteWorkDownloadSource,
+    Library, SaveAccountRequest, SyncProgress, SyncProgressSink, WorkDownloadProgress,
+    WorkDownloadProgressSink, WorkDownloadRemovalRequest, WorkDownloadRequest,
 };
 use dm_storage::{
     Account, AppSettings, ProductAgeCategory, ProductCreditGroup, ProductListItem, ProductListPage,
@@ -34,6 +35,7 @@ struct AppState {
 }
 
 const WORK_DOWNLOAD_PROGRESS_EVENT_INTERVAL: Duration = Duration::from_secs(1);
+const BULK_DOWNLOAD_PAGE_LIMIT: u32 = 500;
 
 #[tauri::command]
 async fn get_settings(state: State<'_, AppState>) -> Result<AppSettingsDto, String> {
@@ -515,6 +517,150 @@ async fn start_work_download(
             "jobId": job_id.to_string(),
             "replaceExisting": replace_existing,
             "unpackPolicy": unpack_policy_label(unpack_policy),
+        })),
+    )
+    .await;
+
+    Ok(StartJobResponse {
+        job_id: job_id.to_string(),
+    })
+}
+
+#[tauri::command]
+async fn start_bulk_work_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: StartBulkWorkDownloadRequest,
+) -> Result<StartJobResponse, String> {
+    let query = match request.into_query() {
+        Ok(query) => query,
+        Err(error) => {
+            record_audit(
+                &state.audit,
+                AuditEvent::failed(
+                    "work.bulkDownload.queue",
+                    "Failed to validate bulk download",
+                )
+                .with_error(Some("validation"), error.clone()),
+            )
+            .await;
+            return Err(error);
+        }
+    };
+    let settings = match state.storage.app_settings().await {
+        Ok(settings) => settings,
+        Err(error) => {
+            let message = command_error(error);
+            record_audit(
+                &state.audit,
+                AuditEvent::failed(
+                    "work.bulkDownload.queue",
+                    "Failed to load settings for bulk download",
+                )
+                .with_error(Some("storage"), message.clone()),
+            )
+            .await;
+            return Err(message);
+        }
+    };
+    let library_root = match required_library_root(&settings) {
+        Ok(root) => root,
+        Err(error) => {
+            record_audit(
+                &state.audit,
+                AuditEvent::failed(
+                    "work.bulkDownload.queue",
+                    "Failed to resolve library folder",
+                )
+                .with_error(Some("settings"), error.clone()),
+            )
+            .await;
+            return Err(error);
+        }
+    };
+    let download_root = match effective_download_root(&app, &settings) {
+        Ok(root) => root,
+        Err(error) => {
+            record_audit(
+                &state.audit,
+                AuditEvent::failed(
+                    "work.bulkDownload.queue",
+                    "Failed to resolve download staging folder",
+                )
+                .with_error(Some("settings"), error.clone()),
+            )
+            .await;
+            return Err(error);
+        }
+    };
+    let unpack_policy = request.unpack_policy.unwrap_or_default().into();
+    let skip_downloaded = request.skip_downloaded.unwrap_or(true);
+    let library = state.library.clone();
+    let mut metadata = JobMetadata::new();
+
+    metadata.insert("search".to_owned(), json!(query.search.clone()));
+    metadata.insert("accountId".to_owned(), json!(query.account_id.clone()));
+    metadata.insert("skipDownloaded".to_owned(), json!(skip_downloaded));
+    metadata.insert(
+        "unpackPolicy".to_owned(),
+        json!(unpack_policy_label(unpack_policy)),
+    );
+
+    let audit_metadata = metadata.clone();
+    let job_id = state.jobs.spawn(
+        "bulkWorkDownload",
+        "Download Library results",
+        metadata,
+        move |context| async move {
+            context.info("Preparing bulk download");
+            let client = dm_api::DlsiteClient::new(dm_api::DlsiteClientConfig::default())
+                .map_err(|error| JobFailure::with_code("api_client", error.to_string()))?;
+            let source = DlsiteWorkDownloadSource::new(client);
+            let progress_sink = JobBulkWorkDownloadProgressSink {
+                context: context.clone(),
+            };
+            let report = library
+                .download_products_with_source(
+                    BulkWorkDownloadRequest {
+                        query,
+                        library_root: &library_root,
+                        download_root: &download_root,
+                        unpack_policy,
+                        skip_downloaded,
+                        cancellation_token: Some(context.cancellation_token()),
+                        progress_sink: Some(&progress_sink),
+                    },
+                    &source,
+                )
+                .await
+                .map_err(work_download_failure)?;
+            let output = bulk_download_output(&report);
+
+            context.info(format!(
+                "Bulk download finished: {} downloaded, {} failed, {} skipped",
+                report.succeeded_count, report.failed_count, report.skipped_downloaded_count
+            ));
+
+            if report.failed_count > 0 {
+                return Err(JobFailure::with_code(
+                    "partial_failure",
+                    format!(
+                        "Downloaded {} works, failed {} works",
+                        report.succeeded_count, report.failed_count
+                    ),
+                )
+                .with_detail("bulkDownload", json!(output)));
+            }
+
+            Ok(output)
+        },
+    );
+
+    record_audit(
+        &state.audit,
+        AuditEvent::queued("work.bulkDownload", "Queued bulk work download").with_details(json!({
+            "jobId": job_id.to_string(),
+            "metadata": audit_metadata,
         })),
     )
     .await;
@@ -1204,6 +1350,32 @@ struct StartWorkDownloadRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct StartBulkWorkDownloadRequest {
+    search: Option<String>,
+    account_id: Option<String>,
+    type_group: Option<ProductTypeGroupDto>,
+    age_category: Option<ProductAgeCategoryDto>,
+    sort: Option<ProductSortDto>,
+    unpack_policy: Option<UnpackPolicyDto>,
+    skip_downloaded: Option<bool>,
+}
+
+impl StartBulkWorkDownloadRequest {
+    fn into_query(&self) -> Result<ProductListQuery, String> {
+        Ok(ProductListQuery {
+            search: normalize_optional_string(self.search.clone())?,
+            account_id: normalize_optional_id(self.account_id.clone())?,
+            type_group: self.type_group.map(Into::into),
+            age_category: self.age_category.map(Into::into),
+            sort: self.sort.unwrap_or_default().into(),
+            limit: BULK_DOWNLOAD_PAGE_LIMIT,
+            offset: 0,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct OpenWorkDownloadRequest {
     work_id: String,
 }
@@ -1459,6 +1631,77 @@ impl WorkDownloadProgressSink for JobWorkDownloadProgressSink {
     }
 }
 
+struct JobBulkWorkDownloadProgressSink {
+    context: JobContext,
+}
+
+impl BulkWorkDownloadProgressSink for JobBulkWorkDownloadProgressSink {
+    fn emit(&self, progress: BulkWorkDownloadProgress) {
+        match progress {
+            BulkWorkDownloadProgress::Selecting => {
+                self.context.set_phase("loadingProducts");
+                self.context.clear_progress();
+                self.context.info("Selecting matching Library results");
+            }
+            BulkWorkDownloadProgress::Selected {
+                total_count,
+                requested_count,
+                skipped_downloaded_count,
+            } => {
+                self.context.set_phase("bulkDownloading");
+                self.context
+                    .set_progress(JobProgress::items(Some(0), Some(requested_count as u64)));
+                self.context.info(format!(
+                    "Selected {requested_count} works for download from {total_count} matching products; skipped {skipped_downloaded_count} already downloaded"
+                ));
+            }
+            BulkWorkDownloadProgress::WorkStarted {
+                work_id,
+                current,
+                total,
+            } => {
+                self.context.set_phase("bulkDownloading");
+                self.context.set_progress(JobProgress::items(
+                    Some(current.saturating_sub(1) as u64),
+                    Some(total as u64),
+                ));
+                self.context
+                    .info(format!("Downloading {work_id} ({current}/{total})"));
+            }
+            BulkWorkDownloadProgress::WorkCompleted {
+                work_id,
+                current,
+                total,
+            } => {
+                self.context
+                    .set_progress(JobProgress::items(Some(current as u64), Some(total as u64)));
+                self.context.info(format!("Downloaded {work_id}"));
+            }
+            BulkWorkDownloadProgress::WorkFailed {
+                work_id,
+                current,
+                total,
+                error_code,
+                error_message,
+            } => {
+                self.context
+                    .set_progress(JobProgress::items(Some(current as u64), Some(total as u64)));
+                self.context.warn(format!(
+                    "Failed to download {work_id} ({current}/{total}): {error_code}: {error_message}"
+                ));
+            }
+            BulkWorkDownloadProgress::Completed { report } => {
+                self.context.set_phase("completed");
+                self.context.clear_progress();
+                self.context.info(format!(
+                    "Bulk download completed: {} succeeded, {} failed",
+                    report.succeeded_count, report.failed_count
+                ));
+            }
+        }
+    }
+}
+
 impl SaveSettingsRequest {
     fn into_app_settings(self) -> Result<AppSettings, String> {
         Ok(AppSettings {
@@ -1679,6 +1922,7 @@ fn job_audit_event(event: &dm_jobs::JobEvent) -> Option<AuditEvent> {
         "title": event.snapshot.title.clone(),
         "metadata": event.snapshot.metadata.clone(),
         "output": event.snapshot.output.clone(),
+        "errorDetails": event.snapshot.error.as_ref().map(|error| error.details.clone()),
     });
 
     match event.status {
@@ -1708,6 +1952,7 @@ fn job_audit_operation(kind: &str) -> String {
     match kind {
         "accountSync" => "account.sync".to_owned(),
         "workDownload" => "work.download".to_owned(),
+        "bulkWorkDownload" => "work.bulkDownload".to_owned(),
         _ => format!("job.{kind}"),
     }
 }
@@ -1717,6 +1962,35 @@ fn unpack_policy_label(policy: dm_download::UnpackPolicy) -> &'static str {
         dm_download::UnpackPolicy::KeepArchives => "keepArchives",
         dm_download::UnpackPolicy::UnpackWhenRecognized => "unpackWhenRecognized",
     }
+}
+
+fn bulk_download_output(report: &BulkWorkDownloadReport) -> JobMetadata {
+    let mut output = JobMetadata::new();
+
+    output.insert("totalCount".to_owned(), json!(report.total_count));
+    output.insert("requestedCount".to_owned(), json!(report.requested_count));
+    output.insert(
+        "skippedDownloadedCount".to_owned(),
+        json!(report.skipped_downloaded_count),
+    );
+    output.insert("succeededCount".to_owned(), json!(report.succeeded_count));
+    output.insert("failedCount".to_owned(), json!(report.failed_count));
+    output.insert(
+        "failedWorks".to_owned(),
+        json!(report
+            .failed_works
+            .iter()
+            .map(|failure| {
+                json!({
+                    "workId": failure.work_id.as_str(),
+                    "errorCode": failure.error_code.as_str(),
+                    "errorMessage": failure.error_message.as_str(),
+                })
+            })
+            .collect::<Vec<_>>()),
+    );
+
+    output
 }
 
 fn setup_tracing(
@@ -1900,6 +2174,7 @@ pub fn run() {
             list_products,
             start_account_sync,
             start_work_download,
+            start_bulk_work_download,
             open_work_download,
             delete_work_download,
             list_jobs,
