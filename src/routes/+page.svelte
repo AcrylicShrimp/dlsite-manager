@@ -76,6 +76,17 @@
     products: Product[];
   };
 
+  type BulkWorkDownloadPreview = {
+    totalCount: number;
+    requestedCount: number;
+    skippedDownloadedCount: number;
+    plannedCount: number;
+    failedCount: number;
+    knownExpectedBytes: number;
+    totalExpectedBytes: number | null;
+    unknownSizeCount: number;
+  };
+
   type JobStatus = "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
 
   type JobProgress = {
@@ -298,6 +309,7 @@
   let products = $state<Product[]>([]);
   let totalProducts = $state(0);
   let productsLoading = $state(true);
+  let bulkDownloadPlanning = $state(false);
   let productSearch = $state("");
   let selectedAccountId = $state("");
   let selectedProductType = $state("");
@@ -701,15 +713,32 @@
       return;
     }
 
-    const confirmed = window.confirm(
-      `Download matching Library results?\n\nThis queues all ${totalProducts} matching products that are not already downloaded. Downloads run one at a time so each work can resume safely.`,
-    );
-
-    if (!confirmed) {
-      return;
-    }
+    bulkDownloadPlanning = true;
 
     try {
+      const preview = await invoke<BulkWorkDownloadPreview>("preview_bulk_work_download", {
+        request: {
+          search: valueOrNull(productSearch),
+          accountId: selectedAccountId || null,
+          typeGroup: selectedProductType || null,
+          ageCategory: selectedAgeCategory || null,
+          sort: productSort,
+          unpackPolicy: "unpackWhenRecognized",
+          skipDownloaded: true,
+        },
+      });
+
+      if (preview.requestedCount === 0) {
+        notifyInfo("No matching products need download");
+        return;
+      }
+
+      const confirmed = window.confirm(bulkDownloadPlanMessage(preview));
+
+      if (!confirmed) {
+        return;
+      }
+
       const response = await invoke<StartJobResponse>("start_bulk_work_download", {
         request: {
           search: valueOrNull(productSearch),
@@ -729,6 +758,8 @@
       await loadJobs();
     } catch (err) {
       notifyError(errorMessage(err));
+    } finally {
+      bulkDownloadPlanning = false;
     }
   }
 
@@ -1187,6 +1218,53 @@
     return "Downloading results";
   }
 
+  function bulkDownloadPlanMessage(preview: BulkWorkDownloadPreview) {
+    const lines = [
+      "Bulk download plan",
+      "",
+      `Products to download: ${preview.requestedCount}`,
+      `Checked products: ${preview.plannedCount}`,
+      `Already downloaded skipped: ${preview.skippedDownloadedCount}`,
+      `Expected total download: ${bulkDownloadExpectedBytesLabel(preview)}`,
+    ];
+
+    if (preview.failedCount > 0) {
+      lines.push(
+        "",
+        `${preview.failedCount} product(s) could not be checked before download. They will still be attempted and may fail.`,
+      );
+    }
+
+    lines.push("", "Start download?");
+    return lines.join("\n");
+  }
+
+  function bulkDownloadExpectedBytesLabel(preview: BulkWorkDownloadPreview) {
+    if (typeof preview.totalExpectedBytes === "number") {
+      return formatBytes(preview.totalExpectedBytes);
+    }
+
+    if (preview.knownExpectedBytes > 0) {
+      return `${formatBytes(preview.knownExpectedBytes)} known, plus ${preview.unknownSizeCount} unknown file(s)`;
+    }
+
+    return preview.unknownSizeCount > 0 ? `${preview.unknownSizeCount} unknown file(s)` : "Unknown";
+  }
+
+  function formatBytes(value: number) {
+    const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let size = value;
+    let unitIndex = 0;
+
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex += 1;
+    }
+
+    const precision = unitIndex === 0 || size >= 100 ? 0 : size >= 10 ? 1 : 2;
+    return `${size.toFixed(precision)} ${units[unitIndex]}`;
+  }
+
   function productDownloadActionLabel(product: Product, job: JobSnapshot | null) {
     if (job) {
       if (job.status === "queued") {
@@ -1627,9 +1705,9 @@
             class="secondary download-results-button"
             type="button"
             onclick={startBulkWorkDownload}
-            disabled={productsLoading || jobsLoading || totalProducts === 0 || Boolean(activeBulkDownloadJob())}
+            disabled={bulkDownloadPlanning || productsLoading || jobsLoading || totalProducts === 0 || Boolean(activeBulkDownloadJob())}
           >
-            Download results
+            {bulkDownloadPlanning ? "Planning" : "Download results"}
           </button>
         </form>
 

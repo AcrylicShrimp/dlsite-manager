@@ -5,9 +5,10 @@ use dm_jobs::{
     JobStatus,
 };
 use dm_library::{
-    AccountSyncRequest, BulkWorkDownloadProgress, BulkWorkDownloadProgressSink,
-    BulkWorkDownloadReport, BulkWorkDownloadRequest, DlsiteSyncSource, DlsiteWorkDownloadSource,
-    Library, SaveAccountRequest, SyncProgress, SyncProgressSink, WorkDownloadProgress,
+    AccountSyncRequest, BulkWorkDownloadPreview, BulkWorkDownloadPreviewRequest,
+    BulkWorkDownloadProgress, BulkWorkDownloadProgressSink, BulkWorkDownloadReport,
+    BulkWorkDownloadRequest, DlsiteSyncSource, DlsiteWorkDownloadSource, Library,
+    SaveAccountRequest, SyncProgress, SyncProgressSink, WorkDownloadProgress,
     WorkDownloadProgressSink, WorkDownloadRemovalRequest, WorkDownloadRequest,
 };
 use dm_storage::{
@@ -530,7 +531,7 @@ async fn start_work_download(
 async fn start_bulk_work_download(
     app: AppHandle,
     state: State<'_, AppState>,
-    request: StartBulkWorkDownloadRequest,
+    request: BulkWorkDownloadCommandRequest,
 ) -> Result<StartJobResponse, String> {
     let query = match request.into_query() {
         Ok(query) => query,
@@ -668,6 +669,138 @@ async fn start_bulk_work_download(
     Ok(StartJobResponse {
         job_id: job_id.to_string(),
     })
+}
+
+#[tauri::command]
+async fn preview_bulk_work_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: BulkWorkDownloadCommandRequest,
+) -> Result<BulkWorkDownloadPreviewDto, String> {
+    let query = match request.into_query() {
+        Ok(query) => query,
+        Err(error) => {
+            record_audit(
+                &state.audit,
+                AuditEvent::failed(
+                    "work.bulkDownload.preview",
+                    "Failed to validate bulk download preview",
+                )
+                .with_error(Some("validation"), error.clone()),
+            )
+            .await;
+            return Err(error);
+        }
+    };
+    let settings = match state.storage.app_settings().await {
+        Ok(settings) => settings,
+        Err(error) => {
+            let message = command_error(error);
+            record_audit(
+                &state.audit,
+                AuditEvent::failed(
+                    "work.bulkDownload.preview",
+                    "Failed to load settings for bulk download preview",
+                )
+                .with_error(Some("storage"), message.clone()),
+            )
+            .await;
+            return Err(message);
+        }
+    };
+
+    if let Err(error) = required_library_root(&settings) {
+        record_audit(
+            &state.audit,
+            AuditEvent::failed(
+                "work.bulkDownload.preview",
+                "Failed to resolve library folder",
+            )
+            .with_error(Some("settings"), error.clone()),
+        )
+        .await;
+        return Err(error);
+    }
+
+    if let Err(error) = effective_download_root(&app, &settings) {
+        record_audit(
+            &state.audit,
+            AuditEvent::failed(
+                "work.bulkDownload.preview",
+                "Failed to resolve download staging folder",
+            )
+            .with_error(Some("settings"), error.clone()),
+        )
+        .await;
+        return Err(error);
+    }
+
+    let client = match dm_api::DlsiteClient::new(dm_api::DlsiteClientConfig::default()) {
+        Ok(client) => client,
+        Err(error) => {
+            let message = command_error(error);
+            record_audit(
+                &state.audit,
+                AuditEvent::failed(
+                    "work.bulkDownload.preview",
+                    "Failed to create DLsite API client",
+                )
+                .with_error(Some("api_client"), message.clone()),
+            )
+            .await;
+            return Err(message);
+        }
+    };
+    let source = DlsiteWorkDownloadSource::new(client);
+    let result = state
+        .library
+        .preview_download_products_with_source(
+            BulkWorkDownloadPreviewRequest {
+                query,
+                skip_downloaded: request.skip_downloaded.unwrap_or(true),
+                cancellation_token: None,
+            },
+            &source,
+        )
+        .await;
+
+    match result {
+        Ok(preview) => {
+            record_audit(
+                &state.audit,
+                AuditEvent::succeeded(
+                    "work.bulkDownload.preview",
+                    "Prepared bulk download preview",
+                )
+                .with_details(json!({
+                    "totalCount": preview.total_count,
+                    "requestedCount": preview.requested_count,
+                    "plannedCount": preview.planned_count,
+                    "failedCount": preview.failed_count,
+                    "skippedDownloadedCount": preview.skipped_downloaded_count,
+                    "knownExpectedBytes": preview.known_expected_bytes,
+                    "totalExpectedBytes": preview.total_expected_bytes,
+                    "unknownSizeCount": preview.unknown_size_count,
+                })),
+            )
+            .await;
+            Ok(BulkWorkDownloadPreviewDto::from(preview))
+        }
+        Err(error) => {
+            let failure = work_download_failure(error);
+            let message = failure.message.clone();
+            record_audit(
+                &state.audit,
+                AuditEvent::failed(
+                    "work.bulkDownload.preview",
+                    "Failed to prepare bulk download preview",
+                )
+                .with_error(failure.code, message.clone()),
+            )
+            .await;
+            Err(message)
+        }
+    }
 }
 
 #[tauri::command]
@@ -1195,6 +1328,34 @@ impl From<ProductListPage> for ProductListPageDto {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct BulkWorkDownloadPreviewDto {
+    total_count: u64,
+    requested_count: usize,
+    skipped_downloaded_count: usize,
+    planned_count: usize,
+    failed_count: usize,
+    known_expected_bytes: u64,
+    total_expected_bytes: Option<u64>,
+    unknown_size_count: usize,
+}
+
+impl From<BulkWorkDownloadPreview> for BulkWorkDownloadPreviewDto {
+    fn from(preview: BulkWorkDownloadPreview) -> Self {
+        Self {
+            total_count: preview.total_count,
+            requested_count: preview.requested_count,
+            skipped_downloaded_count: preview.skipped_downloaded_count,
+            planned_count: preview.planned_count,
+            failed_count: preview.failed_count,
+            known_expected_bytes: preview.known_expected_bytes,
+            total_expected_bytes: preview.total_expected_bytes,
+            unknown_size_count: preview.unknown_size_count,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ProductListItemDto {
     work_id: String,
     title: String,
@@ -1350,7 +1511,7 @@ struct StartWorkDownloadRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct StartBulkWorkDownloadRequest {
+struct BulkWorkDownloadCommandRequest {
     search: Option<String>,
     account_id: Option<String>,
     type_group: Option<ProductTypeGroupDto>,
@@ -1360,7 +1521,7 @@ struct StartBulkWorkDownloadRequest {
     skip_downloaded: Option<bool>,
 }
 
-impl StartBulkWorkDownloadRequest {
+impl BulkWorkDownloadCommandRequest {
     fn into_query(&self) -> Result<ProductListQuery, String> {
         Ok(ProductListQuery {
             search: normalize_optional_string(self.search.clone())?,
@@ -2175,6 +2336,7 @@ pub fn run() {
             start_account_sync,
             start_work_download,
             start_bulk_work_download,
+            preview_bulk_work_download,
             open_work_download,
             delete_work_download,
             list_jobs,
