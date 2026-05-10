@@ -365,6 +365,19 @@
     }
   }
 
+  async function copyCreditField(field: ProductCreditField) {
+    if (field.missing) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(field.value);
+      notifySuccess(`Copied ${field.label}`);
+    } catch (err) {
+      notifyError(errorMessage(err));
+    }
+  }
+
   async function syncAccount(account: Account): Promise<boolean> {
     try {
       const response = await invoke<StartJobResponse>("start_account_sync", {
@@ -897,10 +910,17 @@
                   </div>
                   <div class="product-meta">
                     {#each productCreditFields(product) as field (field.key)}
-                      <div class="credit-row" title={creditTooltip(field)}>
+                      <button
+                        class="credit-row"
+                        type="button"
+                        title={creditTooltip(field)}
+                        aria-label={field.missing ? `${field.label} is not available` : `Copy ${field.label}: ${field.value}`}
+                        disabled={field.missing}
+                        onclick={() => copyCreditField(field)}
+                      >
                         <span class="credit-label">{field.label}</span>
                         <span class:missing={field.missing} class="credit-value">{field.value}</span>
-                      </div>
+                      </button>
                     {/each}
                   </div>
                   <div class="labeled-row" aria-label="Classifications">
@@ -1618,6 +1638,33 @@
     color: var(--muted);
     font-size: 12px;
     line-height: 1.2;
+  }
+
+  .credit-row {
+    width: 100%;
+    height: 15px;
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .credit-row:hover:not(:disabled) .credit-value {
+    color: var(--text);
+  }
+
+  .credit-row:focus-visible {
+    outline: 2px solid var(--accent-muted);
+    outline-offset: 2px;
+  }
+
+  .credit-row:disabled {
+    cursor: default;
+    opacity: 1;
   }
 
   .labeled-row {
