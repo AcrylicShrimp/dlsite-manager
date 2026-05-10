@@ -5,8 +5,8 @@ use dm_library::{
     SyncProgressSink,
 };
 use dm_storage::{
-    Account, AppSettings, ProductListItem, ProductListPage, ProductListQuery, ProductOwner,
-    ProductSort, Storage,
+    Account, AppSettings, ProductAgeCategory, ProductListItem, ProductListPage, ProductListQuery,
+    ProductOwner, ProductSort, Storage,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -304,6 +304,7 @@ struct SetAccountEnabledRequest {
 struct ListProductsRequest {
     search: Option<String>,
     account_id: Option<String>,
+    age_category: Option<ProductAgeCategoryDto>,
     sort: Option<ProductSortDto>,
     limit: Option<u32>,
     offset: Option<u32>,
@@ -314,6 +315,7 @@ impl ListProductsRequest {
         Ok(ProductListQuery {
             search: normalize_optional_string(self.search)?,
             account_id: normalize_optional_id(self.account_id)?,
+            age_category: self.age_category.map(Into::into),
             sort: self.sort.unwrap_or_default().into(),
             limit: self.limit.unwrap_or(100).clamp(1, 500),
             offset: self.offset.unwrap_or(0),
@@ -336,6 +338,24 @@ impl From<ProductSortDto> for ProductSort {
             ProductSortDto::TitleAsc => Self::TitleAsc,
             ProductSortDto::LatestPurchaseDesc => Self::LatestPurchaseDesc,
             ProductSortDto::PublishedAtDesc => Self::PublishedAtDesc,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum ProductAgeCategoryDto {
+    All,
+    R15,
+    R18,
+}
+
+impl From<ProductAgeCategoryDto> for ProductAgeCategory {
+    fn from(age_category: ProductAgeCategoryDto) -> Self {
+        match age_category {
+            ProductAgeCategoryDto::All => Self::All,
+            ProductAgeCategoryDto::R15 => Self::R15,
+            ProductAgeCategoryDto::R18 => Self::R18,
         }
     }
 }

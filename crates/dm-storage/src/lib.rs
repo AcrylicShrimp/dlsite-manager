@@ -155,10 +155,28 @@ pub enum ProductSort {
     PublishedAtDesc,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductAgeCategory {
+    All,
+    R15,
+    R18,
+}
+
+impl ProductAgeCategory {
+    fn as_storage_value(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::R15 => "r15",
+            Self::R18 => "r18",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductListQuery {
     pub search: Option<String>,
     pub account_id: Option<String>,
+    pub age_category: Option<ProductAgeCategory>,
     pub sort: ProductSort,
     pub limit: u32,
     pub offset: u32,
@@ -169,6 +187,7 @@ impl Default for ProductListQuery {
         Self {
             search: None,
             account_id: None,
+            age_category: None,
             sort: ProductSort::TitleAsc,
             limit: 100,
             offset: 0,
@@ -908,6 +927,11 @@ fn push_product_filters(builder: &mut QueryBuilder<Sqlite>, query: &ProductListQ
         builder.push_bind(account_id.to_owned());
     }
 
+    if let Some(age_category) = query.age_category {
+        builder.push(" AND w.age_category = ");
+        builder.push_bind(age_category.as_storage_value());
+    }
+
     if let Some(search) = query
         .search
         .as_deref()
@@ -1029,6 +1053,16 @@ mod tests {
     }
 
     fn work(work_id: &str, title: &str, maker_name: &str, published_at: &str) -> CachedWork {
+        work_with_age(work_id, title, maker_name, published_at, "all")
+    }
+
+    fn work_with_age(
+        work_id: &str,
+        title: &str,
+        maker_name: &str,
+        published_at: &str,
+        age_category: &str,
+    ) -> CachedWork {
         CachedWork {
             work_id: work_id.to_owned(),
             title: title.to_owned(),
@@ -1037,7 +1071,7 @@ mod tests {
             maker_name: Some(maker_name.to_owned()),
             maker_json: Some(format!(r#"{{"ja_JP":"{maker_name}"}}"#)),
             work_type: Some("SOU".to_owned()),
-            age_category: Some("general".to_owned()),
+            age_category: Some(age_category.to_owned()),
             thumbnail_url: Some(format!("https://img.example.test/{work_id}.jpg")),
             registered_at: Some(published_at.to_owned()),
             published_at: Some(published_at.to_owned()),
@@ -1621,6 +1655,76 @@ mod tests {
         assert_eq!(search_page.total_count, 1);
         assert_eq!(search_page.products[0].work_id, "RJ000002");
         assert_eq!(sorted_page.products[0].work_id, "RJ000002");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn product_list_can_filter_by_age_category() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-1",
+                vec![
+                    work_with_age(
+                        "RJ000001",
+                        "All Ages",
+                        "Circle One",
+                        "2026-01-01T00:00:00Z",
+                        "all",
+                    ),
+                    work_with_age(
+                        "RJ000002",
+                        "Fifteen",
+                        "Circle Two",
+                        "2026-01-02T00:00:00Z",
+                        "r15",
+                    ),
+                    work_with_age(
+                        "RJ000003",
+                        "Eighteen",
+                        "Circle Three",
+                        "2026-01-03T00:00:00Z",
+                        "r18",
+                    ),
+                ],
+                vec![
+                    account_work("RJ000001", "2026-02-01T00:00:00Z"),
+                    account_work("RJ000002", "2026-02-02T00:00:00Z"),
+                    account_work("RJ000003", "2026-02-03T00:00:00Z"),
+                ],
+            ))
+            .await?;
+
+        let all_ages_page = storage
+            .list_products(&ProductListQuery {
+                age_category: Some(ProductAgeCategory::All),
+                ..ProductListQuery::default()
+            })
+            .await?;
+        let r15_page = storage
+            .list_products(&ProductListQuery {
+                age_category: Some(ProductAgeCategory::R15),
+                ..ProductListQuery::default()
+            })
+            .await?;
+        let r18_page = storage
+            .list_products(&ProductListQuery {
+                age_category: Some(ProductAgeCategory::R18),
+                ..ProductListQuery::default()
+            })
+            .await?;
+
+        assert_eq!(all_ages_page.total_count, 1);
+        assert_eq!(all_ages_page.products[0].work_id, "RJ000001");
+        assert_eq!(r15_page.total_count, 1);
+        assert_eq!(r15_page.products[0].work_id, "RJ000002");
+        assert_eq!(r18_page.total_count, 1);
+        assert_eq!(r18_page.products[0].work_id, "RJ000003");
 
         Ok(())
     }

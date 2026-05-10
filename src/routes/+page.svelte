@@ -116,6 +116,7 @@
   let productsLoading = $state(true);
   let productSearch = $state("");
   let selectedAccountId = $state("");
+  let selectedAgeCategory = $state("");
   let productSort = $state("titleAsc");
 
   let jobs = $state<JobSnapshot[]>([]);
@@ -277,6 +278,7 @@
         request: {
           search: valueOrNull(productSearch),
           accountId: selectedAccountId || null,
+          ageCategory: selectedAgeCategory || null,
           sort: productSort,
           limit: 100,
           offset: 0,
@@ -523,6 +525,19 @@
     return typeof value === "number" ? value : null;
   }
 
+  function ageLabel(value: string | null) {
+    switch (value) {
+      case "all":
+        return "All ages";
+      case "r15":
+        return "R-15";
+      case "r18":
+        return "R-18";
+      default:
+        return "";
+    }
+  }
+
   function valueOrNull(value: string) {
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
@@ -623,6 +638,12 @@
                 <option value={account.id}>{account.label}</option>
               {/each}
             </select>
+            <select bind:value={selectedAgeCategory} onchange={loadProducts}>
+              <option value="">Any age</option>
+              <option value="all">All ages</option>
+              <option value="r15">R-15</option>
+              <option value="r18">R-18</option>
+            </select>
             <select bind:value={productSort} onchange={loadProducts}>
               <option value="titleAsc">Title</option>
               <option value="latestPurchaseDesc">Latest purchase</option>
@@ -657,6 +678,9 @@
                       {/if}
                       {#if product.workType}
                         <span>{product.workType}</span>
+                      {/if}
+                      {#if ageLabel(product.ageCategory)}
+                        <span>{ageLabel(product.ageCategory)}</span>
                       {/if}
                     </div>
                   </div>
@@ -981,7 +1005,7 @@
 
   .toolbar {
     display: grid;
-    grid-template-columns: minmax(180px, 1fr) 170px 160px auto;
+    grid-template-columns: minmax(180px, 1fr) 170px 130px 160px auto;
     gap: 10px;
     padding: 14px;
     border-bottom: 1px solid #e2e8f0;
