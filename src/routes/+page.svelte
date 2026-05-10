@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
 
   type AppSettings = {
     libraryRoot: string | null;
@@ -99,6 +99,14 @@
     jobId: string;
   };
 
+  type ToastKind = "success" | "error" | "info";
+
+  type Toast = {
+    id: string;
+    kind: ToastKind;
+    message: string;
+  };
+
   type View = "library" | "accounts" | "activity" | "settings";
 
   let activeView = $state<View>("library");
@@ -129,8 +137,10 @@
   let jobs = $state<JobSnapshot[]>([]);
   let jobsLoading = $state(true);
   let jobMessages = $state<Record<string, string>>({});
-  let status = $state("");
-  let error = $state("");
+  let toasts = $state<Toast[]>([]);
+
+  let toastSequence = 0;
+  const toastTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   onMount(() => {
     void loadInitial();
@@ -154,20 +164,26 @@
     };
   });
 
+  onDestroy(() => {
+    for (const timer of toastTimers.values()) {
+      clearTimeout(timer);
+    }
+    toastTimers.clear();
+  });
+
   async function loadInitial() {
     await Promise.all([loadSettings(), loadAccounts(), loadProducts(), loadJobs()]);
   }
 
   async function loadSettings() {
     settingsLoading = true;
-    error = "";
 
     try {
       const settings = await invoke<AppSettings>("get_settings");
       libraryRoot = settings.libraryRoot ?? "";
       downloadRoot = settings.downloadRoot ?? "";
     } catch (err) {
-      error = errorMessage(err);
+      notifyError(errorMessage(err));
     } finally {
       settingsLoading = false;
     }
@@ -176,8 +192,6 @@
   async function saveSettings(event: Event) {
     event.preventDefault();
     settingsSaving = true;
-    error = "";
-    status = "";
 
     try {
       const settings = await invoke<AppSettings>("save_settings", {
@@ -188,9 +202,9 @@
       });
       libraryRoot = settings.libraryRoot ?? "";
       downloadRoot = settings.downloadRoot ?? "";
-      status = "Settings saved";
+      notifySuccess("Settings saved");
     } catch (err) {
-      error = errorMessage(err);
+      notifyError(errorMessage(err));
     } finally {
       settingsSaving = false;
     }
@@ -198,7 +212,6 @@
 
   async function loadAccounts() {
     accountsLoading = true;
-    error = "";
 
     try {
       accounts = await invoke<Account[]>("list_accounts");
@@ -206,7 +219,7 @@
         selectedAccountId = "";
       }
     } catch (err) {
-      error = errorMessage(err);
+      notifyError(errorMessage(err));
     } finally {
       accountsLoading = false;
     }
@@ -215,8 +228,6 @@
   async function saveAccount(event: Event) {
     event.preventDefault();
     accountSaving = true;
-    error = "";
-    status = "";
 
     try {
       const account = await invoke<Account>("save_account", {
@@ -229,21 +240,18 @@
           enabled: accountEnabled,
         },
       });
-      status = editingAccountId ? "Account updated" : "Account added";
+      notifySuccess(editingAccountId ? "Account updated" : "Account added");
       editAccount(account);
       accountPassword = "";
       await loadAccounts();
     } catch (err) {
-      error = errorMessage(err);
+      notifyError(errorMessage(err));
     } finally {
       accountSaving = false;
     }
   }
 
   async function setAccountEnabled(account: Account, enabled: boolean) {
-    error = "";
-    status = "";
-
     try {
       await invoke("set_account_enabled", {
         request: {
@@ -254,7 +262,7 @@
       await loadAccounts();
       await loadProducts();
     } catch (err) {
-      error = errorMessage(err);
+      notifyError(errorMessage(err));
     }
   }
 
@@ -278,7 +286,6 @@
 
   async function loadProducts() {
     productsLoading = true;
-    error = "";
 
     try {
       const page = await invoke<ProductListPage>("list_products", {
@@ -294,7 +301,7 @@
       products = page.products;
       totalProducts = page.totalCount;
     } catch (err) {
-      error = errorMessage(err);
+      notifyError(errorMessage(err));
     } finally {
       productsLoading = false;
     }
@@ -302,12 +309,11 @@
 
   async function loadJobs() {
     jobsLoading = true;
-    error = "";
 
     try {
       jobs = await invoke<JobSnapshot[]>("list_jobs");
     } catch (err) {
-      error = errorMessage(err);
+      notifyError(errorMessage(err));
     } finally {
       jobsLoading = false;
     }
@@ -334,20 +340,15 @@
   }
 
   async function copyWorkId(workId: string) {
-    error = "";
-
     try {
       await navigator.clipboard.writeText(workId);
-      status = `Copied ${workId}`;
+      notifySuccess(`Copied ${workId}`);
     } catch (err) {
-      error = errorMessage(err);
+      notifyError(errorMessage(err));
     }
   }
 
-  async function syncAccount(account: Account) {
-    error = "";
-    status = "";
-
+  async function syncAccount(account: Account): Promise<boolean> {
     try {
       const response = await invoke<StartJobResponse>("start_account_sync", {
         request: {
@@ -355,15 +356,17 @@
           password: editingAccountId === account.id ? valueOrNull(accountPassword) : null,
         },
       });
-      status = "Sync queued";
+      notifyInfo("Sync queued");
       jobMessages = {
         ...jobMessages,
         [response.jobId]: "Sync queued",
       };
       accountPassword = "";
       await loadJobs();
+      return true;
     } catch (err) {
-      error = errorMessage(err);
+      notifyError(errorMessage(err));
+      return false;
     }
   }
 
@@ -373,8 +376,8 @@
     );
 
     for (const account of enabledAccounts) {
-      await syncAccount(account);
-      if (error) {
+      const started = await syncAccount(account);
+      if (!started) {
         break;
       }
     }
@@ -391,31 +394,25 @@
   }
 
   async function cancelJob(job: JobSnapshot) {
-    error = "";
-    status = "";
-
     try {
       await invoke("cancel_job", {
         request: {
           jobId: job.id,
         },
       });
-      status = "Cancellation requested";
+      notifyInfo("Cancellation requested");
       await loadJobs();
     } catch (err) {
-      error = errorMessage(err);
+      notifyError(errorMessage(err));
     }
   }
 
   async function clearFinishedJobs() {
-    error = "";
-    status = "";
-
     try {
       await invoke("clear_finished_jobs");
       await loadJobs();
     } catch (err) {
-      error = errorMessage(err);
+      notifyError(errorMessage(err));
     }
   }
 
@@ -647,6 +644,49 @@
     return `${label}: ${value}`;
   }
 
+  function notifySuccess(message: string) {
+    pushToast("success", message);
+  }
+
+  function notifyInfo(message: string) {
+    pushToast("info", message);
+  }
+
+  function notifyError(message: string) {
+    pushToast("error", message, 7000);
+  }
+
+  function pushToast(kind: ToastKind, message: string, duration = 3600) {
+    const id = `toast-${Date.now()}-${toastSequence++}`;
+    const toast = { id, kind, message };
+    toasts = [toast, ...toasts].slice(0, 5);
+
+    const timer = setTimeout(() => dismissToast(id), duration);
+    toastTimers.set(id, timer);
+    clearOrphanedToastTimers();
+  }
+
+  function dismissToast(id: string) {
+    toasts = toasts.filter((toast) => toast.id !== id);
+
+    const timer = toastTimers.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      toastTimers.delete(id);
+    }
+  }
+
+  function clearOrphanedToastTimers() {
+    const visibleToastIds = new Set(toasts.map((toast) => toast.id));
+
+    for (const [id, timer] of toastTimers.entries()) {
+      if (!visibleToastIds.has(id)) {
+        clearTimeout(timer);
+        toastTimers.delete(id);
+      }
+    }
+  }
+
   function viewEyebrow(view: View) {
     switch (view) {
       case "library":
@@ -739,10 +779,6 @@
         <h1>{viewTitle(activeView)}</h1>
       </div>
     </header>
-
-    {#if error || status}
-      <p class:error={Boolean(error)} class="status-line" aria-live="polite">{error || status}</p>
-    {/if}
 
     {#if activeView === "library"}
       <section class="product-area" aria-label="Library">
@@ -1071,6 +1107,25 @@
       </form>
     {/if}
   </section>
+
+  {#if toasts.length > 0}
+    <section class="toast-stack" aria-label="Notifications" aria-live="polite">
+      {#each toasts as toast (toast.id)}
+        <article class="toast" class:error={toast.kind === "error"} class:success={toast.kind === "success"} role={toast.kind === "error" ? "alert" : "status"}>
+          <div class="toast-marker" aria-hidden="true"></div>
+          <p>{toast.message}</p>
+          <button
+            class="toast-close"
+            type="button"
+            aria-label="Dismiss notification"
+            onclick={() => dismissToast(toast.id)}
+          >
+            x
+          </button>
+        </article>
+      {/each}
+    </section>
+  {/if}
 </main>
 
 <style>
@@ -1206,17 +1261,6 @@
     font-size: 17px;
   }
 
-  .status-line {
-    min-height: 22px;
-    margin: 0 0 14px;
-    color: var(--accent);
-    overflow-wrap: anywhere;
-  }
-
-  .status-line.error {
-    color: var(--danger);
-  }
-
   .product-area,
   .accounts-panel,
   .activity-panel,
@@ -1225,6 +1269,76 @@
     border-radius: 8px;
     background: var(--panel);
     box-shadow: 0 16px 40px rgb(0 0 0 / 18%);
+  }
+
+  .toast-stack {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 40;
+    display: grid;
+    gap: 8px;
+    width: min(380px, calc(100vw - 36px));
+    pointer-events: none;
+  }
+
+  .toast {
+    --toast-color: #8ab4e6;
+    --toast-bg: rgb(138 180 230 / 12%);
+
+    display: grid;
+    grid-template-columns: 4px minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    min-height: 48px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--panel-raised) 92%, black);
+    box-shadow: 0 18px 42px rgb(0 0 0 / 38%);
+    overflow: hidden;
+    pointer-events: auto;
+  }
+
+  .toast.success {
+    --toast-color: var(--accent);
+    --toast-bg: var(--accent-muted);
+  }
+
+  .toast.error {
+    --toast-color: var(--danger);
+    --toast-bg: rgb(248 113 113 / 13%);
+  }
+
+  .toast-marker {
+    align-self: stretch;
+    background: var(--toast-color);
+  }
+
+  .toast p {
+    min-width: 0;
+    margin: 0;
+    padding: 10px 0;
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
+  .toast-close {
+    width: 30px;
+    min-width: 30px;
+    height: 30px;
+    margin-right: 8px;
+    padding: 0;
+    border-color: transparent;
+    color: var(--muted);
+    background: transparent;
+  }
+
+  .toast-close:hover {
+    border-color: var(--border-strong);
+    color: var(--text);
+    background: var(--toast-bg);
   }
 
   .product-area {
