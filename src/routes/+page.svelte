@@ -1288,6 +1288,7 @@
     --meta-column-gap: clamp(8px, 1.15vw, 14px);
     --credit-label-width: clamp(54px, 4.1vw, 60px);
     --credit-gap: clamp(5px, 0.7vw, 7px);
+    --meta-width: min(100%, clamp(520px, 48vw, 760px));
 
     display: grid;
     grid-template-columns: 5px 112px minmax(0, 1fr);
@@ -1404,6 +1405,8 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 4px var(--meta-column-gap);
+    justify-self: start;
+    width: var(--meta-width);
     min-width: 0;
   }
 
@@ -1738,6 +1741,7 @@
       --meta-column-gap: 8px;
       --credit-label-width: 56px;
       --credit-gap: 6px;
+      --meta-width: 100%;
 
       grid-template-columns: 5px 84px minmax(0, 1fr);
       min-height: 108px;
