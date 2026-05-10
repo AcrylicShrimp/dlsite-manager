@@ -122,6 +122,12 @@
     workId: string;
   };
 
+  type ChipTooltip = {
+    text: string;
+    left: number;
+    top: number;
+  };
+
   type ProductTypeInfo = {
     label: string;
     tone: string;
@@ -151,56 +157,71 @@
       label: "Audio material",
       tone: "audio",
       group: "Audio",
-      description: "Audio material",
+      description: "Audio material or sound assets",
     },
     COM: { label: "Comic", tone: "image", group: "Image / comic", description: "Comic" },
     DNV: {
       label: "Digital novel",
       tone: "image",
       group: "Image / comic",
-      description: "Digital novel",
+      description: "Digital novel or reading work",
     },
     DOH: {
       label: "Doujinshi",
       tone: "image",
       group: "Image / comic",
-      description: "Doujinshi",
+      description: "Doujinshi or self-published book",
     },
-    ET3: { label: "Other", tone: "other", group: "Other", description: "Other" },
-    ETC: { label: "Other game", tone: "game", group: "Game", description: "Other game" },
-    GAM: { label: "Game", tone: "game", group: "Game", description: "Game" },
+    ET3: { label: "Other", tone: "other", group: "Other", description: "Miscellaneous product" },
+    ETC: {
+      label: "Other game",
+      tone: "game",
+      group: "Game",
+      description: "Game without a narrower type",
+    },
+    GAM: { label: "Game", tone: "game", group: "Game", description: "General game" },
     ICG: {
       label: "Illustration",
       tone: "image",
       group: "Image / comic",
-      description: "Illustration or CG",
+      description: "Illustration or CG collection",
     },
     IMT: {
       label: "Image material",
       tone: "image",
       group: "Image / comic",
-      description: "Image material",
+      description: "Image material or visual assets",
     },
     KSV: {
       label: "Visual novel",
       tone: "image",
       group: "Image / comic",
-      description: "Sexual novel / visual novel",
+      description: "Visual novel",
     },
     MNG: { label: "Manga", tone: "image", group: "Image / comic", description: "Manga" },
     MOV: { label: "Anime", tone: "video", group: "Video", description: "Anime or video" },
     MUS: { label: "Music", tone: "audio", group: "Audio", description: "Music" },
-    NRE: { label: "Novel", tone: "image", group: "Image / comic", description: "Novel" },
+    NRE: {
+      label: "Novel",
+      tone: "image",
+      group: "Image / comic",
+      description: "Novel or text work",
+    },
     PZL: { label: "Puzzle", tone: "game", group: "Game", description: "Puzzle game" },
     QIZ: { label: "Quiz", tone: "game", group: "Game", description: "Quiz game" },
     RPG: { label: "RPG", tone: "game", group: "Game", description: "Role-playing game" },
-    SCM: { label: "Gekiga", tone: "image", group: "Image / comic", description: "Gekiga" },
+    SCM: {
+      label: "Gekiga",
+      tone: "image",
+      group: "Image / comic",
+      description: "Gekiga or dramatic comic",
+    },
     SLN: { label: "Simulation", tone: "game", group: "Game", description: "Simulation game" },
-    SOF: { label: "Software", tone: "other", group: "Other", description: "Software" },
+    SOF: { label: "Software", tone: "other", group: "Other", description: "Software product" },
     SOU: { label: "Voice", tone: "audio", group: "Audio", description: "Voice/audio work" },
     STG: { label: "Shooter", tone: "game", group: "Game", description: "Shooter game" },
     TBL: { label: "Tabletop", tone: "game", group: "Game", description: "Tabletop game" },
-    TOL: { label: "Utility", tone: "other", group: "Other", description: "Utility/tool" },
+    TOL: { label: "Utility", tone: "other", group: "Other", description: "Utility tool or app" },
     TYP: { label: "Typing", tone: "game", group: "Game", description: "Typing game" },
     VCM: { label: "Voice comic", tone: "video", group: "Video", description: "Voice comic" },
   };
@@ -236,6 +257,7 @@
   let jobMessages = $state<Record<string, string>>({});
   let toasts = $state<Toast[]>([]);
   let productImagePreview = $state<ProductImagePreview | null>(null);
+  let chipTooltip = $state<ChipTooltip | null>(null);
 
   let toastSequence = 0;
   const toastTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -791,18 +813,18 @@
       return {
         label: knownType.label,
         tone: knownType.tone,
-        tooltip: `${upper}: ${knownType.description}. Grouped under ${knownType.group}.`,
+        tooltip: `${knownType.label}: ${knownType.description}. DLsite code ${upper}.`,
       };
     }
 
     const normalized = raw.toLowerCase().replace(/[\s_-]+/g, "");
 
     if (matchesAny(normalized, ["sou", "audio", "voice", "asmr", "music", "sound"])) {
-      return productTypeFallback(raw, "Audio", "audio", "Audio", "Audio-like product type");
+      return productTypeFallback(raw, "Audio", "audio", "Audio-like product type");
     }
 
     if (matchesAny(normalized, ["mov", "movie", "video", "anime", "voicecomic", "vcomic"])) {
-      return productTypeFallback(raw, "Video", "video", "Video", "Video-like product type");
+      return productTypeFallback(raw, "Video", "video", "Video-like product type");
     }
 
     if (
@@ -824,7 +846,7 @@
         "typing",
       ])
     ) {
-      return productTypeFallback(raw, "Game", "game", "Game", "Game-like product type");
+      return productTypeFallback(raw, "Game", "game", "Game-like product type");
     }
 
     if (
@@ -848,21 +870,20 @@
         raw,
         "Image / comic",
         "image",
-        "Image / comic",
         "Image, comic, manga, or reading-material product type",
       );
     }
 
     if (matchesAny(normalized, ["software", "tool", "utility", "etc", "other"])) {
-      return productTypeFallback(raw, "Other", "other", "Other", "Tool or other product type");
+      return productTypeFallback(raw, "Other", "other", "Tool or other product type");
     }
 
     return {
       label: raw || "Other",
       tone: "other",
       tooltip: raw
-        ? `${raw}: Unrecognized DLsite product type. Grouped under Other.`
-        : "Unknown DLsite product type. Grouped under Other.",
+        ? `Unrecognized product type from DLsite: ${raw}.`
+        : "Product type is not available from DLsite.",
     };
   }
 
@@ -870,7 +891,6 @@
     raw: string,
     fallbackLabel: string,
     tone: string,
-    group: string,
     description: string,
   ): ProductTypeInfo {
     const label = raw || fallbackLabel;
@@ -878,9 +898,7 @@
     return {
       label,
       tone,
-      tooltip: raw
-        ? `${raw}: ${description}. Grouped under ${group}.`
-        : `${description}. Grouped under ${group}.`,
+      tooltip: raw ? `${label}: ${description}.` : `${fallbackLabel}: ${description}.`,
     };
   }
 
@@ -917,14 +935,29 @@
   function ageTooltip(value: string | null) {
     switch (value) {
       case "all":
-        return "DLsite age rating: all ages.";
+        return "DLsite rating: all ages.";
       case "r15":
-        return "DLsite age rating: R-15.";
+        return "DLsite rating: R-15.";
       case "r18":
-        return "DLsite age rating: R-18.";
+        return "DLsite rating: R-18.";
       default:
-        return "DLsite age rating is unknown.";
+        return "DLsite rating is unknown.";
     }
+  }
+
+  function showChipTooltip(text: string, event: MouseEvent) {
+    moveChipTooltip(text, event);
+  }
+
+  function moveChipTooltip(text: string, event: MouseEvent) {
+    const maxWidth = 320;
+    const left = Math.max(12, Math.min(event.clientX + 12, window.innerWidth - maxWidth - 12));
+    const top = Math.max(12, Math.min(event.clientY + 14, window.innerHeight - 54));
+    chipTooltip = { text, left, top };
+  }
+
+  function hideChipTooltip() {
+    chipTooltip = null;
   }
 
   function creditText(group: ProductCreditGroup) {
@@ -1205,14 +1238,27 @@
                   <div class="labeled-row" aria-label="Classifications">
                     <span class="credit-label">Tags</span>
                     <div class="chip-row">
-                      <span class="chip type-chip" title={typeInfo.tooltip}>
+                      <span
+                        class="chip type-chip"
+                        role="note"
+                        aria-label={typeInfo.tooltip}
+                        onmouseenter={(event) => showChipTooltip(typeInfo.tooltip, event)}
+                        onmousemove={(event) => moveChipTooltip(typeInfo.tooltip, event)}
+                        onmouseleave={hideChipTooltip}
+                      >
                         {typeInfo.label}
                       </span>
                       {#if ageLabel(product.ageCategory)}
                         <span
                           class="chip age-chip"
+                          role="note"
                           data-age={ageTone(product.ageCategory)}
-                          title={ageTooltip(product.ageCategory)}
+                          aria-label={ageTooltip(product.ageCategory)}
+                          onmouseenter={(event) =>
+                            showChipTooltip(ageTooltip(product.ageCategory), event)}
+                          onmousemove={(event) =>
+                            moveChipTooltip(ageTooltip(product.ageCategory), event)}
+                          onmouseleave={hideChipTooltip}
                         >
                           {ageLabel(product.ageCategory)}
                         </span>
@@ -1603,6 +1649,16 @@
     </div>
   {/if}
 
+  {#if chipTooltip}
+    <div
+      class="chip-tooltip"
+      role="tooltip"
+      style={`left: ${chipTooltip.left}px; top: ${chipTooltip.top}px;`}
+    >
+      {chipTooltip.text}
+    </div>
+  {/if}
+
   {#if toasts.length > 0}
     <section class="toast-stack" aria-label="Notifications" aria-live="polite">
       {#each toasts as toast (toast.id)}
@@ -1790,6 +1846,22 @@
     display: grid;
     gap: 8px;
     width: min(380px, calc(100vw - 36px));
+    pointer-events: none;
+  }
+
+  .chip-tooltip {
+    position: fixed;
+    z-index: 50;
+    max-width: 320px;
+    padding: 7px 9px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    color: var(--text);
+    background: color-mix(in srgb, var(--panel-raised) 94%, black);
+    box-shadow: 0 12px 28px rgb(0 0 0 / 34%);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.35;
     pointer-events: none;
   }
 
