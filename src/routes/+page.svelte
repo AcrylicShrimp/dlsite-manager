@@ -1080,13 +1080,21 @@
                   class:disabled={!account.enabled}
                   class:selected={editingAccountId === account.id}
                 >
+                  <button
+                    class:disabled={!account.enabled}
+                    class="account-enabled-pill"
+                    type="button"
+                    title={account.enabled ? "Disable account" : "Enable account"}
+                    aria-label={account.enabled ? `Disable ${account.label}` : `Enable ${account.label}`}
+                    onclick={() => setAccountEnabled(account, !account.enabled)}
+                    disabled={Boolean(activeSyncJob)}
+                  >
+                    {accountEnabledLabel(account)}
+                  </button>
                   <button class="account-name" type="button" onclick={() => editAccount(account)}>
                     <span class="account-identity">
                       <span title={account.label}>{account.label}</span>
                       <small title={accountLoginLabel(account)}>{accountLoginLabel(account)}</small>
-                      <span class:disabled={!account.enabled} class="account-enabled-pill">
-                        {accountEnabledLabel(account)}
-                      </span>
                     </span>
                   </button>
                   <div class="account-meta-grid">
@@ -1106,14 +1114,6 @@
                     </div>
                   </div>
                   <div class="account-actions">
-                    <button
-                      class="secondary small"
-                      type="button"
-                      onclick={() => setAccountEnabled(account, !account.enabled)}
-                      disabled={Boolean(activeSyncJob)}
-                    >
-                      {account.enabled ? "Disable" : "Enable"}
-                    </button>
                     {#if activeSyncJob}
                       <button
                         class="secondary small"
@@ -1986,12 +1986,12 @@
 
   .account-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-rows: auto auto;
-    gap: 10px 16px;
-    align-items: center;
-    min-height: 96px;
-    padding: 14px;
+    grid-template-columns: minmax(260px, 0.9fr) minmax(280px, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 18px 28px;
+    align-items: start;
+    min-height: 188px;
+    padding: 18px 20px;
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--panel-soft);
@@ -2009,8 +2009,8 @@
   .account-name {
     display: grid;
     grid-column: 1;
-    grid-row: 1;
-    align-items: center;
+    grid-row: 2 / 4;
+    align-self: center;
     justify-items: stretch;
     min-width: 0;
     height: auto;
@@ -2040,14 +2040,24 @@
 
   .account-identity {
     display: grid;
-    gap: 5px;
+    gap: 10px;
     min-width: 0;
   }
 
   .account-identity span {
     max-width: 100%;
     color: var(--text);
+    font-size: 24px;
     font-weight: 650;
+    line-height: 1.1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .account-identity small {
+    color: var(--muted);
+    font-size: 15px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -2056,18 +2066,32 @@
   .account-enabled-pill {
     display: inline-flex;
     align-items: center;
-    justify-content: center;
+    grid-column: 1;
+    grid-row: 1;
+    justify-content: flex-start;
     justify-self: start;
-    width: min(150px, 100%);
-    min-height: 24px;
-    padding: 2px 10px;
+    gap: 8px;
+    min-width: 130px;
+    height: auto;
+    min-height: 34px;
+    padding: 4px 13px;
     border: 1px solid rgb(112 165 120 / 58%);
-    border-radius: 999px;
+    border-radius: 5px;
     color: var(--accent);
     background: var(--accent-muted);
-    font-size: 12px;
+    font-size: 15px;
     font-weight: 650;
     line-height: 1.1;
+    cursor: pointer;
+  }
+
+  .account-enabled-pill::before {
+    content: "";
+    width: 11px;
+    height: 11px;
+    border: 2px solid currentColor;
+    border-radius: 999px;
+    background: rgb(160 198 164 / 24%);
   }
 
   .account-enabled-pill.disabled {
@@ -2076,31 +2100,38 @@
     background: var(--field-disabled);
   }
 
+  .account-enabled-pill:disabled {
+    cursor: default;
+  }
+
   .account-meta-grid {
     display: grid;
-    grid-column: 1;
+    grid-column: 2;
     grid-row: 2;
-    grid-template-columns: minmax(120px, 0.8fr) minmax(110px, 0.7fr) minmax(190px, 1.2fr);
-    gap: 16px;
+    align-self: center;
+    grid-template-columns: 1fr;
+    gap: 14px;
     min-width: 0;
   }
 
   .account-meta-grid div {
     display: grid;
-    gap: 3px;
+    grid-template-columns: minmax(110px, 0.55fr) minmax(140px, 1fr);
+    gap: 18px;
+    align-items: baseline;
     min-width: 0;
   }
 
   .account-meta-grid span {
     color: var(--muted);
-    font-size: 11px;
+    font-size: 15px;
     font-weight: 650;
   }
 
   .account-meta-grid strong {
     min-width: 0;
     color: var(--text);
-    font-size: 12px;
+    font-size: 15px;
     font-weight: 650;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2109,8 +2140,8 @@
 
   .account-actions {
     grid-column: 2;
-    grid-row: 1 / 3;
-    align-self: center;
+    grid-row: 3;
+    align-self: end;
     justify-content: flex-end;
     flex-wrap: wrap;
   }
@@ -2278,13 +2309,18 @@
       grid-template-columns: minmax(0, 1fr);
     }
 
+    .account-name {
+      grid-row: 2;
+    }
+
     .account-meta-grid {
       grid-column: 1 / -1;
+      grid-row: 3;
     }
 
     .account-actions {
       grid-column: 1 / -1;
-      grid-row: auto;
+      grid-row: 4;
       justify-content: flex-start;
     }
   }
