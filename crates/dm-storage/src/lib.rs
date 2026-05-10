@@ -1027,6 +1027,10 @@ fn push_product_filters(builder: &mut QueryBuilder<Sqlite>, query: &ProductListQ
 
 fn product_type_group_case_sql() -> &'static str {
     "CASE
+        WHEN lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%vcm%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%voicecomic%'
+            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%vcomic%'
+            THEN 'image'
         WHEN lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%sou%'
             OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%amt%'
             OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%mus%'
@@ -1037,12 +1041,9 @@ fn product_type_group_case_sql() -> &'static str {
             OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%sound%'
             THEN 'audio'
         WHEN lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%mov%'
-            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%vcm%'
             OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%movie%'
             OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%video%'
             OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%anime%'
-            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%voicecomic%'
-            OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%vcomic%'
             THEN 'video'
         WHEN lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%gam%'
             OR lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%acn%'
@@ -2203,6 +2204,13 @@ mod tests {
                         "2026-01-05T00:00:00Z",
                         "SOF",
                     ),
+                    work_with_type(
+                        "RJ000006",
+                        "Voice Comic Work",
+                        "Circle Six",
+                        "2026-01-06T00:00:00Z",
+                        "VCM",
+                    ),
                 ],
                 vec![
                     account_work("RJ000001", "2026-02-01T00:00:00Z"),
@@ -2210,6 +2218,7 @@ mod tests {
                     account_work("RJ000003", "2026-02-03T00:00:00Z"),
                     account_work("RJ000004", "2026-02-04T00:00:00Z"),
                     account_work("RJ000005", "2026-02-05T00:00:00Z"),
+                    account_work("RJ000006", "2026-02-06T00:00:00Z"),
                 ],
             ))
             .await?;
@@ -2248,7 +2257,14 @@ mod tests {
         assert_eq!(audio_page.products[0].work_id, "RJ000001");
         assert_eq!(video_page.products[0].work_id, "RJ000002");
         assert_eq!(game_page.products[0].work_id, "RJ000003");
-        assert_eq!(image_page.products[0].work_id, "RJ000004");
+        assert_eq!(
+            image_page
+                .products
+                .iter()
+                .map(|product| product.work_id.as_str())
+                .collect::<Vec<_>>(),
+            ["RJ000004", "RJ000006"]
+        );
         assert_eq!(other_page.products[0].work_id, "RJ000005");
 
         Ok(())

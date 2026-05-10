@@ -223,7 +223,12 @@
     TBL: { label: "Tabletop", tone: "game", group: "Game", description: "Tabletop game" },
     TOL: { label: "Utility", tone: "other", group: "Other", description: "Utility tool or app" },
     TYP: { label: "Typing", tone: "game", group: "Game", description: "Typing game" },
-    VCM: { label: "Voice comic", tone: "video", group: "Video", description: "Voice comic" },
+    VCM: {
+      label: "Voice comic",
+      tone: "voice-comic",
+      group: "Image / comic",
+      description: "Comic with voice/audio presentation",
+    },
   };
 
   let activeView = $state<View>("library");
@@ -819,11 +824,20 @@
 
     const normalized = raw.toLowerCase().replace(/[\s_-]+/g, "");
 
+    if (matchesAny(normalized, ["voicecomic", "vcomic"])) {
+      return productTypeFallback(
+        raw,
+        "Voice comic",
+        "voice-comic",
+        "Comic with voice/audio presentation",
+      );
+    }
+
     if (matchesAny(normalized, ["sou", "audio", "voice", "asmr", "music", "sound"])) {
       return productTypeFallback(raw, "Audio", "audio", "Audio-like product type");
     }
 
-    if (matchesAny(normalized, ["mov", "movie", "video", "anime", "voicecomic", "vcomic"])) {
+    if (matchesAny(normalized, ["mov", "movie", "video", "anime"])) {
       return productTypeFallback(raw, "Video", "video", "Video-like product type");
     }
 
@@ -2200,6 +2214,11 @@
   .product-card[data-tone="video"] {
     --type-color: #d64b92;
     --type-soft: rgb(214 75 146 / 17%);
+  }
+
+  .product-card[data-tone="voice-comic"] {
+    --type-color: #55bfe6;
+    --type-soft: rgb(85 191 230 / 16%);
   }
 
   .product-card[data-tone="game"] {

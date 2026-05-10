@@ -4,6 +4,7 @@
 
 - Added tooltip help and known DLsite work-type labels for Library classification chips. The frontend now expands codes such as `SLN` to readable labels like `Simulation`, assigns the correct product-family tone, and gives age chips hover help. `dm-storage` also recognizes additional exact DLsite work-type codes when grouping cached products, with `SLN` covered by the game filter. Validation: `cargo fmt --all`, `cargo test -p dm-storage`, `cargo check -p dlsite-manager`, `pnpm check`, `pnpm build`, `cargo test -p dm-library`, and `git diff --check` passed. Did not restart or stop the already-running dev process per user preference.
 - Replaced native browser help for Library classification chips with an app-styled tooltip and rewrote the copy to lead with human product vocabulary, e.g. `Utility: Utility tool or app. DLsite code TOL.` Validation: `pnpm check`, `pnpm build`, and `git diff --check` passed. Did not restart or stop the already-running dev process per user preference.
+- Reclassified DLsite voice comic (`VCM`) as part of the image/comic product filter while giving it a dedicated sky-blue card/chip tone in the Library UI. Validation: `cargo fmt --all`, `cargo test -p dm-storage`, `cargo check -p dlsite-manager`, `pnpm check`, `pnpm build`, and `git diff --check` passed. Did not restart or stop the already-running dev process per user preference.
 
 ## 2026-05-10
 
