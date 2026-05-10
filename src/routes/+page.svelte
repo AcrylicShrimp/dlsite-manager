@@ -872,21 +872,27 @@
                       </div>
                     {/each}
                   </div>
-                  <div class="chip-row" aria-label="Classifications">
-                    <span class="chip type-chip">{typeInfo.label}</span>
-                    {#if ageLabel(product.ageCategory)}
-                      <span class="chip age-chip" data-age={ageTone(product.ageCategory)}>
-                        {ageLabel(product.ageCategory)}
-                      </span>
-                    {/if}
+                  <div class="labeled-row" aria-label="Classifications">
+                    <span class="credit-label">Tags</span>
+                    <div class="chip-row">
+                      <span class="chip type-chip">{typeInfo.label}</span>
+                      {#if ageLabel(product.ageCategory)}
+                        <span class="chip age-chip" data-age={ageTone(product.ageCategory)}>
+                          {ageLabel(product.ageCategory)}
+                        </span>
+                      {/if}
+                    </div>
                   </div>
                   <div class="product-footer">
-                    <div class="owner-list" aria-label="Owners">
-                      {#each product.owners as owner (owner.accountId)}
-                        <span title={owner.purchasedAt ? `${owner.label}: ${shortDate(owner.purchasedAt)}` : owner.label}>
-                          {owner.label}
-                        </span>
-                      {/each}
+                    <div class="labeled-row owner-row" aria-label="Owners">
+                      <span class="credit-label">Owned by</span>
+                      <div class="owner-list">
+                        {#each product.owners as owner (owner.accountId)}
+                          <span title={owner.purchasedAt ? `${owner.label}: ${shortDate(owner.purchasedAt)}` : owner.label}>
+                            {owner.label}
+                          </span>
+                        {/each}
+                      </div>
                     </div>
                     <div class="product-actions" aria-label="Actions">
                       <button class="small" type="button" disabled title="Download handling is a later slice">
@@ -1412,7 +1418,7 @@
     --type-color: #6b7177;
     --type-soft: rgb(107 113 119 / 18%);
     --meta-column-gap: clamp(8px, 1.15vw, 14px);
-    --credit-label-width: clamp(54px, 4.1vw, 60px);
+    --credit-label-width: clamp(60px, 4.1vw, 66px);
     --credit-gap: clamp(5px, 0.7vw, 7px);
     --meta-width: min(100%, clamp(520px, 48vw, 760px));
 
@@ -1536,7 +1542,8 @@
     min-width: 0;
   }
 
-  .credit-row {
+  .credit-row,
+  .labeled-row {
     display: grid;
     grid-template-columns: var(--credit-label-width) minmax(0, 1fr);
     gap: var(--credit-gap);
@@ -1544,6 +1551,12 @@
     color: var(--muted);
     font-size: 12px;
     line-height: 1.35;
+  }
+
+  .labeled-row {
+    align-items: center;
+    justify-self: start;
+    width: var(--meta-width);
   }
 
   .credit-label {
@@ -1563,6 +1576,7 @@
 
   .chip-row {
     display: flex;
+    align-items: center;
     flex-wrap: wrap;
     gap: 6px;
     min-width: 0;
@@ -1625,6 +1639,7 @@
 
   .owner-list {
     display: flex;
+    align-items: center;
     flex-wrap: wrap;
     gap: 5px;
     min-width: 0;
@@ -1865,7 +1880,7 @@
 
     .product-card {
       --meta-column-gap: 8px;
-      --credit-label-width: 56px;
+      --credit-label-width: 62px;
       --credit-gap: 6px;
       --meta-width: 100%;
 
@@ -1931,7 +1946,7 @@
     }
 
     .product-card {
-      --credit-label-width: 52px;
+      --credit-label-width: 60px;
       --credit-gap: 5px;
 
       grid-template-columns: 5px 72px minmax(0, 1fr);
