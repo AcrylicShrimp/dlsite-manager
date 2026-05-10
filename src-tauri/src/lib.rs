@@ -139,8 +139,18 @@ async fn start_account_sync(
                 "cachedWorkCount".to_owned(),
                 json!(report.cached_work_count),
             );
+            output.insert(
+                "missingDetailCount".to_owned(),
+                json!(report.missing_detail_count),
+            );
             output.insert("pageLimit".to_owned(), json!(report.page_limit));
             output.insert("concurrency".to_owned(), json!(report.concurrency));
+            if report.missing_detail_count > 0 {
+                context.warn(format!(
+                    "{} purchased works were missing details from content/works",
+                    report.missing_detail_count
+                ));
+            }
             context.info(format!("Synced {} works", report.cached_work_count));
 
             Ok(output)
@@ -602,7 +612,6 @@ fn account_sync_failure(error: dm_library::LibraryError) -> JobFailure {
         dm_library::LibraryError::MissingLoginName(_) => "missing_login_name",
         dm_library::LibraryError::MissingPassword(_) => "missing_password",
         dm_library::LibraryError::Cancelled => "cancelled",
-        dm_library::LibraryError::MissingWorkDetails(_) => "missing_work_details",
         dm_library::LibraryError::Json(_) => "json",
     };
 

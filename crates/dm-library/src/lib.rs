@@ -10,10 +10,7 @@ use dm_storage::{
     Account, AccountSyncCommit, AccountUpsert, AccountWork, CachedWork, ProductListPage,
     ProductListQuery, Storage, StorageError, SyncCancellation, SyncFailure,
 };
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 use uuid::Uuid;
 
 pub type Result<T> = std::result::Result<T, LibraryError>;
@@ -38,8 +35,6 @@ pub enum LibraryError {
     MissingPassword(String),
     #[error("sync was cancelled")]
     Cancelled,
-    #[error("work details were not returned for purchased ids: {0:?}")]
-    MissingWorkDetails(Vec<String>),
     #[error("json error")]
     Json(#[from] serde_json::Error),
 }
@@ -56,7 +51,6 @@ impl LibraryError {
             Self::MissingLoginName(_) => "missing_login_name",
             Self::MissingPassword(_) => "missing_password",
             Self::Cancelled => "cancelled",
-            Self::MissingWorkDetails(_) => "missing_work_details",
             Self::Json(_) => "json",
         }
     }
@@ -224,7 +218,6 @@ impl Library {
             work_count: purchased_ids.len(),
         });
         let works = source.works(&purchased_ids).await?;
-        ensure_all_purchase_details_present(&purchases, &works)?;
 
         let completed_at = now_string();
         let storage_sync = build_storage_sync(
@@ -238,15 +231,18 @@ impl Library {
 
         request.check_cancelled()?;
         request.emit(SyncProgress::Committing {
-            work_count: storage_sync.works.len(),
+            work_count: storage_sync.commit.works.len(),
         });
-        self.storage.commit_account_sync(&storage_sync).await?;
+        self.storage
+            .commit_account_sync(&storage_sync.commit)
+            .await?;
 
         let report = AccountSyncReport {
             account_id: account.id.clone(),
             sync_run_id: sync_run_id.to_owned(),
-            purchased_count: storage_sync.account_works.len(),
-            cached_work_count: storage_sync.works.len(),
+            purchased_count: storage_sync.commit.account_works.len(),
+            cached_work_count: storage_sync.commit.works.len(),
+            missing_detail_count: storage_sync.missing_detail_count,
             page_limit: count.page_limit,
             concurrency: count.concurrency,
         };
@@ -383,6 +379,7 @@ pub struct AccountSyncReport {
     pub sync_run_id: String,
     pub purchased_count: usize,
     pub cached_work_count: usize,
+    pub missing_detail_count: usize,
     pub page_limit: Option<usize>,
     pub concurrency: Option<usize>,
 }
@@ -458,32 +455,50 @@ fn build_storage_sync(
     completed_at: &str,
     purchases: Vec<Purchase>,
     works: Vec<Work>,
-) -> Result<AccountSyncCommit> {
-    let purchase_by_work = purchases
+) -> Result<AccountSyncBuild> {
+    let works_by_id = works
         .into_iter()
-        .map(|purchase| (purchase.id.as_ref().to_owned(), purchase))
+        .map(|work| (work.id.as_ref().to_owned(), work))
         .collect::<BTreeMap<_, _>>();
+    let mut storage_works = Vec::with_capacity(purchases.len());
+    let mut account_works = Vec::with_capacity(purchases.len());
+    let mut missing_detail_count = 0;
 
-    let storage_works = works
-        .into_iter()
-        .map(|work| cached_work_from_api(work, completed_at))
-        .collect::<Result<Vec<_>>>()?;
-    let account_works = purchase_by_work
-        .into_values()
-        .map(|purchase| AccountWork {
-            work_id: purchase.id.as_ref().to_owned(),
+    for purchase in purchases {
+        let work_id = purchase.id.as_ref().to_owned();
+
+        if let Some(work) = works_by_id.get(&work_id) {
+            storage_works.push(cached_work_from_api(work.clone(), completed_at)?);
+        } else {
+            missing_detail_count += 1;
+            storage_works.push(cached_work_from_purchase_placeholder(
+                &purchase,
+                completed_at,
+            )?);
+        }
+
+        account_works.push(AccountWork {
+            work_id,
             purchased_at: Some(datetime_to_string(purchase.purchased_at)),
-        })
-        .collect();
+        });
+    }
 
-    Ok(AccountSyncCommit {
-        sync_run_id: sync_run_id.to_owned(),
-        account_id: account_id.to_owned(),
-        started_at: started_at.to_owned(),
-        completed_at: completed_at.to_owned(),
-        works: storage_works,
-        account_works,
+    Ok(AccountSyncBuild {
+        commit: AccountSyncCommit {
+            sync_run_id: sync_run_id.to_owned(),
+            account_id: account_id.to_owned(),
+            started_at: started_at.to_owned(),
+            completed_at: completed_at.to_owned(),
+            works: storage_works,
+            account_works,
+        },
+        missing_detail_count,
     })
+}
+
+struct AccountSyncBuild {
+    commit: AccountSyncCommit,
+    missing_detail_count: usize,
 }
 
 fn cached_work_from_api(work: Work, synced_at: &str) -> Result<CachedWork> {
@@ -513,22 +528,34 @@ fn cached_work_from_api(work: Work, synced_at: &str) -> Result<CachedWork> {
     })
 }
 
-fn ensure_all_purchase_details_present(purchases: &[Purchase], works: &[Work]) -> Result<()> {
-    let returned_ids = works
-        .iter()
-        .map(|work| work.id.as_ref())
-        .collect::<BTreeSet<_>>();
-    let missing = purchases
-        .iter()
-        .filter(|purchase| !returned_ids.contains(purchase.id.as_ref()))
-        .map(|purchase| purchase.id.as_ref().to_owned())
-        .collect::<Vec<_>>();
+fn cached_work_from_purchase_placeholder(
+    purchase: &Purchase,
+    synced_at: &str,
+) -> Result<CachedWork> {
+    let work_id = purchase.id.as_ref().to_owned();
+    let raw_json = serde_json::to_string(&serde_json::json!({
+        "workno": work_id,
+        "source": "content/sales",
+        "detail_status": "missing_from_content_works",
+        "sales_date": datetime_to_string(purchase.purchased_at),
+    }))?;
 
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(LibraryError::MissingWorkDetails(missing))
-    }
+    Ok(CachedWork {
+        work_id: work_id.clone(),
+        title: work_id.clone(),
+        title_json: serde_json::to_string(&serde_json::json!({ "en_US": work_id }))?,
+        maker_id: None,
+        maker_name: None,
+        maker_json: None,
+        work_type: None,
+        age_category: None,
+        thumbnail_url: None,
+        registered_at: None,
+        published_at: None,
+        updated_at: None,
+        raw_json,
+        last_detail_sync_at: synced_at.to_owned(),
+    })
 }
 
 fn preferred_localized_text(text: &LocalizedText) -> Option<&String> {
@@ -841,28 +868,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_work_details_fail_before_stale_marking() -> Result<()> {
+    async fn missing_work_details_are_cached_as_placeholders() -> Result<()> {
         let library = migrated_library().await?;
         library.save_account(save_account_request(true)).await?;
         let mut source = sync_source();
         source.works.pop();
 
-        assert!(matches!(
-            library
-                .sync_account_with_source(AccountSyncRequest::new("account-a"), &source)
-                .await,
-            Err(LibraryError::MissingWorkDetails(ids)) if ids == vec!["RJ000002"]
-        ));
+        let report = library
+            .sync_account_with_source(AccountSyncRequest::new("account-a"), &source)
+            .await?;
 
         let page = library.list_products(&ProductListQuery::default()).await?;
         let sync_runs = library.storage().sync_runs_for_account("account-a").await?;
+        let placeholder = page
+            .products
+            .iter()
+            .find(|product| product.work_id == "RJ000002")
+            .expect("placeholder product");
 
-        assert_eq!(page.total_count, 0);
+        assert_eq!(report.purchased_count, 2);
+        assert_eq!(report.cached_work_count, 2);
+        assert_eq!(report.missing_detail_count, 1);
+        assert_eq!(page.total_count, 2);
+        assert_eq!(placeholder.title, "RJ000002");
+        assert_eq!(placeholder.maker_name, None);
         assert_eq!(sync_runs.len(), 1);
-        assert_eq!(
-            sync_runs[0].error_code,
-            Some("missing_work_details".to_owned())
-        );
+        assert_eq!(sync_runs[0].status, SyncRunStatus::Completed);
 
         Ok(())
     }
