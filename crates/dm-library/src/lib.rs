@@ -519,7 +519,7 @@ fn cached_work_from_api(work: Work, synced_at: &str) -> Result<CachedWork> {
         maker_json: Some(serde_json::to_string(&work.maker.name)?),
         work_type: Some(work.work_kind.code.clone()),
         age_category,
-        thumbnail_url: Some(work.thumbnail.small_square.to_string()),
+        thumbnail_url: Some(work.thumbnail.full.to_string()),
         registered_at: work.registered_at.map(datetime_to_string),
         published_at: work.published_at.map(datetime_to_string),
         updated_at: work.updated_at.map(datetime_to_string),
@@ -787,6 +787,10 @@ mod tests {
         assert_eq!(report.page_limit, Some(50));
         assert_eq!(page.total_count, 2);
         assert_eq!(page.products[0].work_id, "RJ000001");
+        assert_eq!(
+            page.products[0].thumbnail_url,
+            Some("https://img.example.test/RJ000001/full.jpg".to_owned())
+        );
         assert_eq!(page.products[0].owners[0].account_id, "account-a");
         assert_eq!(sync_runs.len(), 1);
         assert_eq!(sync_runs[0].status, SyncRunStatus::Completed);
