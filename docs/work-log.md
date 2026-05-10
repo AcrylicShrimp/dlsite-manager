@@ -19,6 +19,7 @@
 - Replaced the inline page status line with a frontend toast stack. Success/info/error feedback now appears as fixed bottom-right popup notifications with auto-dismiss, manual dismiss, and alert semantics for errors; sync-all sequencing no longer depends on a rendered error string. Validation: `pnpm check`, `pnpm build`, `git diff --check`, and `pnpm tauri dev` smoke passed. The first smoke attempt found a stale repo-local dev process on port 1420; stopping it and rerunning succeeded.
 - Replaced the toast close button text with an icon-only SVG close control while preserving the accessible dismiss label. Validation: `pnpm check` and `pnpm build` passed.
 - Added explicit labels for Library product-card tag and ownership rows. Type/age chips now live under a `Tags` field, account-owner chips live under an `Owned by` field, and these labeled chip rows are vertically centered with a slightly wider shared label column for responsive layouts. Validation: `pnpm check`, `pnpm build`, and `git diff --check` passed.
+- Constrained Library scrolling to the product list area. The app shell now uses a fixed viewport grid, the Library panel is a flex column, toolbar/count header stay fixed in the panel, and the product table owns vertical scrolling instead of the whole page. Validation: `pnpm check`, `pnpm build`, and `git diff --check` passed. Did not restart or stop the already-running dev process per user preference.
 
 ## 2026-05-09
 

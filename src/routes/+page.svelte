@@ -1141,6 +1141,12 @@
     box-sizing: border-box;
   }
 
+  :global(html),
+  :global(body) {
+    height: 100%;
+    overflow: hidden;
+  }
+
   :global(body) {
     --accent: #95c29b;
     --accent-strong: #6fa579;
@@ -1178,7 +1184,9 @@
   .app-shell {
     display: grid;
     grid-template-columns: 220px minmax(0, 1fr);
+    height: 100vh;
     min-height: 100vh;
+    overflow: hidden;
   }
 
   .sidebar {
@@ -1189,6 +1197,7 @@
     border-right: 1px solid var(--border);
     background: #111417;
     color: var(--text);
+    overflow: auto;
   }
 
   .brand {
@@ -1223,7 +1232,11 @@
   }
 
   .workspace {
+    display: flex;
+    flex-direction: column;
     min-width: 0;
+    min-height: 0;
+    overflow: hidden;
     padding: 28px;
   }
 
@@ -1237,6 +1250,7 @@
   }
 
   .workspace-header {
+    flex: 0 0 auto;
     justify-content: space-between;
     gap: 16px;
     margin-bottom: 14px;
@@ -1360,7 +1374,11 @@
   }
 
   .product-area {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
     min-width: 0;
+    min-height: 0;
     overflow: hidden;
   }
 
@@ -1385,6 +1403,8 @@
     grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
     gap: 18px;
     align-items: start;
+    min-height: 0;
+    overflow: auto;
   }
 
   .account-editor {
@@ -1394,6 +1414,7 @@
 
   .toolbar {
     display: grid;
+    flex: 0 0 auto;
     grid-template-columns: minmax(220px, 1fr) 170px 130px 160px auto auto auto;
     gap: 10px;
     padding: 14px;
@@ -1403,6 +1424,7 @@
 
   .list-header {
     display: flex;
+    flex: 0 0 auto;
     justify-content: flex-end;
     padding: 9px 14px;
     border-bottom: 1px solid var(--border);
@@ -1412,6 +1434,9 @@
 
   .product-table {
     display: grid;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
   }
 
   .product-card {
@@ -1911,6 +1936,7 @@
   @media (max-width: 720px) {
     .app-shell {
       grid-template-columns: 1fr;
+      grid-template-rows: auto minmax(0, 1fr);
     }
 
     .sidebar {
