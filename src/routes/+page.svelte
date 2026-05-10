@@ -1,6 +1,8 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import { downloadDir } from "@tauri-apps/api/path";
+  import { open } from "@tauri-apps/plugin-dialog";
   import { onDestroy, onMount } from "svelte";
 
   type AppSettings = {
@@ -197,8 +199,9 @@
 
     try {
       const settings = await invoke<AppSettings>("get_settings");
+      const defaultDownloadRoot = await systemDownloadRoot();
       libraryRoot = settings.libraryRoot ?? "";
-      downloadRoot = settings.downloadRoot ?? "";
+      downloadRoot = settings.downloadRoot ?? defaultDownloadRoot;
     } catch (err) {
       notifyError(errorMessage(err));
     } finally {
@@ -217,13 +220,56 @@
           downloadRoot: valueOrNull(downloadRoot),
         },
       });
+      const defaultDownloadRoot = await systemDownloadRoot();
       libraryRoot = settings.libraryRoot ?? "";
-      downloadRoot = settings.downloadRoot ?? "";
+      downloadRoot = settings.downloadRoot ?? defaultDownloadRoot;
       notifySuccess("Settings saved");
     } catch (err) {
       notifyError(errorMessage(err));
     } finally {
       settingsSaving = false;
+    }
+  }
+
+  async function chooseSettingsDirectory(kind: "library" | "download") {
+    try {
+      const fallbackRoot = await systemDownloadRoot();
+      const currentRoot = kind === "library" ? libraryRoot : downloadRoot;
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        canCreateDirectories: true,
+        defaultPath: currentRoot.trim() || fallbackRoot || undefined,
+        title: kind === "library" ? "Choose library folder" : "Choose download staging folder",
+      });
+
+      if (!selected) {
+        return;
+      }
+
+      if (kind === "library") {
+        libraryRoot = selected;
+      } else {
+        downloadRoot = selected;
+      }
+    } catch (err) {
+      notifyError(errorMessage(err));
+    }
+  }
+
+  async function useDefaultDownloadRoot() {
+    const root = await systemDownloadRoot();
+
+    if (root) {
+      downloadRoot = root;
+    }
+  }
+
+  async function systemDownloadRoot() {
+    try {
+      return await downloadDir();
+    } catch {
+      return "";
     }
   }
 
@@ -1258,7 +1304,10 @@
     {:else}
       <form class="settings-panel" onsubmit={saveSettings}>
         <div class="panel-title">
-          <h2>Paths</h2>
+          <div>
+            <h2>Storage paths</h2>
+            <p>Library is the final managed collection. Download staging keeps resumable partial files and fetched archives.</p>
+          </div>
           <button
             class="secondary small"
             type="button"
@@ -1269,27 +1318,63 @@
           </button>
         </div>
 
-        <label>
-          <span>Library root</span>
-          <input
-            type="text"
-            autocomplete="off"
-            spellcheck="false"
-            bind:value={libraryRoot}
-            disabled={settingsLoading || settingsSaving}
-          />
-        </label>
+        <div class="settings-field">
+          <label for="library-root">
+            <span>Library folder</span>
+            <small>Final location for managed works after download and unpacking.</small>
+          </label>
+          <div class="path-control">
+            <input
+              id="library-root"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              bind:value={libraryRoot}
+              disabled={settingsLoading || settingsSaving}
+            />
+            <button
+              class="secondary small"
+              type="button"
+              onclick={() => chooseSettingsDirectory("library")}
+              disabled={settingsLoading || settingsSaving}
+            >
+              Browse
+            </button>
+          </div>
+        </div>
 
-        <label>
-          <span>Download root</span>
-          <input
-            type="text"
-            autocomplete="off"
-            spellcheck="false"
-            bind:value={downloadRoot}
-            disabled={settingsLoading || settingsSaving}
-          />
-        </label>
+        <div class="settings-field">
+          <label for="download-root">
+            <span>Download staging folder</span>
+            <small>Working folder for partial downloads, retries, and fetched archives. Defaults to your system Downloads folder.</small>
+          </label>
+          <div class="path-control">
+            <input
+              id="download-root"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              bind:value={downloadRoot}
+              disabled={settingsLoading || settingsSaving}
+            />
+            <button
+              class="secondary small"
+              type="button"
+              onclick={() => chooseSettingsDirectory("download")}
+              disabled={settingsLoading || settingsSaving}
+            >
+              Browse
+            </button>
+            <button
+              class="secondary small"
+              type="button"
+              onclick={useDefaultDownloadRoot}
+              disabled={settingsLoading || settingsSaving}
+            >
+              Use default
+            </button>
+          </div>
+        </div>
 
         <div class="actions">
           <span></span>
@@ -1995,6 +2080,17 @@
     margin-bottom: 14px;
   }
 
+  .panel-title > div {
+    min-width: 0;
+  }
+
+  .panel-title p {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
   .account-list {
     display: grid;
     gap: 8px;
@@ -2233,6 +2329,24 @@
     font-weight: 650;
   }
 
+  label small {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .settings-field {
+    display: grid;
+    gap: 8px;
+  }
+
+  .path-control {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 8px;
+    align-items: center;
+  }
+
   .check-row {
     display: flex;
     align-items: center;
@@ -2428,6 +2542,10 @@
       grid-template-columns: 1fr;
     }
 
+    .path-control {
+      grid-template-columns: 1fr;
+    }
+
     .account-summary-strip {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -2486,6 +2604,8 @@
     .account-enabled-pill,
     .account-actions button,
     .account-actions button.secondary,
+    .path-control button,
+    .path-control button.secondary,
     .work-id {
       width: auto;
     }
