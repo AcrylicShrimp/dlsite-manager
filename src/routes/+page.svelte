@@ -294,7 +294,6 @@
   let accountLabel = $state("");
   let accountLoginName = $state("");
   let accountPassword = $state("");
-  let accountEnabled = $state(true);
 
   let products = $state<Product[]>([]);
   let totalProducts = $state(0);
@@ -464,7 +463,6 @@
           label: accountLabel,
           loginName: valueOrNull(accountLoginName),
           password: valueOrNull(accountPassword),
-          enabled: accountEnabled,
         },
       });
       notifySuccess(editingAccountId ? "Account updated" : "Account added");
@@ -498,7 +496,6 @@
     accountLabel = account.label;
     accountLoginName = account.loginName ?? "";
     accountPassword = "";
-    accountEnabled = account.enabled;
   }
 
   function resetAccountForm() {
@@ -506,7 +503,6 @@
     accountLabel = "";
     accountLoginName = "";
     accountPassword = "";
-    accountEnabled = true;
   }
 
   async function loadProducts() {
@@ -1849,12 +1845,6 @@
                 />
               </label>
             </div>
-            <div class="account-option-grid">
-              <label class="check-row">
-                <input type="checkbox" bind:checked={accountEnabled} disabled={accountSaving} />
-                <span>Enabled</span>
-              </label>
-            </div>
             <div class="actions account-form-actions">
               <span class="form-context">
                 {editingAccountId ? "Update source" : "Create source"}
@@ -2615,12 +2605,6 @@
     gap: 14px;
   }
 
-  .account-option-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-  }
-
   .toolbar {
     display: grid;
     flex: 0 0 auto;
@@ -3369,26 +3353,6 @@
     align-items: center;
   }
 
-  .check-row {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-  }
-
-  .account-option-grid .check-row {
-    min-height: 40px;
-    padding: 0 10px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--field);
-  }
-
-  .check-row input {
-    width: 16px;
-    height: 16px;
-    accent-color: var(--accent-strong);
-  }
-
   input,
   select {
     width: 100%;
@@ -3573,8 +3537,7 @@
     }
 
     .account-row,
-    .account-meta-grid,
-    .account-option-grid {
+    .account-meta-grid {
       grid-template-columns: 1fr;
     }
 

@@ -111,7 +111,7 @@ async fn save_account(
     state: State<'_, AppState>,
     request: SaveAccountCommandRequest,
 ) -> Result<AccountDto, String> {
-    let request = match request.into_library_request() {
+    let mut request = match request.into_library_request() {
         Ok(request) => request,
         Err(error) => {
             record_audit(
@@ -123,11 +123,33 @@ async fn save_account(
             return Err(error);
         }
     };
+    if let Some(account_id) = request.id.as_deref() {
+        let accounts = match state.library.accounts().await {
+            Ok(accounts) => accounts,
+            Err(error) => {
+                let message = command_error(error);
+                record_audit(
+                    &state.audit,
+                    AuditEvent::failed("account.save", "Failed to load existing account")
+                        .with_error(Some("library"), message.clone())
+                        .with_details(json!({ "accountId": account_id })),
+                )
+                .await;
+                return Err(message);
+            }
+        };
+
+        if let Some(account) = accounts
+            .into_iter()
+            .find(|account| account.id == account_id)
+        {
+            request.enabled = account.enabled;
+        }
+    }
     let details = json!({
         "accountId": request.id.clone(),
         "hasLoginName": request.login_name.is_some(),
         "hasPassword": request.password.is_some(),
-        "rememberPassword": true,
         "enabled": request.enabled,
     });
     let result = state.library.save_account(request).await;
@@ -898,7 +920,6 @@ struct SaveAccountCommandRequest {
     label: String,
     login_name: Option<String>,
     password: Option<String>,
-    enabled: bool,
 }
 
 impl SaveAccountCommandRequest {
@@ -909,7 +930,7 @@ impl SaveAccountCommandRequest {
             login_name: normalize_optional_string(self.login_name)?,
             password: normalize_secret(self.password)?,
             remember_password: true,
-            enabled: self.enabled,
+            enabled: true,
         })
     }
 }
