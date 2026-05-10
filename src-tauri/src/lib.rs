@@ -1401,6 +1401,10 @@ impl WorkDownloadProgressSink for JobWorkDownloadProgressSink {
                 self.context.info("Resolving download files");
             }
             WorkDownloadProgress::Download(progress) => {
+                if progress.phase == dm_download::DownloadPhase::ProbingMetadata {
+                    return;
+                }
+
                 let Some(phase_changed) = self
                     .throttle
                     .lock()
@@ -1415,9 +1419,7 @@ impl WorkDownloadProgressSink for JobWorkDownloadProgressSink {
                         dm_download::DownloadPhase::ResolvingPlan => {
                             self.context.set_phase("resolvingDownload")
                         }
-                        dm_download::DownloadPhase::ProbingMetadata => {
-                            self.context.set_phase("probingDownload")
-                        }
+                        dm_download::DownloadPhase::ProbingMetadata => {}
                         dm_download::DownloadPhase::Downloading => {
                             self.context.set_phase("downloading")
                         }

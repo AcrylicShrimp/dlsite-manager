@@ -1070,7 +1070,7 @@
       case "resolvingDownload":
         return "Resolving download";
       case "probingDownload":
-        return "Checking file";
+        return job.kind === "workDownload" ? downloadJobProgressLabel(job) : "Resolving download";
       case "downloading":
         return downloadJobProgressLabel(job);
       case "unpacking":
