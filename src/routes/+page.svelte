@@ -294,7 +294,6 @@
   let accountLabel = $state("");
   let accountLoginName = $state("");
   let accountPassword = $state("");
-  let accountRememberPassword = $state(true);
   let accountEnabled = $state(true);
 
   let products = $state<Product[]>([]);
@@ -465,7 +464,6 @@
           label: accountLabel,
           loginName: valueOrNull(accountLoginName),
           password: valueOrNull(accountPassword),
-          rememberPassword: accountRememberPassword,
           enabled: accountEnabled,
         },
       });
@@ -500,7 +498,6 @@
     accountLabel = account.label;
     accountLoginName = account.loginName ?? "";
     accountPassword = "";
-    accountRememberPassword = account.hasCredential;
     accountEnabled = account.enabled;
   }
 
@@ -509,7 +506,6 @@
     accountLabel = "";
     accountLoginName = "";
     accountPassword = "";
-    accountRememberPassword = true;
     accountEnabled = true;
   }
 
@@ -1854,10 +1850,6 @@
               </label>
             </div>
             <div class="account-option-grid">
-              <label class="check-row">
-                <input type="checkbox" bind:checked={accountRememberPassword} disabled={accountSaving} />
-                <span>Remember password</span>
-              </label>
               <label class="check-row">
                 <input type="checkbox" bind:checked={accountEnabled} disabled={accountSaving} />
                 <span>Enabled</span>

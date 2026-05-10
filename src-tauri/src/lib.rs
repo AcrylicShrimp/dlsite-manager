@@ -127,7 +127,7 @@ async fn save_account(
         "accountId": request.id.clone(),
         "hasLoginName": request.login_name.is_some(),
         "hasPassword": request.password.is_some(),
-        "rememberPassword": request.remember_password,
+        "rememberPassword": true,
         "enabled": request.enabled,
     });
     let result = state.library.save_account(request).await;
@@ -898,7 +898,6 @@ struct SaveAccountCommandRequest {
     label: String,
     login_name: Option<String>,
     password: Option<String>,
-    remember_password: bool,
     enabled: bool,
 }
 
@@ -909,7 +908,7 @@ impl SaveAccountCommandRequest {
             label: normalize_label(self.label)?,
             login_name: normalize_optional_string(self.login_name)?,
             password: normalize_secret(self.password)?,
-            remember_password: self.remember_password,
+            remember_password: true,
             enabled: self.enabled,
         })
     }
