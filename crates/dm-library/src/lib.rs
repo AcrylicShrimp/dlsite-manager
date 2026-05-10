@@ -47,6 +47,8 @@ pub enum LibraryError {
     DownloadAccountNotFound(String),
     #[error("download final path already exists: {0}")]
     DownloadTargetExists(PathBuf),
+    #[error("download path is outside configured roots: {0}")]
+    DownloadPathOutsideRoots(PathBuf),
     #[error("I/O error")]
     Io(#[from] std::io::Error),
     #[error("json error")]
@@ -68,6 +70,7 @@ impl LibraryError {
             Self::Download(_) => "download",
             Self::DownloadAccountNotFound(_) => "download_account_not_found",
             Self::DownloadTargetExists(_) => "download_target_exists",
+            Self::DownloadPathOutsideRoots(_) => "download_path_outside_roots",
             Self::Io(_) => "io",
             Self::Json(_) => "json",
         }
@@ -209,6 +212,19 @@ impl Library {
         }
 
         result
+    }
+
+    pub async fn remove_work_download(
+        &self,
+        request: WorkDownloadRemovalRequest<'_>,
+    ) -> Result<WorkDownloadState> {
+        let state = self.storage.work_download_state(request.work_id).await?;
+        let allowed_roots = [request.library_root, request.download_root];
+
+        remove_download_path_from_state(state.local_path.as_deref(), &allowed_roots).await?;
+        remove_download_path_from_state(state.staging_path.as_deref(), &allowed_roots).await?;
+        self.storage.delete_work_download(request.work_id).await?;
+        Ok(self.storage.work_download_state(request.work_id).await?)
     }
 
     pub async fn sync_account_with_source<S>(
@@ -391,6 +407,10 @@ impl Library {
             })
             .await?;
 
+        if request.replace_existing {
+            remove_existing_download_path(staging_dir, &[request.download_root]).await?;
+        }
+
         let download_cancellation = dm_download::CancellationToken::new();
         let job = DownloadJobRequest {
             work_id: work_id.clone(),
@@ -409,6 +429,9 @@ impl Library {
 
         request.check_cancelled()?;
         request.emit(WorkDownloadProgress::Finalizing);
+        if request.replace_existing {
+            remove_existing_download_path(final_dir, &[request.library_root]).await?;
+        }
         move_downloaded_work_dir(staging_dir, final_dir).await?;
 
         let completed_at = now_string();
@@ -584,6 +607,7 @@ pub struct WorkDownloadRequest<'a> {
     pub library_root: &'a Path,
     pub download_root: &'a Path,
     pub unpack_policy: UnpackPolicy,
+    pub replace_existing: bool,
     pub cancellation_token: Option<&'a CancellationToken>,
     pub progress_sink: Option<&'a dyn WorkDownloadProgressSink>,
 }
@@ -597,6 +621,7 @@ impl<'a> WorkDownloadRequest<'a> {
             library_root,
             download_root,
             unpack_policy: UnpackPolicy::UnpackWhenRecognized,
+            replace_existing: false,
             cancellation_token: None,
             progress_sink: None,
         }
@@ -618,6 +643,22 @@ impl<'a> WorkDownloadRequest<'a> {
     fn emit(&self, progress: WorkDownloadProgress) {
         if let Some(sink) = self.progress_sink {
             sink.emit(progress);
+        }
+    }
+}
+
+pub struct WorkDownloadRemovalRequest<'a> {
+    pub work_id: &'a str,
+    pub library_root: &'a Path,
+    pub download_root: &'a Path,
+}
+
+impl<'a> WorkDownloadRemovalRequest<'a> {
+    pub fn new(work_id: &'a str, library_root: &'a Path, download_root: &'a Path) -> Self {
+        Self {
+            work_id,
+            library_root,
+            download_root,
         }
     }
 }
@@ -890,6 +931,48 @@ fn unpack_policy_storage_value(policy: UnpackPolicy) -> &'static str {
         UnpackPolicy::KeepArchives => "keep_archives",
         UnpackPolicy::UnpackWhenRecognized => "unpack_when_recognized",
     }
+}
+
+async fn remove_download_path_from_state(
+    path: Option<&str>,
+    allowed_roots: &[&Path],
+) -> Result<()> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+
+    remove_existing_download_path(Path::new(path), allowed_roots).await
+}
+
+async fn remove_existing_download_path(path: &Path, allowed_roots: &[&Path]) -> Result<()> {
+    if !path.try_exists()? {
+        return Ok(());
+    }
+
+    let canonical_path = path.canonicalize()?;
+    let canonical_roots = allowed_roots
+        .iter()
+        .filter_map(|root| root.canonicalize().ok())
+        .collect::<Vec<_>>();
+
+    if !path_is_download_child_of_any_root(&canonical_path, &canonical_roots) {
+        return Err(LibraryError::DownloadPathOutsideRoots(canonical_path));
+    }
+
+    let metadata = tokio::fs::metadata(&canonical_path).await?;
+    if metadata.is_dir() {
+        tokio::fs::remove_dir_all(&canonical_path).await?;
+    } else {
+        tokio::fs::remove_file(&canonical_path).await?;
+    }
+
+    Ok(())
+}
+
+fn path_is_download_child_of_any_root(path: &Path, roots: &[PathBuf]) -> bool {
+    roots
+        .iter()
+        .any(|root| path != root.as_path() && path.starts_with(root))
 }
 
 async fn move_downloaded_work_dir(source: &Path, destination: &Path) -> Result<()> {
@@ -1322,6 +1405,93 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn removes_downloaded_work_and_clears_state() -> Result<()> {
+        let library = migrated_library().await?;
+        let root = test_dir("remove-downloaded-work");
+        let library_root = root.join("library");
+        let download_root = root.join("downloads");
+        library.save_account(save_account_request(true)).await?;
+        library
+            .sync_account_with_source(AccountSyncRequest::new("account-a"), &sync_source())
+            .await?;
+        library
+            .download_work_with_source(
+                WorkDownloadRequest::new("RJ000001", &library_root, &download_root),
+                &FakeDownloadSource,
+            )
+            .await?;
+
+        let state = library
+            .remove_work_download(WorkDownloadRemovalRequest::new(
+                "RJ000001",
+                &library_root,
+                &download_root,
+            ))
+            .await?;
+
+        assert_eq!(state.status, WorkDownloadStatus::NotDownloaded);
+        assert!(!library_root.join("RJ000001").exists());
+        assert!(!download_root.join("RJ000001").exists());
+
+        std::fs::remove_dir_all(root).unwrap();
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn redownload_replaces_existing_local_work_after_staging() -> Result<()> {
+        let library = migrated_library().await?;
+        let root = test_dir("redownload-replaces-work");
+        let library_root = root.join("library");
+        let download_root = root.join("downloads");
+        let local_file = library_root.join("RJ000001/RJ000001.txt");
+        library.save_account(save_account_request(true)).await?;
+        library
+            .sync_account_with_source(AccountSyncRequest::new("account-a"), &sync_source())
+            .await?;
+        library
+            .download_work_with_source(
+                WorkDownloadRequest::new("RJ000001", &library_root, &download_root),
+                &FakeDownloadSource,
+            )
+            .await?;
+        tokio::fs::write(&local_file, b"user edit").await?;
+
+        let report = library
+            .download_work_with_source(
+                WorkDownloadRequest {
+                    replace_existing: true,
+                    ..WorkDownloadRequest::new("RJ000001", &library_root, &download_root)
+                },
+                &FakeDownloadSource,
+            )
+            .await?;
+
+        assert_eq!(report.download_state.status, WorkDownloadStatus::Downloaded);
+        assert_eq!(tokio::fs::read(&local_file).await?, b"downloaded");
+        assert!(!download_root.join("RJ000001").exists());
+
+        std::fs::remove_dir_all(root).unwrap();
+
+        Ok(())
+    }
+
+    #[test]
+    fn download_path_root_check_rejects_root_and_sibling_prefixes() {
+        let root = PathBuf::from("/tmp/dlsite/library");
+
+        assert!(path_is_download_child_of_any_root(
+            &root.join("RJ000001"),
+            &[root.clone()]
+        ));
+        assert!(!path_is_download_child_of_any_root(&root, &[root.clone()]));
+        assert!(!path_is_download_child_of_any_root(
+            &PathBuf::from("/tmp/dlsite/library-other/RJ000001"),
+            &[root]
+        ));
     }
 
     #[tokio::test]

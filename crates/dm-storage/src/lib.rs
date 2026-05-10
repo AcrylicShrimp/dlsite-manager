@@ -558,6 +558,13 @@ impl Storage {
         transaction.commit().await
     }
 
+    pub async fn delete_work_download(&self, work_id: &str) -> Result<()> {
+        let mut transaction = self.begin_write().await?;
+
+        transaction.delete_work_download(work_id).await?;
+        transaction.commit().await
+    }
+
     pub async fn list_products(&self, query: &ProductListQuery) -> Result<ProductListPage> {
         let total_count = self.count_products(query).await?;
         let products = self.fetch_product_page(query).await?;
@@ -944,6 +951,21 @@ impl WriteTransaction<'_> {
         .bind(&download.updated_at)
         .execute(&mut **transaction)
         .await?;
+
+        Ok(())
+    }
+
+    pub async fn delete_work_download(&mut self, work_id: &str) -> Result<()> {
+        self.ensure_work_exists(work_id).await?;
+        let transaction = self
+            .transaction
+            .as_mut()
+            .ok_or(StorageError::TransactionFinished)?;
+
+        sqlx::query("DELETE FROM work_downloads WHERE work_id = ?1")
+            .bind(work_id)
+            .execute(&mut **transaction)
+            .await?;
 
         Ok(())
     }
@@ -2619,6 +2641,15 @@ mod tests {
         assert_eq!(state.local_path, Some("/library/RJ000001".to_owned()));
         assert_eq!(state.bytes_received, 42);
         assert_eq!(state.bytes_total, Some(42));
+
+        storage.delete_work_download("RJ000001").await?;
+        let removed_page = storage.list_products(&ProductListQuery::default()).await?;
+
+        assert_eq!(
+            removed_page.products[0].download.status,
+            WorkDownloadStatus::NotDownloaded
+        );
+        assert_eq!(removed_page.products[0].download.local_path, None);
 
         Ok(())
     }

@@ -3,7 +3,7 @@ use dm_jobs::{JobContext, JobFailure, JobId, JobLogPage, JobManager, JobMetadata
 use dm_library::{
     AccountSyncRequest, DlsiteSyncSource, DlsiteWorkDownloadSource, Library, SaveAccountRequest,
     SyncProgress, SyncProgressSink, WorkDownloadProgress, WorkDownloadProgressSink,
-    WorkDownloadRequest,
+    WorkDownloadRemovalRequest, WorkDownloadRequest,
 };
 use dm_storage::{
     Account, AppSettings, ProductAgeCategory, ProductCreditGroup, ProductListItem, ProductListPage,
@@ -181,16 +181,10 @@ async fn start_work_download(
     let account_id = normalize_optional_id(request.account_id)?;
     let password = normalize_secret(request.password)?;
     let settings = state.storage.app_settings().await.map_err(command_error)?;
-    let library_root = settings
-        .library_root
-        .map(PathBuf::from)
-        .ok_or_else(|| "Library folder is required before downloading".to_owned())?;
-    let download_root = settings
-        .download_root
-        .map(PathBuf::from)
-        .or_else(|| app.path().download_dir().ok())
-        .ok_or_else(|| "Download staging folder is required before downloading".to_owned())?;
+    let library_root = required_library_root(&settings)?;
+    let download_root = effective_download_root(&app, &settings)?;
     let unpack_policy = request.unpack_policy.unwrap_or_default().into();
+    let replace_existing = request.replace_existing.unwrap_or(false);
     let library = state.library.clone();
     let mut metadata = JobMetadata::new();
 
@@ -219,6 +213,7 @@ async fn start_work_download(
                         library_root: &library_root,
                         download_root: &download_root,
                         unpack_policy,
+                        replace_existing,
                         cancellation_token: Some(context.cancellation_token()),
                         progress_sink: Some(&progress_sink),
                     },
@@ -287,6 +282,29 @@ async fn open_work_download(
             canonical_path.to_string_lossy().into_owned(),
             None::<String>,
         )
+        .map_err(command_error)
+}
+
+#[tauri::command]
+async fn delete_work_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: DeleteWorkDownloadRequest,
+) -> Result<WorkDownloadStateDto, String> {
+    let work_id = normalize_required_id(request.work_id)?;
+    let settings = state.storage.app_settings().await.map_err(command_error)?;
+    let library_root = required_library_root(&settings)?;
+    let download_root = effective_download_root(&app, &settings)?;
+
+    state
+        .library
+        .remove_work_download(WorkDownloadRemovalRequest::new(
+            &work_id,
+            &library_root,
+            &download_root,
+        ))
+        .await
+        .map(WorkDownloadStateDto::from)
         .map_err(command_error)
 }
 
@@ -684,11 +702,18 @@ struct StartWorkDownloadRequest {
     account_id: Option<String>,
     password: Option<String>,
     unpack_policy: Option<UnpackPolicyDto>,
+    replace_existing: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct OpenWorkDownloadRequest {
+    work_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteWorkDownloadRequest {
     work_id: String,
 }
 
@@ -949,6 +974,23 @@ fn normalize_path_setting(value: Option<String>) -> Result<Option<String>, Strin
     Ok(Some(value))
 }
 
+fn required_library_root(settings: &AppSettings) -> Result<PathBuf, String> {
+    settings
+        .library_root
+        .as_ref()
+        .map(PathBuf::from)
+        .ok_or_else(|| "Library folder is required".to_owned())
+}
+
+fn effective_download_root(app: &AppHandle, settings: &AppSettings) -> Result<PathBuf, String> {
+    settings
+        .download_root
+        .as_ref()
+        .map(PathBuf::from)
+        .or_else(|| app.path().download_dir().ok())
+        .ok_or_else(|| "Download staging folder is required".to_owned())
+}
+
 fn canonicalize_existing_path(path: impl AsRef<Path>) -> Result<PathBuf, String> {
     let path = path.as_ref();
 
@@ -1065,6 +1107,7 @@ fn account_sync_failure(error: dm_library::LibraryError) -> JobFailure {
         dm_library::LibraryError::Download(_) => "download",
         dm_library::LibraryError::DownloadAccountNotFound(_) => "download_account_not_found",
         dm_library::LibraryError::DownloadTargetExists(_) => "download_target_exists",
+        dm_library::LibraryError::DownloadPathOutsideRoots(_) => "download_path_outside_roots",
         dm_library::LibraryError::Io(_) => "io",
         dm_library::LibraryError::Json(_) => "json",
     };
@@ -1095,6 +1138,7 @@ fn work_download_failure(error: dm_library::LibraryError) -> JobFailure {
         dm_library::LibraryError::Download(_) => "download",
         dm_library::LibraryError::DownloadAccountNotFound(_) => "download_account_not_found",
         dm_library::LibraryError::DownloadTargetExists(_) => "download_target_exists",
+        dm_library::LibraryError::DownloadPathOutsideRoots(_) => "download_path_outside_roots",
         dm_library::LibraryError::Io(_) => "io",
         dm_library::LibraryError::Json(_) => "json",
     };
@@ -1244,6 +1288,7 @@ pub fn run() {
             start_account_sync,
             start_work_download,
             open_work_download,
+            delete_work_download,
             list_jobs,
             get_job,
             cancel_job,

@@ -144,6 +144,18 @@
     workId: string;
   };
 
+  type ProductActionMenu = {
+    workId: string;
+    left: number;
+    top: number;
+  };
+
+  type StartWorkDownloadOptions = {
+    unpackPolicy?: "keepArchives" | "unpackWhenRecognized";
+    replaceExisting?: boolean;
+    queuedMessage?: string;
+  };
+
   type ChipTooltip = {
     text: string;
     left: number;
@@ -284,6 +296,7 @@
   let jobMessages = $state<Record<string, string>>({});
   let toasts = $state<Toast[]>([]);
   let productImagePreview = $state<ProductImagePreview | null>(null);
+  let productActionMenu = $state<ProductActionMenu | null>(null);
   let chipTooltip = $state<ChipTooltip | null>(null);
 
   let toastSequence = 0;
@@ -574,9 +587,21 @@
   }
 
   function handleWindowKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape" && productImagePreview) {
+    if (event.key !== "Escape") {
+      return;
+    }
+
+    if (productActionMenu) {
+      closeProductActionMenu();
+    }
+
+    if (productImagePreview) {
       closeProductImage();
     }
+  }
+
+  function handleWindowClick() {
+    closeProductActionMenu();
   }
 
   async function syncAccount(account: Account): Promise<boolean> {
@@ -624,7 +649,7 @@
     await cancelJob(job);
   }
 
-  async function startWorkDownload(product: Product) {
+  async function startWorkDownload(product: Product, options: StartWorkDownloadOptions = {}) {
     if (activeWorkDownloadJob(product.workId)) {
       return;
     }
@@ -635,13 +660,15 @@
           workId: product.workId,
           accountId: selectedAccountId || null,
           password: null,
-          unpackPolicy: "unpackWhenRecognized",
+          unpackPolicy: options.unpackPolicy ?? "unpackWhenRecognized",
+          replaceExisting: options.replaceExisting ?? false,
         },
       });
-      notifyInfo("Download queued");
+      const queuedMessage = options.queuedMessage ?? "Download queued";
+      notifyInfo(queuedMessage);
       jobMessages = {
         ...jobMessages,
-        [response.jobId]: "Download queued",
+        [response.jobId]: queuedMessage,
       };
       await loadJobs();
     } catch (err) {
@@ -663,6 +690,96 @@
     } catch (err) {
       notifyError(errorMessage(err));
     }
+  }
+
+  async function downloadProductArchivesOnly(product: Product) {
+    closeProductActionMenu();
+    await startWorkDownload(product, {
+      unpackPolicy: "keepArchives",
+      queuedMessage: "Archive-only download queued",
+    });
+  }
+
+  async function redownloadProduct(product: Product) {
+    closeProductActionMenu();
+
+    const confirmed = window.confirm(
+      `Re-download ${product.workId}?\n\nThis will replace the local folder after the new download completes. Any changes you made inside that folder will be removed.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    await startWorkDownload(product, {
+      unpackPolicy:
+        product.download.unpackPolicy === "keep_archives"
+          ? "keepArchives"
+          : "unpackWhenRecognized",
+      replaceExisting: true,
+      queuedMessage: "Re-download queued",
+    });
+  }
+
+  async function deleteDownloadedProduct(product: Product) {
+    closeProductActionMenu();
+
+    const confirmed = window.confirm(
+      `Delete downloaded files for ${product.workId}?\n\nThis removes the local downloaded folder and any staging files. Cached ownership stays intact, so you can download it again later.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await invoke("delete_work_download", {
+        request: {
+          workId: product.workId,
+        },
+      });
+      notifySuccess("Download deleted");
+      await loadProducts();
+    } catch (err) {
+      notifyError(errorMessage(err));
+    }
+  }
+
+  function toggleProductActionMenu(product: Product, event: MouseEvent) {
+    event.stopPropagation();
+
+    if (productActionMenu?.workId === product.workId) {
+      closeProductActionMenu();
+      return;
+    }
+
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    const rect = target.getBoundingClientRect();
+    const menuWidth = 220;
+    const menuHeight = 150;
+    productActionMenu = {
+      workId: product.workId,
+      left: Math.max(12, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12)),
+      top: Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - menuHeight - 12)),
+    };
+  }
+
+  function closeProductActionMenu() {
+    productActionMenu = null;
+  }
+
+  function productActionMenuProduct() {
+    return productActionMenu
+      ? products.find((product) => product.workId === productActionMenu?.workId) ?? null
+      : null;
+  }
+
+  function productHasDownloadRecord(product: Product) {
+    return product.download.status !== "notDownloaded";
   }
 
   async function cancelJob(job: JobSnapshot) {
@@ -1260,7 +1377,7 @@
   <title>dlsite-manager</title>
 </svelte:head>
 
-<svelte:window onkeydown={handleWindowKeydown} />
+<svelte:window onclick={handleWindowClick} onkeydown={handleWindowKeydown} />
 
 <main class="app-shell">
   <aside class="sidebar" aria-label="Primary">
@@ -1468,7 +1585,13 @@
                       >
                         {productDownloadActionLabel(product, downloadJob)}
                       </button>
-                      <button class="secondary small menu-button" type="button" disabled title="More actions">
+                      <button
+                        class="secondary small menu-button"
+                        type="button"
+                        title="More actions"
+                        aria-expanded={productActionMenu?.workId === product.workId}
+                        onclick={(event) => toggleProductActionMenu(product, event)}
+                      >
                         ...
                       </button>
                     </div>
@@ -1845,6 +1968,59 @@
     >
       {chipTooltip.text}
     </div>
+  {/if}
+
+  {#if productActionMenu}
+    {@const menuProduct = productActionMenuProduct()}
+    {#if menuProduct}
+      {@const menuDownloadJob = activeWorkDownloadJob(menuProduct.workId)}
+      <div
+        class="product-action-menu"
+        role="menu"
+        tabindex="-1"
+        aria-label={`Actions for ${menuProduct.workId}`}
+        style={`left: ${productActionMenu.left}px; top: ${productActionMenu.top}px;`}
+        onclick={(event) => event.stopPropagation()}
+        onkeydown={(event) => {
+          if (event.key === "Escape") {
+            closeProductActionMenu();
+          }
+        }}
+      >
+        {#if menuProduct.download.status !== "downloaded"}
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!!menuDownloadJob}
+            onclick={() => downloadProductArchivesOnly(menuProduct)}
+          >
+            Download archives only
+          </button>
+        {/if}
+        {#if menuProduct.download.status === "downloaded"}
+          <button
+            class="danger"
+            type="button"
+            role="menuitem"
+            disabled={!!menuDownloadJob}
+            onclick={() => redownloadProduct(menuProduct)}
+          >
+            Re-download
+          </button>
+        {/if}
+        {#if productHasDownloadRecord(menuProduct)}
+          <button
+            class="danger"
+            type="button"
+            role="menuitem"
+            disabled={!!menuDownloadJob}
+            onclick={() => deleteDownloadedProduct(menuProduct)}
+          >
+            Delete download
+          </button>
+        {/if}
+      </div>
+    {/if}
   {/if}
 
   {#if toasts.length > 0}
@@ -2685,6 +2861,43 @@
   .menu-button {
     min-width: 42px;
     padding: 0 10px;
+  }
+
+  .product-action-menu {
+    position: fixed;
+    z-index: 80;
+    display: grid;
+    width: 220px;
+    gap: 4px;
+    padding: 6px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--panel-raised);
+    box-shadow: 0 18px 40px rgb(0 0 0 / 38%);
+  }
+
+  .product-action-menu button {
+    justify-content: flex-start;
+    width: 100%;
+    min-height: 34px;
+    padding: 0 10px;
+    border: 0;
+    color: var(--text);
+    background: transparent;
+    font-size: 13px;
+    text-align: left;
+  }
+
+  .product-action-menu button:hover:not(:disabled) {
+    background: var(--panel-soft);
+  }
+
+  .product-action-menu button.danger {
+    color: var(--danger);
+  }
+
+  .product-action-menu button.danger:hover:not(:disabled) {
+    background: rgb(248 113 113 / 11%);
   }
 
   .panel-title {
