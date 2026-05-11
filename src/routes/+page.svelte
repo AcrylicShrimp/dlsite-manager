@@ -8,6 +8,9 @@
   import { onDestroy, onMount } from "svelte";
   import ConfirmationDialogView from "$lib/components/ConfirmationDialog.svelte";
   import ToastStack from "$lib/components/ToastStack.svelte";
+  import UiButton from "$lib/components/ui/Button.svelte";
+  import Field from "$lib/components/ui/Field.svelte";
+  import TextInput from "$lib/components/ui/TextInput.svelte";
   import {
     AGE_FILTERS,
     DLSITE_URL,
@@ -2257,79 +2260,73 @@
               <h2>Storage paths</h2>
               <p>Library is the final managed collection. Download staging keeps resumable partial files and fetched archives.</p>
             </div>
-            <button
-              class="secondary small"
-              type="button"
+            <UiButton
+              variant="secondary"
+              size="small"
               onclick={loadSettings}
               disabled={settingsLoading || settingsSaving}
             >
               Reload
-            </button>
+            </UiButton>
           </div>
 
-          <div class="settings-field">
-            <label for="library-root">
-              <span>Library folder</span>
-              <small>Final location for managed works after download and unpacking.</small>
-            </label>
+          <Field
+            id="library-root"
+            label="Library folder"
+            help="Final location for managed works after download and unpacking."
+          >
             <div class="path-control">
-              <input
+              <TextInput
                 id="library-root"
-                type="text"
-                autocomplete="off"
-                spellcheck="false"
                 bind:value={libraryRoot}
                 disabled={settingsLoading || settingsSaving}
               />
-              <button
-                class="secondary small"
-                type="button"
+              <UiButton
+                variant="secondary"
+                size="small"
                 onclick={() => chooseSettingsDirectory("library")}
                 disabled={settingsLoading || settingsSaving}
               >
                 Browse
-              </button>
+              </UiButton>
             </div>
-          </div>
+          </Field>
 
-          <div class="settings-field">
-            <label for="download-root">
-              <span>Download staging folder</span>
-              <small>Working folder for partial downloads, retries, and fetched archives. Defaults to your system Downloads folder.</small>
-            </label>
+          <Field
+            id="download-root"
+            label="Download staging folder"
+            help="Working folder for partial downloads, retries, and fetched archives. Defaults to your system Downloads folder."
+          >
             <div class="path-control">
-              <input
+              <TextInput
                 id="download-root"
-                type="text"
-                autocomplete="off"
-                spellcheck="false"
                 bind:value={downloadRoot}
                 disabled={settingsLoading || settingsSaving}
               />
-              <button
-                class="secondary small"
-                type="button"
+              <UiButton
+                variant="secondary"
+                size="small"
                 onclick={() => chooseSettingsDirectory("download")}
                 disabled={settingsLoading || settingsSaving}
               >
                 Browse
-              </button>
-              <button
-                class="secondary small"
-                type="button"
+              </UiButton>
+              <UiButton
+                variant="secondary"
+                size="small"
                 onclick={useDefaultDownloadRoot}
                 disabled={settingsLoading || settingsSaving}
               >
                 Use Default
-              </button>
+              </UiButton>
             </div>
-          </div>
+          </Field>
 
           <div class="actions">
             <span></span>
-            <button type="submit" disabled={settingsLoading || settingsSaving}>
+            <UiButton type="submit" disabled={settingsLoading || settingsSaving}>
               {settingsSaving ? "Saving" : "Save"}
-            </button>
+            </UiButton>
           </div>
         </form>
 
@@ -2337,20 +2334,20 @@
           <div class="panel-title">
             <h2>About</h2>
             <div class="panel-actions about-actions">
-              <button
-                class="secondary small"
-                type="button"
+              <UiButton
+                variant="secondary"
+                size="small"
                 onclick={() => openExternalUrl(GITHUB_URL, "GitHub")}
               >
                 GitHub
-              </button>
-              <button
-                class="secondary small"
-                type="button"
+              </UiButton>
+              <UiButton
+                variant="secondary"
+                size="small"
                 onclick={() => openExternalUrl(DLSITE_URL, "DLsite")}
               >
                 DLsite
-              </button>
+              </UiButton>
             </div>
           </div>
           <dl class="about-grid">
@@ -4684,17 +4681,6 @@
     font-weight: 650;
   }
 
-  label small {
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 1.35;
-  }
-
-  .settings-field {
-    display: grid;
-    gap: 8px;
-  }
-
   .about-panel {
     gap: 10px;
   }
@@ -5056,8 +5042,6 @@
     .detail-grid button,
     .detail-credit-list button,
     .link-button,
-    .path-control button,
-    .path-control button.secondary,
     .work-id {
       width: auto;
     }
