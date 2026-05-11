@@ -3281,17 +3281,15 @@
 
           <div class="product-detail-title-block">
             <p>Product detail</p>
-            <h2 id="product-detail-title">{detail.title}</h2>
-            {#if detail.titleVariants.length > 0}
-              <button
-                class="link-button"
-                type="button"
-                title={textVariantsLabel(detail.titleVariants)}
-                onclick={() => copyText("title", detail.title)}
-              >
-                Copy title
-              </button>
-            {/if}
+            <button
+              id="product-detail-title"
+              class="product-detail-title-copy"
+              type="button"
+              title={detail.titleVariants.length > 0 ? textVariantsLabel(detail.titleVariants) : `Copy ${detail.title}`}
+              onclick={() => copyText("title", detail.title)}
+            >
+              {detail.title}
+            </button>
           </div>
 
           <button
@@ -4211,10 +4209,31 @@
     text-transform: uppercase;
   }
 
-  .product-detail-title-block h2 {
+  .product-detail-title-copy {
+    display: block;
+    width: 100%;
+    height: auto;
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    color: var(--text-strong);
+    background: transparent;
     font-size: 22px;
+    font-weight: 700;
     line-height: 1.24;
+    text-align: left;
     overflow-wrap: anywhere;
+  }
+
+  .product-detail-title-copy:hover:not(:disabled) {
+    color: var(--accent);
+    background: transparent;
+  }
+
+  .product-detail-title-copy:focus-visible {
+    outline: 2px solid var(--accent-muted);
+    outline-offset: 2px;
   }
 
   .link-button {
@@ -5848,7 +5867,7 @@
       padding: 12px;
     }
 
-    .product-detail-title-block h2 {
+    .product-detail-title-copy {
       font-size: 18px;
     }
 
