@@ -19,6 +19,7 @@ use dm_storage::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -32,11 +33,110 @@ struct AppState {
     library: Library,
     jobs: JobManager,
     audit: AuditLogger,
+    download_reservations: DownloadReservations,
     _tracing_guard: tracing_appender::non_blocking::WorkerGuard,
 }
 
 const WORK_DOWNLOAD_PROGRESS_EVENT_INTERVAL: Duration = Duration::from_secs(1);
 const BULK_DOWNLOAD_PAGE_LIMIT: u32 = 500;
+const DOWNLOAD_RESERVATION_METADATA_KEY: &str = "downloadReservationId";
+
+#[derive(Clone, Default)]
+struct DownloadReservations {
+    inner: Arc<Mutex<DownloadReservationsInner>>,
+}
+
+#[derive(Default)]
+struct DownloadReservationsInner {
+    next_owner: u64,
+    by_work_id: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DownloadReservationSplit {
+    available: Vec<String>,
+    reserved: Vec<String>,
+}
+
+impl DownloadReservations {
+    fn next_owner_id(&self) -> String {
+        let mut inner = self.inner.lock().expect("download reservations lock");
+
+        inner.next_owner = inner.next_owner.saturating_add(1);
+        format!("download-reservation-{}", inner.next_owner)
+    }
+
+    fn split_available(&self, work_ids: &[String]) -> DownloadReservationSplit {
+        let inner = self.inner.lock().expect("download reservations lock");
+        let mut seen = BTreeSet::new();
+        let mut available = Vec::new();
+        let mut reserved = Vec::new();
+
+        for work_id in work_ids {
+            if !seen.insert(work_id.as_str()) {
+                continue;
+            }
+
+            if inner.by_work_id.contains_key(work_id) {
+                reserved.push(work_id.clone());
+            } else {
+                available.push(work_id.clone());
+            }
+        }
+
+        DownloadReservationSplit {
+            available,
+            reserved,
+        }
+    }
+
+    fn claim_available(&self, work_ids: &[String], owner_id: &str) -> DownloadReservationSplit {
+        let mut inner = self.inner.lock().expect("download reservations lock");
+        let mut seen = BTreeSet::new();
+        let mut available = Vec::new();
+        let mut reserved = Vec::new();
+
+        for work_id in work_ids {
+            if !seen.insert(work_id.as_str()) {
+                continue;
+            }
+
+            if inner.by_work_id.contains_key(work_id) {
+                reserved.push(work_id.clone());
+            } else {
+                inner
+                    .by_work_id
+                    .insert(work_id.clone(), owner_id.to_owned());
+                available.push(work_id.clone());
+            }
+        }
+
+        DownloadReservationSplit {
+            available,
+            reserved,
+        }
+    }
+
+    fn release_owner(&self, owner_id: &str) -> usize {
+        let mut inner = self.inner.lock().expect("download reservations lock");
+        let before = inner.by_work_id.len();
+
+        inner
+            .by_work_id
+            .retain(|_, reservation_owner| reservation_owner != owner_id);
+
+        before.saturating_sub(inner.by_work_id.len())
+    }
+
+    #[cfg(test)]
+    fn is_reserved(&self, work_id: &str) -> bool {
+        self.inner
+            .lock()
+            .expect("download reservations lock")
+            .by_work_id
+            .contains_key(work_id)
+    }
+}
 
 #[tauri::command]
 async fn get_settings(state: State<'_, AppState>) -> Result<AppSettingsDto, String> {
@@ -462,6 +562,61 @@ async fn start_work_download(
         metadata.insert("accountId".to_owned(), json!(account_id));
     }
 
+    let reservation_id = state.download_reservations.next_owner_id();
+    let reservation = state
+        .download_reservations
+        .claim_available(std::slice::from_ref(&work_id), &reservation_id);
+
+    metadata.insert(
+        "skippedQueuedCount".to_owned(),
+        json!(reservation.reserved.len()),
+    );
+
+    if reservation.available.is_empty() {
+        metadata.insert("skippedQueued".to_owned(), json!(true));
+
+        let job_work_id = work_id.clone();
+        let job_id = state.jobs.spawn(
+            "workDownload",
+            format!("Download {job_work_id}"),
+            metadata,
+            move |context| async move {
+                context.info("Download is already queued or running; skipping duplicate request");
+                let mut output = JobMetadata::new();
+
+                output.insert("workId".to_owned(), json!(job_work_id));
+                output.insert("skippedQueued".to_owned(), json!(true));
+                output.insert("skippedQueuedCount".to_owned(), json!(1usize));
+
+                Ok(output)
+            },
+        );
+
+        record_audit(
+            &state.audit,
+            AuditEvent::queued("work.download", "Queued duplicate work download no-op")
+                .with_details(json!({
+                    "workId": work_id,
+                    "accountId": account_id,
+                    "jobId": job_id.to_string(),
+                    "skippedQueuedCount": 1,
+                    "replaceExisting": replace_existing,
+                    "unpackPolicy": unpack_policy_label(unpack_policy),
+                })),
+        )
+        .await;
+
+        return Ok(StartJobResponse {
+            job_id: job_id.to_string(),
+        });
+    }
+
+    metadata.insert(
+        DOWNLOAD_RESERVATION_METADATA_KEY.to_owned(),
+        json!(reservation_id),
+    );
+    metadata.insert("reservedWorkIds".to_owned(), json!(reservation.available));
+
     let job_work_id = work_id.clone();
     let audit_account_id = account_id.clone();
     let job_id = state.jobs.spawn(
@@ -596,6 +751,28 @@ async fn start_bulk_work_download(
     };
     let unpack_policy = request.unpack_policy.unwrap_or_default().into();
     let skip_downloaded = request.skip_downloaded.unwrap_or(true);
+    let candidates = match bulk_download_candidates(&state.library, &query, skip_downloaded).await {
+        Ok(candidates) => candidates,
+        Err(error) => {
+            let message = command_error(error);
+            record_audit(
+                &state.audit,
+                AuditEvent::failed(
+                    "work.bulkDownload.queue",
+                    "Failed to select bulk download products",
+                )
+                .with_error(Some("library"), message.clone()),
+            )
+            .await;
+            return Err(message);
+        }
+    };
+    let reservation_id = state.download_reservations.next_owner_id();
+    let reservation = state
+        .download_reservations
+        .claim_available(&candidates.work_ids, &reservation_id);
+    let skipped_queued_count = reservation.reserved.len();
+    let reserved_work_ids = reservation.available.clone();
     let library = state.library.clone();
     let mut metadata = JobMetadata::new();
 
@@ -603,9 +780,65 @@ async fn start_bulk_work_download(
     metadata.insert("accountId".to_owned(), json!(query.account_id.clone()));
     metadata.insert("skipDownloaded".to_owned(), json!(skip_downloaded));
     metadata.insert(
+        "candidateCount".to_owned(),
+        json!(candidates.work_ids.len()),
+    );
+    metadata.insert(
+        "skippedDownloadedCount".to_owned(),
+        json!(candidates.skipped_downloaded_count),
+    );
+    metadata.insert("skippedQueuedCount".to_owned(), json!(skipped_queued_count));
+    metadata.insert("reservedCount".to_owned(), json!(reserved_work_ids.len()));
+    metadata.insert(
         "unpackPolicy".to_owned(),
         json!(unpack_policy_label(unpack_policy)),
     );
+
+    if !reserved_work_ids.is_empty() {
+        metadata.insert(
+            DOWNLOAD_RESERVATION_METADATA_KEY.to_owned(),
+            json!(reservation_id),
+        );
+        metadata.insert(
+            "reservedWorkIds".to_owned(),
+            json!(reserved_work_ids.clone()),
+        );
+    }
+
+    if reserved_work_ids.is_empty() {
+        let total_count = candidates.total_count;
+        let skipped_downloaded_count = candidates.skipped_downloaded_count;
+        let audit_metadata = metadata.clone();
+        let job_id = state.jobs.spawn(
+            "bulkWorkDownload",
+            "Download Library results",
+            metadata,
+            move |context| async move {
+                context.info("No matching products are available for download");
+                let output = bulk_download_noop_output(
+                    total_count,
+                    skipped_downloaded_count,
+                    skipped_queued_count,
+                );
+
+                Ok(output)
+            },
+        );
+
+        record_audit(
+            &state.audit,
+            AuditEvent::queued("work.bulkDownload", "Queued bulk work download no-op")
+                .with_details(json!({
+                    "jobId": job_id.to_string(),
+                    "metadata": audit_metadata,
+                })),
+        )
+        .await;
+
+        return Ok(StartJobResponse {
+            job_id: job_id.to_string(),
+        });
+    }
 
     let audit_metadata = metadata.clone();
     let job_id = state.jobs.spawn(
@@ -614,6 +847,11 @@ async fn start_bulk_work_download(
         metadata,
         move |context| async move {
             context.info("Preparing bulk download");
+            if skipped_queued_count > 0 {
+                context.info(format!(
+                    "Skipping {skipped_queued_count} works already queued or downloading"
+                ));
+            }
             let client = dm_api::DlsiteClient::new(dm_api::DlsiteClientConfig::default())
                 .map_err(|error| JobFailure::with_code("api_client", error.to_string()))?;
             let source = DlsiteWorkDownloadSource::new(client);
@@ -624,6 +862,7 @@ async fn start_bulk_work_download(
                 .download_products_with_source(
                     BulkWorkDownloadRequest {
                         query,
+                        work_ids: Some(reserved_work_ids),
                         library_root: &library_root,
                         download_root: &download_root,
                         unpack_policy,
@@ -635,11 +874,14 @@ async fn start_bulk_work_download(
                 )
                 .await
                 .map_err(work_download_failure)?;
-            let output = bulk_download_output(&report);
+            let output = bulk_download_output(&report, skipped_queued_count);
 
             context.info(format!(
-                "Bulk download finished: {} downloaded, {} failed, {} skipped",
-                report.succeeded_count, report.failed_count, report.skipped_downloaded_count
+                "Bulk download finished: {} downloaded, {} failed, {} downloaded skips, {} queued skips",
+                report.succeeded_count,
+                report.failed_count,
+                report.skipped_downloaded_count,
+                skipped_queued_count
             ));
 
             if report.failed_count > 0 {
@@ -650,7 +892,7 @@ async fn start_bulk_work_download(
                         report.succeeded_count, report.failed_count
                     ),
                 )
-                .with_detail("bulkDownload", json!(output)));
+                .with_detail("bulkDownload", json!(output.clone())));
             }
 
             Ok(output)
@@ -751,13 +993,35 @@ async fn preview_bulk_work_download(
             return Err(message);
         }
     };
+    let skip_downloaded = request.skip_downloaded.unwrap_or(true);
+    let candidates = match bulk_download_candidates(&state.library, &query, skip_downloaded).await {
+        Ok(candidates) => candidates,
+        Err(error) => {
+            let message = command_error(error);
+            record_audit(
+                &state.audit,
+                AuditEvent::failed(
+                    "work.bulkDownload.preview",
+                    "Failed to select bulk download products",
+                )
+                .with_error(Some("library"), message.clone()),
+            )
+            .await;
+            return Err(message);
+        }
+    };
+    let reservation = state
+        .download_reservations
+        .split_available(&candidates.work_ids);
+    let skipped_queued_count = reservation.reserved.len();
     let source = DlsiteWorkDownloadSource::new(client);
     let result = state
         .library
         .preview_download_products_with_source(
             BulkWorkDownloadPreviewRequest {
                 query,
-                skip_downloaded: request.skip_downloaded.unwrap_or(true),
+                work_ids: Some(reservation.available),
+                skip_downloaded,
                 cancellation_token: None,
             },
             &source,
@@ -778,13 +1042,17 @@ async fn preview_bulk_work_download(
                     "plannedCount": preview.planned_count,
                     "failedCount": preview.failed_count,
                     "skippedDownloadedCount": preview.skipped_downloaded_count,
+                    "skippedQueuedCount": skipped_queued_count,
                     "knownExpectedBytes": preview.known_expected_bytes,
                     "totalExpectedBytes": preview.total_expected_bytes,
                     "unknownSizeCount": preview.unknown_size_count,
                 })),
             )
             .await;
-            Ok(BulkWorkDownloadPreviewDto::from(preview))
+            Ok(BulkWorkDownloadPreviewDto::from_preview(
+                preview,
+                skipped_queued_count,
+            ))
         }
         Err(error) => {
             let failure = work_download_failure(error);
@@ -1332,6 +1600,7 @@ struct BulkWorkDownloadPreviewDto {
     total_count: u64,
     requested_count: usize,
     skipped_downloaded_count: usize,
+    skipped_queued_count: usize,
     planned_count: usize,
     failed_count: usize,
     known_expected_bytes: u64,
@@ -1339,12 +1608,13 @@ struct BulkWorkDownloadPreviewDto {
     unknown_size_count: usize,
 }
 
-impl From<BulkWorkDownloadPreview> for BulkWorkDownloadPreviewDto {
-    fn from(preview: BulkWorkDownloadPreview) -> Self {
+impl BulkWorkDownloadPreviewDto {
+    fn from_preview(preview: BulkWorkDownloadPreview, skipped_queued_count: usize) -> Self {
         Self {
             total_count: preview.total_count,
             requested_count: preview.requested_count,
             skipped_downloaded_count: preview.skipped_downloaded_count,
+            skipped_queued_count,
             planned_count: preview.planned_count,
             failed_count: preview.failed_count,
             known_expected_bytes: preview.known_expected_bytes,
@@ -2118,6 +2388,14 @@ fn job_audit_operation(kind: &str) -> String {
     }
 }
 
+fn job_download_reservation_id(event: &dm_jobs::JobEvent) -> Option<&str> {
+    event
+        .snapshot
+        .metadata
+        .get(DOWNLOAD_RESERVATION_METADATA_KEY)?
+        .as_str()
+}
+
 fn unpack_policy_label(policy: dm_download::UnpackPolicy) -> &'static str {
     match policy {
         dm_download::UnpackPolicy::KeepArchives => "keepArchives",
@@ -2125,7 +2403,59 @@ fn unpack_policy_label(policy: dm_download::UnpackPolicy) -> &'static str {
     }
 }
 
-fn bulk_download_output(report: &BulkWorkDownloadReport) -> JobMetadata {
+struct BulkDownloadCandidates {
+    total_count: u64,
+    skipped_downloaded_count: usize,
+    work_ids: Vec<String>,
+}
+
+async fn bulk_download_candidates(
+    library: &Library,
+    query: &ProductListQuery,
+    skip_downloaded: bool,
+) -> dm_library::Result<BulkDownloadCandidates> {
+    let total_count = library.list_products(query).await?.total_count;
+    let mut query = query.clone();
+    query.limit = BULK_DOWNLOAD_PAGE_LIMIT;
+    query.offset = 0;
+
+    let mut seen = BTreeSet::new();
+    let mut work_ids = Vec::new();
+    let mut skipped_downloaded_count = 0usize;
+
+    loop {
+        let page = library.list_products(&query).await?;
+        let page_len = page.products.len();
+
+        for product in page.products {
+            if skip_downloaded && product.download.status == WorkDownloadStatus::Downloaded {
+                skipped_downloaded_count += 1;
+                continue;
+            }
+
+            if seen.insert(product.work_id.clone()) {
+                work_ids.push(product.work_id);
+            }
+        }
+
+        if page_len == 0 || page_len < query.limit as usize {
+            break;
+        }
+
+        query.offset = query.offset.saturating_add(page_len as u32);
+    }
+
+    Ok(BulkDownloadCandidates {
+        total_count,
+        skipped_downloaded_count,
+        work_ids,
+    })
+}
+
+fn bulk_download_output(
+    report: &BulkWorkDownloadReport,
+    skipped_queued_count: usize,
+) -> JobMetadata {
     let mut output = JobMetadata::new();
 
     output.insert("totalCount".to_owned(), json!(report.total_count));
@@ -2134,6 +2464,7 @@ fn bulk_download_output(report: &BulkWorkDownloadReport) -> JobMetadata {
         "skippedDownloadedCount".to_owned(),
         json!(report.skipped_downloaded_count),
     );
+    output.insert("skippedQueuedCount".to_owned(), json!(skipped_queued_count));
     output.insert("succeededCount".to_owned(), json!(report.succeeded_count));
     output.insert("failedCount".to_owned(), json!(report.failed_count));
     output.insert(
@@ -2149,6 +2480,30 @@ fn bulk_download_output(report: &BulkWorkDownloadReport) -> JobMetadata {
                 })
             })
             .collect::<Vec<_>>()),
+    );
+
+    output
+}
+
+fn bulk_download_noop_output(
+    total_count: u64,
+    skipped_downloaded_count: usize,
+    skipped_queued_count: usize,
+) -> JobMetadata {
+    let mut output = JobMetadata::new();
+
+    output.insert("totalCount".to_owned(), json!(total_count));
+    output.insert("requestedCount".to_owned(), json!(0usize));
+    output.insert(
+        "skippedDownloadedCount".to_owned(),
+        json!(skipped_downloaded_count),
+    );
+    output.insert("skippedQueuedCount".to_owned(), json!(skipped_queued_count));
+    output.insert("succeededCount".to_owned(), json!(0usize));
+    output.insert("failedCount".to_owned(), json!(0usize));
+    output.insert(
+        "failedWorks".to_owned(),
+        json!(Vec::<serde_json::Value>::new()),
     );
 
     output
@@ -2176,13 +2531,34 @@ fn setup_tracing(
     Ok(guard)
 }
 
-fn forward_job_events(app: AppHandle, jobs: JobManager, audit: AuditLogger) {
+fn forward_job_events(
+    app: AppHandle,
+    jobs: JobManager,
+    audit: AuditLogger,
+    download_reservations: DownloadReservations,
+) {
     let mut receiver = jobs.subscribe();
 
     tauri::async_runtime::spawn(async move {
         loop {
             match receiver.recv().await {
                 Ok(event) => {
+                    if event.event_kind == JobEventKind::Finished {
+                        if let Some(reservation_id) = job_download_reservation_id(&event) {
+                            let released = download_reservations.release_owner(reservation_id);
+
+                            if released > 0 {
+                                tracing::debug!(
+                                    target: "dlsite_manager::downloads",
+                                    job_id = %event.job_id,
+                                    reservation_id,
+                                    released,
+                                    "released download reservations"
+                                );
+                            }
+                        }
+                    }
+
                     if let Some(audit_event) = job_audit_event(&event) {
                         let audit = audit.clone();
                         tauri::async_runtime::spawn(async move {
@@ -2220,6 +2596,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(LocalCredentialStore::open(&credential_vault_path)?);
     let library = Library::new(storage.clone(), credentials);
     let jobs = JobManager::default();
+    let download_reservations = DownloadReservations::default();
 
     tracing::info!(
         target: "dlsite_manager::app",
@@ -2236,12 +2613,18 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         })),
     ));
 
-    forward_job_events(app.handle().clone(), jobs.clone(), audit.clone());
+    forward_job_events(
+        app.handle().clone(),
+        jobs.clone(),
+        audit.clone(),
+        download_reservations.clone(),
+    );
     app.manage(AppState {
         storage,
         library,
         jobs,
         audit,
+        download_reservations,
         _tracing_guard: tracing_guard,
     });
 
@@ -2317,6 +2700,54 @@ mod tests {
             PathBuf::from("/Users/example/Downloads/dlsite-manager/library-other/RJ01488944");
 
         assert!(!path_is_under_any_root(&path, &[root]));
+    }
+
+    #[test]
+    fn download_reservations_claim_skip_and_release_by_owner() {
+        let reservations = DownloadReservations::default();
+        let first_owner = reservations.next_owner_id();
+        let second_owner = reservations.next_owner_id();
+        let first = reservations.claim_available(
+            &["RJ000001".to_owned(), "RJ000002".to_owned()],
+            &first_owner,
+        );
+        let second = reservations.claim_available(
+            &["RJ000002".to_owned(), "RJ000003".to_owned()],
+            &second_owner,
+        );
+
+        assert_eq!(
+            first.available,
+            vec!["RJ000001".to_owned(), "RJ000002".to_owned()]
+        );
+        assert!(first.reserved.is_empty());
+        assert_eq!(second.available, vec!["RJ000003".to_owned()]);
+        assert_eq!(second.reserved, vec!["RJ000002".to_owned()]);
+        assert!(reservations.is_reserved("RJ000001"));
+        assert!(reservations.is_reserved("RJ000002"));
+        assert!(reservations.is_reserved("RJ000003"));
+
+        assert_eq!(reservations.release_owner(&first_owner), 2);
+        assert!(!reservations.is_reserved("RJ000001"));
+        assert!(!reservations.is_reserved("RJ000002"));
+        assert!(reservations.is_reserved("RJ000003"));
+    }
+
+    #[test]
+    fn download_reservations_split_available_deduplicates_inputs() {
+        let reservations = DownloadReservations::default();
+        let owner = reservations.next_owner_id();
+        reservations.claim_available(&["RJ000001".to_owned()], &owner);
+
+        let split = reservations.split_available(&[
+            "RJ000001".to_owned(),
+            "RJ000001".to_owned(),
+            "RJ000002".to_owned(),
+            "RJ000002".to_owned(),
+        ]);
+
+        assert_eq!(split.reserved, vec!["RJ000001".to_owned()]);
+        assert_eq!(split.available, vec!["RJ000002".to_owned()]);
     }
 }
 

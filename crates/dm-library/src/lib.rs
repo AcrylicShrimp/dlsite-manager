@@ -15,7 +15,7 @@ use dm_storage::{
     WorkDownloadStatus, WorkDownloadUpdate,
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -242,6 +242,7 @@ impl Library {
             .bulk_download_selection(
                 &request.query,
                 request.skip_downloaded,
+                request.work_ids.as_deref(),
                 request.cancellation_token,
             )
             .await?;
@@ -348,6 +349,7 @@ impl Library {
             .bulk_download_selection(
                 &request.query,
                 request.skip_downloaded,
+                request.work_ids.as_deref(),
                 request.cancellation_token,
             )
             .await?;
@@ -511,12 +513,15 @@ impl Library {
         &self,
         query: &ProductListQuery,
         skip_downloaded: bool,
+        work_ids: Option<&[String]>,
         cancellation_token: Option<&CancellationToken>,
     ) -> Result<BulkWorkDownloadSelection> {
         if cancellation_token.is_some_and(CancellationToken::is_cancelled) {
             return Err(LibraryError::Cancelled);
         }
 
+        let allowed_work_ids =
+            work_ids.map(|work_ids| work_ids.iter().map(String::as_str).collect::<BTreeSet<_>>());
         let total_count = self.storage.list_products(query).await?.total_count;
         let mut query = query.clone();
         query.limit = BULK_DOWNLOAD_PAGE_LIMIT;
@@ -537,6 +542,12 @@ impl Library {
                 if skip_downloaded && product.download.status == WorkDownloadStatus::Downloaded {
                     skipped_downloaded_count += 1;
                     continue;
+                }
+
+                if let Some(allowed_work_ids) = &allowed_work_ids {
+                    if !allowed_work_ids.contains(product.work_id.as_str()) {
+                        continue;
+                    }
                 }
 
                 work_ids.push(product.work_id);
@@ -1051,6 +1062,7 @@ struct BulkWorkDownloadSelection {
 #[derive(Clone)]
 pub struct BulkWorkDownloadRequest<'a> {
     pub query: ProductListQuery,
+    pub work_ids: Option<Vec<String>>,
     pub library_root: &'a Path,
     pub download_root: &'a Path,
     pub unpack_policy: UnpackPolicy,
@@ -1063,6 +1075,7 @@ impl<'a> BulkWorkDownloadRequest<'a> {
     pub fn new(query: ProductListQuery, library_root: &'a Path, download_root: &'a Path) -> Self {
         Self {
             query,
+            work_ids: None,
             library_root,
             download_root,
             unpack_policy: UnpackPolicy::UnpackWhenRecognized,
@@ -1146,6 +1159,7 @@ pub trait BulkWorkDownloadProgressSink: Send + Sync {
 #[derive(Clone)]
 pub struct BulkWorkDownloadPreviewRequest<'a> {
     pub query: ProductListQuery,
+    pub work_ids: Option<Vec<String>>,
     pub skip_downloaded: bool,
     pub cancellation_token: Option<&'a CancellationToken>,
 }
@@ -2149,6 +2163,7 @@ mod tests {
             .preview_download_products_with_source(
                 BulkWorkDownloadPreviewRequest {
                     query: ProductListQuery::default(),
+                    work_ids: None,
                     skip_downloaded: true,
                     cancellation_token: None,
                 },
@@ -2166,6 +2181,44 @@ mod tests {
         assert_eq!(preview.unknown_size_count, 0);
         assert_eq!(preview.works[0].work_id, "RJ000002");
         assert_eq!(preview.works[0].file_count, 1);
+
+        std::fs::remove_dir_all(root).unwrap();
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bulk_download_limits_to_supplied_work_ids() -> Result<()> {
+        let library = migrated_library().await?;
+        let root = test_dir("bulk-download-limited");
+        let library_root = root.join("library");
+        let download_root = root.join("downloads");
+        library.save_account(save_account_request(true)).await?;
+        library
+            .sync_account_with_source(AccountSyncRequest::new("account-a"), &sync_source())
+            .await?;
+
+        let report = library
+            .download_products_with_source(
+                BulkWorkDownloadRequest {
+                    work_ids: Some(vec!["RJ000002".to_owned()]),
+                    ..BulkWorkDownloadRequest::new(
+                        ProductListQuery::default(),
+                        &library_root,
+                        &download_root,
+                    )
+                },
+                &FakeDownloadSource,
+            )
+            .await?;
+        let first = library.storage().work_download_state("RJ000001").await?;
+        let second = library.storage().work_download_state("RJ000002").await?;
+
+        assert_eq!(report.total_count, 2);
+        assert_eq!(report.requested_count, 1);
+        assert_eq!(report.succeeded_count, 1);
+        assert_eq!(first.status, WorkDownloadStatus::NotDownloaded);
+        assert_eq!(second.status, WorkDownloadStatus::Downloaded);
 
         std::fs::remove_dir_all(root).unwrap();
 

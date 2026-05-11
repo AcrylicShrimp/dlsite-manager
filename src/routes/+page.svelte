@@ -80,6 +80,7 @@
     totalCount: number;
     requestedCount: number;
     skippedDownloadedCount: number;
+    skippedQueuedCount: number;
     plannedCount: number;
     failedCount: number;
     knownExpectedBytes: number;
@@ -709,10 +710,6 @@
   }
 
   async function startBulkWorkDownload() {
-    if (activeBulkDownloadJob()) {
-      return;
-    }
-
     bulkDownloadPlanning = true;
 
     try {
@@ -729,7 +726,7 @@
       });
 
       if (preview.requestedCount === 0) {
-        notifyInfo("No matching products need download");
+        window.alert(bulkDownloadNoopMessage(preview));
         return;
       }
 
@@ -1041,10 +1038,6 @@
     return [...workDownloadJobs(workId)].reverse().find(isActiveJob) ?? null;
   }
 
-  function activeBulkDownloadJob() {
-    return [...jobs].reverse().find((job) => job.kind === "bulkWorkDownload" && isActiveJob(job)) ?? null;
-  }
-
   function visibleJobs(limit = 20) {
     return [...jobs].reverse().slice(0, limit);
   }
@@ -1225,6 +1218,7 @@
       `Products to download: ${preview.requestedCount}`,
       `Checked products: ${preview.plannedCount}`,
       `Already downloaded skipped: ${preview.skippedDownloadedCount}`,
+      `Already queued skipped: ${preview.skippedQueuedCount}`,
       `Expected total download: ${bulkDownloadExpectedBytesLabel(preview)}`,
     ];
 
@@ -1237,6 +1231,16 @@
 
     lines.push("", "Start download?");
     return lines.join("\n");
+  }
+
+  function bulkDownloadNoopMessage(preview: BulkWorkDownloadPreview) {
+    return [
+      "Bulk download plan",
+      "",
+      "No products will be downloaded.",
+      `Already downloaded skipped: ${preview.skippedDownloadedCount}`,
+      `Already queued skipped: ${preview.skippedQueuedCount}`,
+    ].join("\n");
   }
 
   function bulkDownloadExpectedBytesLabel(preview: BulkWorkDownloadPreview) {
@@ -1705,7 +1709,7 @@
             class="secondary download-results-button"
             type="button"
             onclick={startBulkWorkDownload}
-            disabled={bulkDownloadPlanning || productsLoading || jobsLoading || totalProducts === 0 || Boolean(activeBulkDownloadJob())}
+            disabled={bulkDownloadPlanning || productsLoading || jobsLoading || totalProducts === 0}
           >
             {bulkDownloadPlanning ? "Planning" : "Download results"}
           </button>
