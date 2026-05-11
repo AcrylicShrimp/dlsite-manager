@@ -1,6 +1,6 @@
 [package]
 name = "dlsite-manager"
-version = "3.0.0-rc.1"
+version = "3.0.0"
 description = "Desktop manager for DLsite works and libraries."
 authors = ["AcrylicShrimp"]
 edition = "2021"
