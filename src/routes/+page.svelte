@@ -88,6 +88,11 @@
     unknownSizeCount: number;
   };
 
+  type BulkDownloadDialog = {
+    kind: "confirm" | "notice";
+    preview: BulkWorkDownloadPreview;
+  };
+
   type BulkSucceededWork = {
     workId: string;
     localPath: string | null;
@@ -340,8 +345,10 @@
   let productImagePreview = $state<ProductImagePreview | null>(null);
   let productActionMenu = $state<ProductActionMenu | null>(null);
   let chipTooltip = $state<ChipTooltip | null>(null);
+  let bulkDownloadDialog = $state<BulkDownloadDialog | null>(null);
 
   let toastSequence = 0;
+  let bulkDownloadDialogResolve: ((confirmed: boolean) => void) | null = null;
   const toastTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   onMount(() => {
@@ -371,6 +378,11 @@
       clearTimeout(timer);
     }
     toastTimers.clear();
+
+    if (bulkDownloadDialogResolve) {
+      bulkDownloadDialogResolve(false);
+      bulkDownloadDialogResolve = null;
+    }
   });
 
   async function loadInitial() {
@@ -731,6 +743,11 @@
       return;
     }
 
+    if (bulkDownloadDialog) {
+      closeBulkDownloadDialog(false);
+      return;
+    }
+
     if (productActionMenu) {
       closeProductActionMenu();
     }
@@ -833,11 +850,11 @@
       });
 
       if (preview.requestedCount === 0) {
-        window.alert(bulkDownloadNoopMessage(preview));
+        await showBulkDownloadDialog(preview, "notice");
         return;
       }
 
-      const confirmed = window.confirm(bulkDownloadPlanMessage(preview));
+      const confirmed = await showBulkDownloadDialog(preview, "confirm");
 
       if (!confirmed) {
         return;
@@ -1447,36 +1464,26 @@
     return "Planning";
   }
 
-  function bulkDownloadPlanMessage(preview: BulkWorkDownloadPreview) {
-    const lines = [
-      "Bulk download plan",
-      "",
-      `Products to download: ${preview.requestedCount}`,
-      `Checked products: ${preview.plannedCount}`,
-      `Already downloaded skipped: ${preview.skippedDownloadedCount}`,
-      `Already queued skipped: ${preview.skippedQueuedCount}`,
-      `Expected total download: ${bulkDownloadExpectedBytesLabel(preview)}`,
-    ];
-
-    if (preview.failedCount > 0) {
-      lines.push(
-        "",
-        `${preview.failedCount} product(s) could not be checked before download. They will still be attempted and may fail.`,
-      );
+  function showBulkDownloadDialog(
+    preview: BulkWorkDownloadPreview,
+    kind: BulkDownloadDialog["kind"],
+  ) {
+    if (bulkDownloadDialogResolve) {
+      bulkDownloadDialogResolve(false);
     }
 
-    lines.push("", "Start download?");
-    return lines.join("\n");
+    return new Promise<boolean>((resolve) => {
+      bulkDownloadDialogResolve = resolve;
+      bulkDownloadDialog = { kind, preview };
+    });
   }
 
-  function bulkDownloadNoopMessage(preview: BulkWorkDownloadPreview) {
-    return [
-      "Bulk download plan",
-      "",
-      "No products will be downloaded.",
-      `Already downloaded skipped: ${preview.skippedDownloadedCount}`,
-      `Already queued skipped: ${preview.skippedQueuedCount}`,
-    ].join("\n");
+  function closeBulkDownloadDialog(confirmed = false) {
+    const resolve = bulkDownloadDialogResolve;
+
+    bulkDownloadDialogResolve = null;
+    bulkDownloadDialog = null;
+    resolve?.(confirmed);
   }
 
   function bulkDownloadExpectedBytesLabel(preview: BulkWorkDownloadPreview) {
@@ -2436,6 +2443,90 @@
     {/if}
   </section>
 
+  {#if bulkDownloadDialog}
+    <div
+      class="bulk-dialog-layer"
+      role={bulkDownloadDialog.kind === "notice" ? "alertdialog" : "dialog"}
+      aria-modal="true"
+      aria-labelledby="bulk-dialog-title"
+    >
+      <button
+        class="bulk-dialog-backdrop"
+        type="button"
+        aria-label="Close bulk download dialog"
+        onclick={() => closeBulkDownloadDialog(false)}
+      ></button>
+      <section class="bulk-dialog-panel">
+        <div class="bulk-dialog-heading">
+          <div>
+            <p>Bulk Download</p>
+            <h2 id="bulk-dialog-title">
+              {bulkDownloadDialog.kind === "notice" ? "No products to download" : "Start bulk download?"}
+            </h2>
+          </div>
+          <button
+            class="bulk-dialog-close"
+            type="button"
+            aria-label="Close bulk download dialog"
+            onclick={() => closeBulkDownloadDialog(false)}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="bulk-dialog-summary" aria-label="Bulk download plan">
+          <div>
+            <span>Products to download</span>
+            <strong>{bulkDownloadDialog.preview.requestedCount}</strong>
+          </div>
+          <div>
+            <span>Checked products</span>
+            <strong>{bulkDownloadDialog.preview.plannedCount}</strong>
+          </div>
+          <div>
+            <span>Already downloaded</span>
+            <strong>{bulkDownloadDialog.preview.skippedDownloadedCount}</strong>
+          </div>
+          <div>
+            <span>Already queued</span>
+            <strong>{bulkDownloadDialog.preview.skippedQueuedCount}</strong>
+          </div>
+          <div class="wide">
+            <span>Expected total download</span>
+            <strong>{bulkDownloadExpectedBytesLabel(bulkDownloadDialog.preview)}</strong>
+          </div>
+        </div>
+
+        {#if bulkDownloadDialog.preview.failedCount > 0}
+          <p class="bulk-dialog-warning">
+            {bulkDownloadDialog.preview.failedCount} product(s) could not be checked before download. They will still be attempted and may fail.
+          </p>
+        {/if}
+
+        {#if bulkDownloadDialog.kind === "notice"}
+          <p class="bulk-dialog-note">
+            Matching products were already downloaded, already queued, or unavailable for this action.
+          </p>
+        {/if}
+
+        <div class="bulk-dialog-actions">
+          {#if bulkDownloadDialog.kind === "notice"}
+            <button type="button" onclick={() => closeBulkDownloadDialog(false)}>Close</button>
+          {:else}
+            <button class="secondary" type="button" onclick={() => closeBulkDownloadDialog(false)}>
+              Cancel
+            </button>
+            <button type="button" onclick={() => closeBulkDownloadDialog(true)}>
+              Start Download
+            </button>
+          {/if}
+        </div>
+      </section>
+    </div>
+  {/if}
+
   {#if productImagePreview}
     <div
       class="image-preview"
@@ -2810,6 +2901,150 @@
     stroke-linecap: round;
     stroke-linejoin: round;
     stroke-width: 2.2;
+  }
+
+  .bulk-dialog-layer {
+    position: fixed;
+    z-index: 50;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+  }
+
+  .bulk-dialog-backdrop {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: rgb(0 0 0 / 68%);
+    cursor: default;
+  }
+
+  .bulk-dialog-panel {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    gap: 16px;
+    width: min(560px, calc(100vw - 40px));
+    max-height: calc(100vh - 48px);
+    padding: 18px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--panel);
+    box-shadow: 0 24px 64px rgb(0 0 0 / 52%);
+    overflow: auto;
+  }
+
+  .bulk-dialog-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: start;
+  }
+
+  .bulk-dialog-heading p,
+  .bulk-dialog-note,
+  .bulk-dialog-warning {
+    margin: 0;
+  }
+
+  .bulk-dialog-heading p {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .bulk-dialog-heading h2 {
+    margin-top: 2px;
+    font-size: 20px;
+  }
+
+  .bulk-dialog-close {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    padding: 0;
+    border-color: var(--border-strong);
+    color: var(--muted);
+    background: var(--panel-raised);
+  }
+
+  .bulk-dialog-close:hover {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+
+  .bulk-dialog-close svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 2.35;
+  }
+
+  .bulk-dialog-summary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--border);
+    overflow: hidden;
+  }
+
+  .bulk-dialog-summary div {
+    display: grid;
+    gap: 4px;
+    padding: 11px 12px;
+    background: var(--panel-soft);
+  }
+
+  .bulk-dialog-summary .wide {
+    grid-column: 1 / -1;
+  }
+
+  .bulk-dialog-summary span {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .bulk-dialog-summary strong {
+    min-width: 0;
+    color: var(--text-strong);
+    font-size: 17px;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+
+  .bulk-dialog-warning {
+    padding: 10px 12px;
+    border: 1px solid rgb(248 113 113 / 36%);
+    border-radius: 8px;
+    color: #fecaca;
+    background: rgb(248 113 113 / 11%);
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .bulk-dialog-note {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .bulk-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
   }
 
   .image-preview {
