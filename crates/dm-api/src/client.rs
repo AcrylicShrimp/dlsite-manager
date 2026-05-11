@@ -293,6 +293,25 @@ impl DlsiteClient {
         Ok(response.works)
     }
 
+    pub async fn raw_works_batch(&self, ids: &[WorkId]) -> Result<RawResponse> {
+        self.raw_works_batch_with_body_limit(ids, 2048).await
+    }
+
+    pub async fn raw_works_batch_with_body_limit(
+        &self,
+        ids: &[WorkId],
+        body_limit: usize,
+    ) -> Result<RawResponse> {
+        let endpoint = Url::parse(CONTENT_WORKS_URL)?;
+        let ids = ids
+            .iter()
+            .map(|id| id.as_ref().to_owned())
+            .collect::<Vec<_>>();
+        let res = self.http.post(endpoint).json(&ids).send().await?;
+
+        RawResponse::from_response_with_body_limit(res, body_limit).await
+    }
+
     pub async fn resolve_download(&self, work_id: &WorkId) -> Result<DownloadResolution> {
         Ok(self.probe_download(work_id).await?.resolution)
     }
