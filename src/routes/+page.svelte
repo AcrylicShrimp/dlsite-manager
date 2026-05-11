@@ -4293,9 +4293,9 @@
   }
 
   .download-queue-list {
-    display: grid;
+    display: flex;
     flex: 1 1 auto;
-    gap: 0;
+    flex-direction: column;
     min-height: 0;
     padding-right: 4px;
     overflow: auto;
@@ -4305,6 +4305,7 @@
 
   .download-queue-row {
     display: grid;
+    flex: 0 0 auto;
     grid-template-columns: minmax(220px, 1.2fr) minmax(220px, 0.8fr) minmax(150px, auto) auto;
     gap: 14px;
     align-items: center;
