@@ -2,6 +2,7 @@
 
 ## 2026-05-11
 
+- Added per-product DLsite page actions. Library rows now include a `DLsite` button, and product detail panels include an `Open on DLsite` link; both use the existing opener plugin and the generic `home/work/=/product_id/{workId}.html` URL, which was checked against home, maniax, and soft redirects. Validation: `pnpm check`, `pnpm build`, and `git diff -- src/routes/+page.svelte` passed. Did not restart or stop the already-running dev process per user preference.
 - Added About-panel external buttons for GitHub and DLsite, using the existing Tauri opener plugin `openUrl` path so links open in the system browser instead of navigating the app webview. Validation: `pnpm check`, `pnpm build`, and `git diff -- src/routes/+page.svelte` passed. Did not restart or stop the already-running dev process per user preference.
 - Split Settings/About into a standalone panel below the storage-path settings form, removing the internal divider approach while keeping the Settings page full-width and scrollable. Validation: `pnpm check`, `pnpm build`, and `git diff -- src/routes/+page.svelte` passed. Did not restart or stop the already-running dev process per user preference.
 - Let the Settings panel fill the workspace width by removing its fixed 760px cap and preserving min-width constraints for path fields. Validation: `pnpm check`, `pnpm build`, and `git diff -- src/routes/+page.svelte` passed. Did not restart or stop the already-running dev process per user preference.

@@ -1346,6 +1346,14 @@
     }
   }
 
+  function dlsiteProductPageUrl(workId: string) {
+    return `https://www.dlsite.com/home/work/=/product_id/${encodeURIComponent(workId)}.html`;
+  }
+
+  async function openDlsiteProductPage(workId: string) {
+    await openExternalUrl(dlsiteProductPageUrl(workId), `${workId} on DLsite`);
+  }
+
   function accountStatusLabel(account: Account) {
     const activeJob = activeAccountSyncJob(account.id);
 
@@ -2632,6 +2640,17 @@
                     </div>
                     <div class="product-actions" aria-label="Actions">
                       <button
+                        class="secondary small"
+                        type="button"
+                        title={`Open ${product.workId} on DLsite`}
+                        onclick={(event) => {
+                          event.stopPropagation();
+                          void openDlsiteProductPage(product.workId);
+                        }}
+                      >
+                        DLsite
+                      </button>
+                      <button
                         class="small"
                         type="button"
                         title={productDownloadActionTitle(product, downloadJob)}
@@ -3319,6 +3338,13 @@
               onclick={() => copyText("title", detail.title)}
             >
               {detail.title}
+            </button>
+            <button
+              class="link-button"
+              type="button"
+              onclick={() => openDlsiteProductPage(detail.workId)}
+            >
+              Open on DLsite
             </button>
           </div>
 
