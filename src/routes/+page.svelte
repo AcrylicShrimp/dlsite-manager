@@ -1145,6 +1145,24 @@
     return [...workDownloadJobs(workId)].reverse().find(isActiveJob) ?? null;
   }
 
+  function activeBulkDownloadPlanningJob() {
+    return (
+      [...jobs]
+        .reverse()
+        .find((job) => job.kind === "bulkWorkDownloadPreview" && isActiveJob(job)) ?? null
+    );
+  }
+
+  function bulkDownloadButtonLabel() {
+    if (!bulkDownloadPlanning) {
+      return "Bulk Download";
+    }
+
+    const planningJob = activeBulkDownloadPlanningJob();
+
+    return planningJob ? jobLabel(planningJob) : "Planning";
+  }
+
   function visibleJobs(limit = 20) {
     return [...jobs].reverse().slice(0, limit);
   }
@@ -1197,6 +1215,10 @@
       return "Bulk download";
     }
 
+    if (job.kind === "bulkWorkDownloadPreview") {
+      return "Bulk planning";
+    }
+
     if (job.kind === "workDownload") {
       return jobWorkId(job) ?? job.title;
     }
@@ -1235,6 +1257,21 @@
           : "Downloaded";
       }
 
+      if (job.kind === "bulkWorkDownloadPreview") {
+        const plannedCount = jobOutputNumber(job, "plannedCount");
+        const failedCount = jobOutputNumber(job, "failedCount");
+
+        if (
+          typeof plannedCount === "number" &&
+          typeof failedCount === "number" &&
+          failedCount > 0
+        ) {
+          return `Planned ${plannedCount}, ${failedCount} failed`;
+        }
+
+        return typeof plannedCount === "number" ? `Planned ${plannedCount} works` : "Planned";
+      }
+
       const cachedCount = jobOutputNumber(job, "cachedWorkCount");
       return typeof cachedCount === "number" ? `Synced ${cachedCount} works` : "Synced";
     }
@@ -1252,6 +1289,8 @@
         return "Preparing downloads";
       case "bulkDownloading":
         return bulkDownloadJobProgressLabel(job);
+      case "bulkPlanning":
+        return bulkDownloadPlanningJobProgressLabel(job);
       case "committing":
         return "Saving cache";
       case "completed":
@@ -1269,6 +1308,10 @@
       default:
         if (job.kind === "bulkWorkDownload") {
           return "Downloading results";
+        }
+
+        if (job.kind === "bulkWorkDownloadPreview") {
+          return "Planning";
         }
 
         return job.kind === "workDownload" ? "Downloading" : "Syncing";
@@ -1387,6 +1430,21 @@
     }
 
     return "Downloading results";
+  }
+
+  function bulkDownloadPlanningJobProgressLabel(job: JobSnapshot) {
+    if (job.progress?.unit !== "items") {
+      return "Planning";
+    }
+
+    const current = job.progress.current ?? 0;
+    const total = job.progress.total;
+
+    if (typeof total === "number" && total > 0) {
+      return `Planning ${current}/${total}`;
+    }
+
+    return "Planning";
   }
 
   function bulkDownloadPlanMessage(preview: BulkWorkDownloadPreview) {
@@ -1889,7 +1947,7 @@
             onclick={startBulkWorkDownload}
             disabled={bulkDownloadPlanning || productsLoading || jobsLoading || totalProducts === 0}
           >
-            {bulkDownloadPlanning ? "Planning" : "Bulk Download"}
+            {bulkDownloadButtonLabel()}
           </button>
         </form>
 

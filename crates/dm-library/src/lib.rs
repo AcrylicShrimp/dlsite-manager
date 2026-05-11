@@ -352,6 +352,7 @@ impl Library {
         S: WorkDownloadSource + Sync,
     {
         request.check_cancelled()?;
+        request.emit(BulkWorkDownloadPreviewProgress::Selecting);
         let selection = self
             .bulk_download_selection(
                 &request.query,
@@ -361,6 +362,11 @@ impl Library {
             )
             .await?;
         let requested_count = selection.work_ids.len();
+        request.emit(BulkWorkDownloadPreviewProgress::Selected {
+            total_count: selection.total_count,
+            requested_count,
+            skipped_downloaded_count: selection.skipped_downloaded_count,
+        });
         let mut preview = BulkWorkDownloadPreview {
             total_count: selection.total_count,
             requested_count,
@@ -375,19 +381,35 @@ impl Library {
         };
         let mut logged_in_account_id: Option<String> = None;
 
-        for work_id in selection.work_ids {
+        for (index, work_id) in selection.work_ids.into_iter().enumerate() {
             request.check_cancelled()?;
+            let current = index + 1;
+            request.emit(BulkWorkDownloadPreviewProgress::WorkStarted {
+                work_id: work_id.clone(),
+                current,
+                total: requested_count,
+            });
             let account = match self
                 .download_account_for_work_selection(&work_id, &request.query)
                 .await
             {
                 Ok(account) => account,
                 Err(error) => {
+                    let error_code = error.failure_code().to_owned();
+                    let error_message = error.to_string();
+
                     preview.failed_count += 1;
                     preview.failed_works.push(BulkWorkDownloadFailure {
+                        work_id: work_id.clone(),
+                        error_code: error_code.clone(),
+                        error_message: error_message.clone(),
+                    });
+                    request.emit(BulkWorkDownloadPreviewProgress::WorkFailed {
                         work_id,
-                        error_code: error.failure_code().to_owned(),
-                        error_message: error.to_string(),
+                        current,
+                        total: requested_count,
+                        error_code,
+                        error_message,
                     });
                     continue;
                 }
@@ -395,11 +417,21 @@ impl Library {
 
             if logged_in_account_id.as_deref() != Some(account.id.as_str()) {
                 if let Err(error) = self.login_download_account(&account, source).await {
+                    let error_code = error.failure_code().to_owned();
+                    let error_message = error.to_string();
+
                     preview.failed_count += 1;
                     preview.failed_works.push(BulkWorkDownloadFailure {
+                        work_id: work_id.clone(),
+                        error_code: error_code.clone(),
+                        error_message: error_message.clone(),
+                    });
+                    request.emit(BulkWorkDownloadPreviewProgress::WorkFailed {
                         work_id,
-                        error_code: error.failure_code().to_owned(),
-                        error_message: error.to_string(),
+                        current,
+                        total: requested_count,
+                        error_code,
+                        error_message,
                     });
                     logged_in_account_id = None;
                     continue;
@@ -414,21 +446,32 @@ impl Library {
             {
                 Ok(work) => {
                     preview.planned_count += 1;
+                    let known_expected_bytes = work.known_expected_bytes;
+                    let total_expected_bytes = work.total_expected_bytes;
+                    let unknown_size_count = work.unknown_size_count;
                     preview.known_expected_bytes = preview
                         .known_expected_bytes
-                        .saturating_add(work.known_expected_bytes);
+                        .saturating_add(known_expected_bytes);
                     preview.unknown_size_count = preview
                         .unknown_size_count
-                        .saturating_add(work.unknown_size_count);
+                        .saturating_add(unknown_size_count);
 
                     preview.total_expected_bytes =
-                        match (preview.total_expected_bytes, work.total_expected_bytes) {
+                        match (preview.total_expected_bytes, total_expected_bytes) {
                             (Some(total), Some(work_total)) => {
                                 Some(total.saturating_add(work_total))
                             }
                             _ => None,
                         };
                     preview.works.push(work);
+                    request.emit(BulkWorkDownloadPreviewProgress::WorkPlanned {
+                        work_id,
+                        current,
+                        total: requested_count,
+                        known_expected_bytes,
+                        total_expected_bytes,
+                        unknown_size_count,
+                    });
                 }
                 Err(error)
                     if matches!(error, LibraryError::Cancelled)
@@ -440,15 +483,33 @@ impl Library {
                     return Err(error);
                 }
                 Err(error) => {
+                    let error_code = error.failure_code().to_owned();
+                    let error_message = error.to_string();
+
                     preview.failed_count += 1;
                     preview.failed_works.push(BulkWorkDownloadFailure {
+                        work_id: work_id.clone(),
+                        error_code: error_code.clone(),
+                        error_message: error_message.clone(),
+                    });
+                    request.emit(BulkWorkDownloadPreviewProgress::WorkFailed {
                         work_id,
-                        error_code: error.failure_code().to_owned(),
-                        error_message: error.to_string(),
+                        current,
+                        total: requested_count,
+                        error_code,
+                        error_message,
                     });
                 }
             }
         }
+
+        request.emit(BulkWorkDownloadPreviewProgress::Completed {
+            planned_count: preview.planned_count,
+            failed_count: preview.failed_count,
+            known_expected_bytes: preview.known_expected_bytes,
+            total_expected_bytes: preview.total_expected_bytes,
+            unknown_size_count: preview.unknown_size_count,
+        });
 
         Ok(preview)
     }
@@ -1172,12 +1233,54 @@ pub trait BulkWorkDownloadProgressSink: Send + Sync {
     fn emit(&self, progress: BulkWorkDownloadProgress);
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BulkWorkDownloadPreviewProgress {
+    Selecting,
+    Selected {
+        total_count: u64,
+        requested_count: usize,
+        skipped_downloaded_count: usize,
+    },
+    WorkStarted {
+        work_id: String,
+        current: usize,
+        total: usize,
+    },
+    WorkPlanned {
+        work_id: String,
+        current: usize,
+        total: usize,
+        known_expected_bytes: u64,
+        total_expected_bytes: Option<u64>,
+        unknown_size_count: usize,
+    },
+    WorkFailed {
+        work_id: String,
+        current: usize,
+        total: usize,
+        error_code: String,
+        error_message: String,
+    },
+    Completed {
+        planned_count: usize,
+        failed_count: usize,
+        known_expected_bytes: u64,
+        total_expected_bytes: Option<u64>,
+        unknown_size_count: usize,
+    },
+}
+
+pub trait BulkWorkDownloadPreviewProgressSink: Send + Sync {
+    fn emit(&self, progress: BulkWorkDownloadPreviewProgress);
+}
+
 #[derive(Clone)]
 pub struct BulkWorkDownloadPreviewRequest<'a> {
     pub query: ProductListQuery,
     pub work_ids: Option<Vec<String>>,
     pub skip_downloaded: bool,
     pub cancellation_token: Option<&'a CancellationToken>,
+    pub progress_sink: Option<&'a dyn BulkWorkDownloadPreviewProgressSink>,
 }
 
 impl BulkWorkDownloadPreviewRequest<'_> {
@@ -1191,6 +1294,12 @@ impl BulkWorkDownloadPreviewRequest<'_> {
             Err(LibraryError::Cancelled)
         } else {
             Ok(())
+        }
+    }
+
+    fn emit(&self, progress: BulkWorkDownloadPreviewProgress) {
+        if let Some(sink) = self.progress_sink {
+            sink.emit(progress);
         }
     }
 }
@@ -1804,6 +1913,17 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct RecordingBulkDownloadPreviewProgressSink {
+        events: Mutex<Vec<BulkWorkDownloadPreviewProgress>>,
+    }
+
+    impl BulkWorkDownloadPreviewProgressSink for RecordingBulkDownloadPreviewProgressSink {
+        fn emit(&self, progress: BulkWorkDownloadPreviewProgress) {
+            self.events.lock().expect("events lock").push(progress);
+        }
+    }
+
     async fn migrated_library() -> Result<Library> {
         let storage = Storage::open_in_memory().await?;
         storage.run_migrations().await?;
@@ -2182,6 +2302,7 @@ mod tests {
                     work_ids: None,
                     skip_downloaded: true,
                     cancellation_token: None,
+                    progress_sink: None,
                 },
                 &FakeDownloadSource,
             )
@@ -2197,6 +2318,87 @@ mod tests {
         assert_eq!(preview.unknown_size_count, 0);
         assert_eq!(preview.works[0].work_id, "RJ000002");
         assert_eq!(preview.works[0].file_count, 1);
+
+        std::fs::remove_dir_all(root).unwrap();
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bulk_download_preview_reports_progress() -> Result<()> {
+        let library = migrated_library().await?;
+        let root = test_dir("bulk-preview-progress");
+        let library_root = root.join("library");
+        let download_root = root.join("downloads");
+        library.save_account(save_account_request(true)).await?;
+        library
+            .sync_account_with_source(AccountSyncRequest::new("account-a"), &sync_source())
+            .await?;
+        library
+            .download_work_with_source(
+                WorkDownloadRequest::new("RJ000001", &library_root, &download_root),
+                &FakeDownloadSource,
+            )
+            .await?;
+        let sink = RecordingBulkDownloadPreviewProgressSink::default();
+
+        let preview = library
+            .preview_download_products_with_source(
+                BulkWorkDownloadPreviewRequest {
+                    query: ProductListQuery::default(),
+                    work_ids: None,
+                    skip_downloaded: true,
+                    cancellation_token: None,
+                    progress_sink: Some(&sink),
+                },
+                &FakeDownloadSource,
+            )
+            .await?;
+        let events = sink.events.lock().expect("preview events lock");
+
+        assert_eq!(preview.requested_count, 1);
+        assert!(matches!(
+            events.first(),
+            Some(BulkWorkDownloadPreviewProgress::Selecting)
+        ));
+        assert!(matches!(
+            events.get(1),
+            Some(BulkWorkDownloadPreviewProgress::Selected {
+                requested_count: 1,
+                ..
+            })
+        ));
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                BulkWorkDownloadPreviewProgress::WorkStarted {
+                    work_id,
+                    current: 1,
+                    total: 1
+                } if work_id == "RJ000002"
+            )
+        }));
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                BulkWorkDownloadPreviewProgress::WorkPlanned {
+                    work_id,
+                    current: 1,
+                    total: 1,
+                    known_expected_bytes: 10,
+                    total_expected_bytes: Some(10),
+                    unknown_size_count: 0
+                } if work_id == "RJ000002"
+            )
+        }));
+        assert!(matches!(
+            events.last(),
+            Some(BulkWorkDownloadPreviewProgress::Completed {
+                planned_count: 1,
+                failed_count: 0,
+                ..
+            })
+        ));
 
         std::fs::remove_dir_all(root).unwrap();
 

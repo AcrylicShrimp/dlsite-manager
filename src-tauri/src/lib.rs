@@ -5,11 +5,12 @@ use dm_jobs::{
     JobStatus,
 };
 use dm_library::{
-    AccountSyncRequest, BulkWorkDownloadPreview, BulkWorkDownloadPreviewRequest,
-    BulkWorkDownloadProgress, BulkWorkDownloadProgressSink, BulkWorkDownloadReport,
-    BulkWorkDownloadRequest, DlsiteSyncSource, DlsiteWorkDownloadSource, Library,
-    SaveAccountRequest, SyncProgress, SyncProgressSink, WorkDownloadProgress,
-    WorkDownloadProgressSink, WorkDownloadRemovalRequest, WorkDownloadRequest,
+    AccountSyncRequest, BulkWorkDownloadPreview, BulkWorkDownloadPreviewProgress,
+    BulkWorkDownloadPreviewProgressSink, BulkWorkDownloadPreviewRequest, BulkWorkDownloadProgress,
+    BulkWorkDownloadProgressSink, BulkWorkDownloadReport, BulkWorkDownloadRequest,
+    DlsiteSyncSource, DlsiteWorkDownloadSource, Library, SaveAccountRequest, SyncProgress,
+    SyncProgressSink, WorkDownloadProgress, WorkDownloadProgressSink, WorkDownloadRemovalRequest,
+    WorkDownloadRequest,
 };
 use dm_storage::{
     Account, AppSettings, ProductAgeCategory, ProductCreditGroup, ProductListItem, ProductListPage,
@@ -977,22 +978,6 @@ async fn preview_bulk_work_download(
         return Err(error);
     }
 
-    let client = match dm_api::DlsiteClient::new(dm_api::DlsiteClientConfig::default()) {
-        Ok(client) => client,
-        Err(error) => {
-            let message = command_error(error);
-            record_audit(
-                &state.audit,
-                AuditEvent::failed(
-                    "work.bulkDownload.preview",
-                    "Failed to create DLsite API client",
-                )
-                .with_error(Some("api_client"), message.clone()),
-            )
-            .await;
-            return Err(message);
-        }
-    };
     let skip_downloaded = request.skip_downloaded.unwrap_or(true);
     let candidates = match bulk_download_candidates(&state.library, &query, skip_downloaded).await {
         Ok(candidates) => candidates,
@@ -1014,61 +999,96 @@ async fn preview_bulk_work_download(
         .download_reservations
         .split_available(&candidates.work_ids);
     let skipped_queued_count = reservation.reserved.len();
-    let source = DlsiteWorkDownloadSource::new(client);
-    let result = state
-        .library
-        .preview_download_products_with_source(
-            BulkWorkDownloadPreviewRequest {
-                query,
-                work_ids: Some(reservation.available),
-                skip_downloaded,
-                cancellation_token: None,
-            },
-            &source,
-        )
-        .await;
+    let available_work_ids = reservation.available;
+    let library = state.library.clone();
+    let (result_tx, result_rx) =
+        tokio::sync::oneshot::channel::<Result<BulkWorkDownloadPreviewDto, String>>();
+    let mut metadata = JobMetadata::new();
 
-    match result {
-        Ok(preview) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::succeeded(
-                    "work.bulkDownload.preview",
-                    "Prepared bulk download preview",
+    metadata.insert("search".to_owned(), json!(query.search.clone()));
+    metadata.insert("accountId".to_owned(), json!(query.account_id.clone()));
+    metadata.insert("skipDownloaded".to_owned(), json!(skip_downloaded));
+    metadata.insert(
+        "candidateCount".to_owned(),
+        json!(candidates.work_ids.len()),
+    );
+    metadata.insert(
+        "skippedDownloadedCount".to_owned(),
+        json!(candidates.skipped_downloaded_count),
+    );
+    metadata.insert("skippedQueuedCount".to_owned(), json!(skipped_queued_count));
+    metadata.insert(
+        "plannedCandidateCount".to_owned(),
+        json!(available_work_ids.len()),
+    );
+
+    let audit_metadata = metadata.clone();
+    let job_id = state.jobs.spawn(
+        "bulkWorkDownloadPreview",
+        "Plan Bulk Download",
+        metadata,
+        move |context| async move {
+            context.info("Preparing bulk download plan");
+            let client = match dm_api::DlsiteClient::new(dm_api::DlsiteClientConfig::default()) {
+                Ok(client) => client,
+                Err(error) => {
+                    let message = error.to_string();
+                    let _ = result_tx.send(Err(message.clone()));
+                    return Err(JobFailure::with_code("api_client", message));
+                }
+            };
+            let source = DlsiteWorkDownloadSource::new(client);
+            let progress_sink = JobBulkWorkDownloadPreviewProgressSink {
+                context: context.clone(),
+            };
+            let result = library
+                .preview_download_products_with_source(
+                    BulkWorkDownloadPreviewRequest {
+                        query,
+                        work_ids: Some(available_work_ids),
+                        skip_downloaded,
+                        cancellation_token: Some(context.cancellation_token()),
+                        progress_sink: Some(&progress_sink),
+                    },
+                    &source,
                 )
-                .with_details(json!({
-                    "totalCount": preview.total_count,
-                    "requestedCount": preview.requested_count,
-                    "plannedCount": preview.planned_count,
-                    "failedCount": preview.failed_count,
-                    "skippedDownloadedCount": preview.skipped_downloaded_count,
-                    "skippedQueuedCount": skipped_queued_count,
-                    "knownExpectedBytes": preview.known_expected_bytes,
-                    "totalExpectedBytes": preview.total_expected_bytes,
-                    "unknownSizeCount": preview.unknown_size_count,
-                })),
-            )
-            .await;
-            Ok(BulkWorkDownloadPreviewDto::from_preview(
-                preview,
-                skipped_queued_count,
-            ))
-        }
-        Err(error) => {
-            let failure = work_download_failure(error);
-            let message = failure.message.clone();
-            record_audit(
-                &state.audit,
-                AuditEvent::failed(
-                    "work.bulkDownload.preview",
-                    "Failed to prepare bulk download preview",
-                )
-                .with_error(failure.code, message.clone()),
-            )
-            .await;
-            Err(message)
-        }
-    }
+                .await;
+
+            match result {
+                Ok(preview) => {
+                    let dto =
+                        BulkWorkDownloadPreviewDto::from_preview(preview, skipped_queued_count);
+                    let output = bulk_download_preview_output(&dto);
+
+                    let _ = result_tx.send(Ok(dto));
+
+                    Ok(output)
+                }
+                Err(error) => {
+                    let failure = work_download_failure(error);
+                    let message = failure.message.clone();
+
+                    let _ = result_tx.send(Err(message));
+
+                    Err(failure)
+                }
+            }
+        },
+    );
+
+    record_audit(
+        &state.audit,
+        AuditEvent::queued("work.bulkDownload.preview", "Queued bulk download preview")
+            .with_details(json!({
+                "jobId": job_id.to_string(),
+                "metadata": audit_metadata,
+            })),
+    )
+    .await;
+
+    result_rx
+        .await
+        .map_err(|_| "bulk download preview job stopped before returning a result".to_owned())?
 }
 
 #[tauri::command]
@@ -2066,6 +2086,69 @@ struct JobBulkWorkDownloadProgressSink {
     context: JobContext,
 }
 
+struct JobBulkWorkDownloadPreviewProgressSink {
+    context: JobContext,
+}
+
+impl BulkWorkDownloadPreviewProgressSink for JobBulkWorkDownloadPreviewProgressSink {
+    fn emit(&self, progress: BulkWorkDownloadPreviewProgress) {
+        match progress {
+            BulkWorkDownloadPreviewProgress::Selecting => {
+                self.context.set_phase("loadingProducts");
+                self.context.clear_progress();
+                self.context.info("Selecting matching Library results");
+            }
+            BulkWorkDownloadPreviewProgress::Selected {
+                total_count,
+                requested_count,
+                skipped_downloaded_count,
+            } => {
+                self.context.set_phase("bulkPlanning");
+                self.context
+                    .set_progress(JobProgress::items(Some(0), Some(requested_count as u64)));
+                self.context.info(format!(
+                    "Planning {requested_count} works from {total_count} matching products; skipped {skipped_downloaded_count} already downloaded"
+                ));
+            }
+            BulkWorkDownloadPreviewProgress::WorkStarted { current, total, .. } => {
+                self.context.set_phase("bulkPlanning");
+                self.context.set_progress(JobProgress::items(
+                    Some(current.saturating_sub(1) as u64),
+                    Some(total as u64),
+                ));
+            }
+            BulkWorkDownloadPreviewProgress::WorkPlanned { current, total, .. } => {
+                self.context
+                    .set_progress(JobProgress::items(Some(current as u64), Some(total as u64)));
+            }
+            BulkWorkDownloadPreviewProgress::WorkFailed {
+                work_id,
+                current,
+                total,
+                error_code,
+                error_message,
+            } => {
+                self.context
+                    .set_progress(JobProgress::items(Some(current as u64), Some(total as u64)));
+                self.context.warn(format!(
+                    "Failed to plan {work_id} ({current}/{total}): {error_code}: {error_message}"
+                ));
+            }
+            BulkWorkDownloadPreviewProgress::Completed {
+                planned_count,
+                failed_count,
+                ..
+            } => {
+                self.context.set_phase("completed");
+                self.context.clear_progress();
+                self.context.info(format!(
+                    "Bulk download plan completed: {planned_count} planned, {failed_count} failed"
+                ));
+            }
+        }
+    }
+}
+
 impl BulkWorkDownloadProgressSink for JobBulkWorkDownloadProgressSink {
     fn emit(&self, progress: BulkWorkDownloadProgress) {
         match progress {
@@ -2384,6 +2467,7 @@ fn job_audit_operation(kind: &str) -> String {
         "accountSync" => "account.sync".to_owned(),
         "workDownload" => "work.download".to_owned(),
         "bulkWorkDownload" => "work.bulkDownload".to_owned(),
+        "bulkWorkDownloadPreview" => "work.bulkDownload.preview".to_owned(),
         _ => format!("job.{kind}"),
     }
 }
@@ -2495,6 +2579,37 @@ fn bulk_download_output(
                 })
             })
             .collect::<Vec<_>>()),
+    );
+
+    output
+}
+
+fn bulk_download_preview_output(preview: &BulkWorkDownloadPreviewDto) -> JobMetadata {
+    let mut output = JobMetadata::new();
+
+    output.insert("totalCount".to_owned(), json!(preview.total_count));
+    output.insert("requestedCount".to_owned(), json!(preview.requested_count));
+    output.insert(
+        "skippedDownloadedCount".to_owned(),
+        json!(preview.skipped_downloaded_count),
+    );
+    output.insert(
+        "skippedQueuedCount".to_owned(),
+        json!(preview.skipped_queued_count),
+    );
+    output.insert("plannedCount".to_owned(), json!(preview.planned_count));
+    output.insert("failedCount".to_owned(), json!(preview.failed_count));
+    output.insert(
+        "knownExpectedBytes".to_owned(),
+        json!(preview.known_expected_bytes),
+    );
+    output.insert(
+        "totalExpectedBytes".to_owned(),
+        json!(preview.total_expected_bytes),
+    );
+    output.insert(
+        "unknownSizeCount".to_owned(),
+        json!(preview.unknown_size_count),
     );
 
     output
