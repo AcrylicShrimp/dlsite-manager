@@ -14,6 +14,14 @@
     TYPE_FILTERS,
   } from "$lib/model/constants";
   import {
+    accountCredentialLabel,
+    accountEnabledLabel,
+    accountLastSyncLabel,
+    accountLoginLabel,
+    credentialedAccountCount,
+    enabledAccountCount,
+  } from "$lib/utils/accounts";
+  import {
     appInfoValue,
     bulkDownloadExpectedBytesLabel,
     detailDate,
@@ -1168,30 +1176,6 @@
     }
 
     return "idle";
-  }
-
-  function accountLoginLabel(account: Account) {
-    return account.loginName?.trim() || "No login name";
-  }
-
-  function accountLastSyncLabel(account: Account) {
-    return account.lastSyncAt ? shortDate(account.lastSyncAt) : "Never synced";
-  }
-
-  function accountCredentialLabel(account: Account) {
-    return account.hasCredential ? "Saved" : "Not saved";
-  }
-
-  function accountEnabledLabel(account: Account) {
-    return account.enabled ? "Enabled" : "Disabled";
-  }
-
-  function enabledAccountCount() {
-    return accounts.filter((account) => account.enabled).length;
-  }
-
-  function credentialedAccountCount() {
-    return accounts.filter((account) => account.hasCredential).length;
   }
 
   function syncingAccountCount() {
@@ -2351,7 +2335,7 @@
           <div class="panel-title account-panel-title">
             <div>
               <h2>Account sources</h2>
-              <p>{enabledAccountCount()} enabled of {accounts.length}</p>
+              <p>{enabledAccountCount(accounts)} enabled of {accounts.length}</p>
             </div>
             <div class="panel-actions">
               <button
@@ -2379,11 +2363,11 @@
               <small>Total</small>
             </div>
             <div class="account-stat">
-              <span>{enabledAccountCount()}</span>
+              <span>{enabledAccountCount(accounts)}</span>
               <small>Enabled</small>
             </div>
             <div class="account-stat">
-              <span>{credentialedAccountCount()}</span>
+              <span>{credentialedAccountCount(accounts)}</span>
               <small>Credentials</small>
             </div>
             <div class="account-stat">
