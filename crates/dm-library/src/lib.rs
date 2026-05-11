@@ -24,6 +24,8 @@ use uuid::Uuid;
 pub type Result<T> = std::result::Result<T, LibraryError>;
 
 const BULK_DOWNLOAD_PAGE_LIMIT: u32 = 500;
+const DOWNLOAD_CANCELLATION_POLL_INTERVAL: std::time::Duration =
+    std::time::Duration::from_millis(50);
 
 #[derive(Debug, thiserror::Error)]
 pub enum LibraryError {
@@ -732,6 +734,8 @@ impl Library {
         }
 
         let download_cancellation = dm_download::CancellationToken::new();
+        let _download_cancellation_forwarder =
+            request.forward_download_cancellation(&download_cancellation);
         let job = DownloadJobRequest {
             work_id: work_id.clone(),
             target_root: request.download_root.to_path_buf(),
@@ -964,6 +968,38 @@ impl<'a> WorkDownloadRequest<'a> {
         if let Some(sink) = self.progress_sink {
             sink.emit(progress);
         }
+    }
+
+    fn forward_download_cancellation(
+        &self,
+        download_cancellation: &dm_download::CancellationToken,
+    ) -> Option<DownloadCancellationForwarder> {
+        let job_cancellation = self.cancellation_token?.clone();
+        let download_cancellation = download_cancellation.clone();
+
+        if job_cancellation.is_cancelled() {
+            download_cancellation.cancel();
+        }
+
+        let handle = tokio::spawn(async move {
+            while !job_cancellation.is_cancelled() {
+                tokio::time::sleep(DOWNLOAD_CANCELLATION_POLL_INTERVAL).await;
+            }
+
+            download_cancellation.cancel();
+        });
+
+        Some(DownloadCancellationForwarder { handle })
+    }
+}
+
+struct DownloadCancellationForwarder {
+    handle: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for DownloadCancellationForwarder {
+    fn drop(&mut self) {
+        self.handle.abort();
     }
 }
 
@@ -1597,8 +1633,11 @@ mod tests {
     use dm_download::{DownloadPhase, DownloadedFile};
     use dm_storage::{ProductSort, SyncRunStatus, WorkDownloadStatus};
     use std::{
-        sync::Mutex,
-        time::{SystemTime, UNIX_EPOCH},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Mutex,
+        },
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
     use url::Url;
 
@@ -1725,6 +1764,80 @@ mod tests {
                 }],
                 archive_extraction: None,
             })
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct WaitingDownloadSource {
+        entered_download: Arc<AtomicBool>,
+    }
+
+    impl WaitingDownloadSource {
+        fn new() -> Self {
+            Self {
+                entered_download: Arc::new(AtomicBool::new(false)),
+            }
+        }
+
+        fn entered_download(&self) -> bool {
+            self.entered_download.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl WorkDownloadSource for WaitingDownloadSource {
+        async fn login(&self, credentials: &Credentials) -> Result<()> {
+            assert_eq!(credentials.username, "user@example.test");
+            assert_eq!(credentials.password, "secret");
+            Ok(())
+        }
+
+        async fn download_plan(&self, work_id: &WorkId) -> Result<DownloadPlan> {
+            Ok(DownloadPlan {
+                work_id: work_id.clone(),
+                files: vec![DownloadFile {
+                    kind: DownloadFileKind::Direct,
+                    stream_request: DownloadStreamRequest {
+                        url: Url::parse(
+                            "https://download.example.test/get/=/file/RJ000001.zip/_/1",
+                        )
+                        .unwrap(),
+                    },
+                }],
+                serial_numbers: Vec::new(),
+            })
+        }
+
+        async fn download_file_metadata(
+            &self,
+            file_index: usize,
+            file: &DownloadFile,
+        ) -> Result<DownloadFileMetadata> {
+            Ok(DownloadFileMetadata {
+                file_index,
+                file_kind: file.kind.clone(),
+                file_name: format!("file-{file_index}.zip"),
+                expected_size: Some(10),
+                final_url: file.stream_request.url.clone(),
+            })
+        }
+
+        async fn download_files(
+            &self,
+            _job: &DownloadJobRequest,
+            _plan: &DownloadPlan,
+            cancellation: &dm_download::CancellationToken,
+            _progress_sink: &mut (dyn FnMut(DownloadProgress) + Send),
+        ) -> Result<DownloadedWork> {
+            self.entered_download.store(true, Ordering::SeqCst);
+
+            loop {
+                if cancellation.is_cancelled() {
+                    return Err(dm_download::DownloadError::Cancelled.into());
+                }
+
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
         }
     }
 
@@ -2033,6 +2146,54 @@ mod tests {
         assert!(matches!(
             events.last(),
             Some(WorkDownloadProgress::Completed)
+        ));
+
+        std::fs::remove_dir_all(root).unwrap();
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_cancellation_reaches_download_source_without_progress() -> Result<()> {
+        let library = migrated_library().await?;
+        let root = test_dir("download-cancellation-forwarding");
+        let library_root = root.join("library");
+        let download_root = root.join("downloads");
+        let source = WaitingDownloadSource::new();
+        let cancellation = CancellationToken::new();
+        library.save_account(save_account_request(true)).await?;
+        library
+            .sync_account_with_source(AccountSyncRequest::new("account-a"), &sync_source())
+            .await?;
+
+        let result = tokio::time::timeout(Duration::from_secs(2), async {
+            let download = library.download_work_with_source(
+                WorkDownloadRequest {
+                    cancellation_token: Some(&cancellation),
+                    ..WorkDownloadRequest::new("RJ000001", &library_root, &download_root)
+                },
+                &source,
+            );
+            let cancel = async {
+                while !source.entered_download() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+
+                cancellation.cancel();
+            };
+            let (result, ()) = tokio::join!(download, cancel);
+            result
+        })
+        .await
+        .expect("download cancellation should complete promptly");
+        let err = match result {
+            Ok(_) => panic!("download should have been cancelled"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            err,
+            LibraryError::Cancelled | LibraryError::Download(dm_download::DownloadError::Cancelled)
         ));
 
         std::fs::remove_dir_all(root).unwrap();

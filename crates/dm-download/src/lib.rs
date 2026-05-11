@@ -16,10 +16,12 @@ use std::{
 use tokio::{
     fs::{self, OpenOptions},
     io::AsyncWriteExt,
+    time::{sleep, Duration},
 };
 use url::Url;
 
 pub const DEFAULT_MAX_RETRIES: u32 = 3;
+const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DownloadJobRequest {
@@ -216,6 +218,12 @@ impl CancellationToken {
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst)
     }
+
+    pub async fn cancelled(&self) {
+        while !self.is_cancelled() {
+            sleep(CANCELLATION_POLL_INTERVAL).await;
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -281,7 +289,11 @@ where
             bytes_total: None,
         });
 
-        let metadata = probe_download_file_metadata(&client, file_index, file).await?;
+        let metadata = cancellable(
+            cancellation,
+            probe_download_file_metadata(&client, file_index, file),
+        )
+        .await?;
         file_metadata.push((metadata, file.stream_request.clone()));
     }
 
@@ -338,12 +350,20 @@ where
         });
     }
 
+    if cancellation.is_cancelled() {
+        return Err(DownloadError::Cancelled);
+    }
+
     let archive_extraction = unpack_downloaded_archive_plan(
         archive_plan,
         &target_dir,
         job.unpack_policy,
         ArchiveExtractOptions::default(),
     )?;
+
+    if cancellation.is_cancelled() {
+        return Err(DownloadError::Cancelled);
+    }
 
     Ok(DownloadedWork {
         work_id: job.work_id.clone(),
@@ -503,7 +523,7 @@ where
             break;
         }
 
-        let mut stream = match source.open_range(bytes_written).await {
+        let mut stream = match cancellable(cancellation, source.open_range(bytes_written)).await {
             Ok(stream) => stream,
             Err(_err) if retries < request.max_retries => {
                 retries += 1;
@@ -518,7 +538,7 @@ where
                 return Err(DownloadError::Cancelled);
             }
 
-            let chunk = match stream.next_chunk().await {
+            let chunk = match cancellable(cancellation, stream.next_chunk()).await {
                 Ok(Some(chunk)) => chunk,
                 Ok(None) => break,
                 Err(_err) if retries < request.max_retries => {
@@ -575,6 +595,10 @@ where
     file.flush().await?;
     drop(file);
 
+    if cancellation.is_cancelled() {
+        return Err(DownloadError::Cancelled);
+    }
+
     if target_path.try_exists()? {
         return Err(DownloadError::TargetAlreadyExists { path: target_path });
     }
@@ -588,6 +612,20 @@ where
         bytes_written,
         resumed_from,
     })
+}
+
+async fn cancellable<T, F>(cancellation: &CancellationToken, future: F) -> Result<T, DownloadError>
+where
+    F: Future<Output = Result<T, DownloadError>>,
+{
+    if cancellation.is_cancelled() {
+        return Err(DownloadError::Cancelled);
+    }
+
+    tokio::select! {
+        _ = cancellation.cancelled() => Err(DownloadError::Cancelled),
+        result = future => result,
+    }
 }
 
 pub fn staging_dir_for(target_dir: &Path) -> PathBuf {
@@ -664,7 +702,7 @@ mod tests {
         collections::VecDeque,
         io::Write,
         sync::{Arc, Mutex},
-        time::{SystemTime, UNIX_EPOCH},
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
     #[test]
@@ -974,6 +1012,29 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    #[tokio::test]
+    async fn cancellation_interrupts_pending_stream_read() {
+        let dir = test_dir("cancel-pending-stream");
+        let mut source = PendingStreamSource;
+        let request = request(&dir, "RJ123456.zip", Some(6));
+        let cancellation = CancellationToken::new();
+        let cancellation_trigger = cancellation.clone();
+
+        let download = download_file(&mut source, &request, &cancellation, |_| {});
+        let cancel = async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            cancellation_trigger.cancel();
+        };
+        let (result, ()) = tokio::join!(download, cancel);
+        let err = result.unwrap_err();
+
+        assert!(matches!(err, DownloadError::Cancelled));
+        assert!(staging_dir_for(&dir).join("RJ123456.zip").exists());
+        assert!(!dir.join("RJ123456.zip").exists());
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn unpacks_single_zip_when_policy_requests_it() {
         let dir = test_dir("unpack-zip");
@@ -1147,6 +1208,27 @@ mod tests {
                 }
 
                 Ok(chunk)
+            })
+        }
+    }
+
+    struct PendingStreamSource;
+
+    impl RangedDownloadSource for PendingStreamSource {
+        fn open_range<'a>(&'a mut self, _start: u64) -> DownloadOpenFuture<'a> {
+            Box::pin(async move {
+                let stream: Box<dyn DownloadByteStream + Send + 'a> = Box::new(PendingStream);
+                Ok(stream)
+            })
+        }
+    }
+
+    struct PendingStream;
+
+    impl DownloadByteStream for PendingStream {
+        fn next_chunk<'a>(&'a mut self) -> DownloadChunkFuture<'a> {
+            Box::pin(async move {
+                std::future::pending::<Result<Option<Vec<u8>>, DownloadError>>().await
             })
         }
     }
