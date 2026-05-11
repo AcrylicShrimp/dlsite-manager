@@ -6,8 +6,6 @@ A desktop library manager for DLsite works.
 
 This is an unofficial project and is not affiliated with DLsite.
 
-![Library view](docs/assets/readme/library.png)
-
 ## What It Does
 
 - Builds one unified library from DLsite purchases, multiple accounts, and local-only folders.
@@ -28,13 +26,25 @@ The current published binary is a macOS Apple Silicon DMG. Other platforms can b
 
 ### Library
 
+![Library view](docs/assets/readme/library.png)
+
 The Library page is the main workspace. Use it to browse synced purchases and local-only works, search or filter the collection, open product details, copy useful fields, add custom tags, open DLsite product pages, download works, or open downloaded folders.
 
+### Product Details
+
+![Product detail panel](docs/assets/readme/product-detail.png)
+
+Open a work to inspect its metadata, ownership, download state, custom tags, local path, credits, dates, and DLsite product link without leaving the Library context.
+
 ### Downloads
+
+![Downloads page](docs/assets/readme/downloads.png)
 
 The Downloads page shows currently queued and running downloads. Download jobs expose status, progress, cancellation, and current phase information such as resolving files, downloading, checking files, decompressing, and finalizing.
 
 ### Accounts
+
+![Accounts page](docs/assets/readme/accounts.png)
 
 Add one or more DLsite accounts and sync them into the same unified library. Products owned by multiple accounts are shown once with account ownership preserved.
 
@@ -42,21 +52,17 @@ Add one or more DLsite accounts and sync them into the same unified library. Pro
 
 Existing folders can be scanned into the library as local-only / not-owned works. This lets the app manage downloaded or imported works even when they were not synced from the configured accounts.
 
+### Settings
+
+![Settings page](docs/assets/readme/settings.png)
+
+Choose where managed works are stored, where resumable downloads are staged, and confirm app/version information when reporting problems.
+
 ### Activity
 
-The Activity page shows recent jobs and audit log entries. Audit logs are written to the app log directory so support reports can include concrete operation history without relying only on screenshots or memory.
-
-## Screenshots
-
-| Product detail | Downloads |
-| --- | --- |
-| ![Product detail panel](docs/assets/readme/product-detail.png) | ![Downloads page](docs/assets/readme/downloads.png) |
-
-| Accounts | Settings |
-| --- | --- |
-| ![Accounts page](docs/assets/readme/accounts.png) | ![Settings page](docs/assets/readme/settings.png) |
-
 ![Activity and audit log page](docs/assets/readme/activity.png)
+
+The Activity page shows recent jobs and audit log entries. Audit logs are written to the app log directory so support reports can include concrete operation history without relying only on screenshots or memory.
 
 ## Getting Started
 
