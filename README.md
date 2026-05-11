@@ -1,12 +1,22 @@
 # dlsite-manager
 
-Desktop manager for DLsite works and local libraries.
+A desktop library manager for DLsite works.
 
-`dlsite-manager` v3 is a fresh Tauri 2 rewrite focused on DLsite Play v3 syncing, a unified multi-account library, resumable downloads, local-only work management, custom tags, and support-friendly audit logs.
+`dlsite-manager` helps you keep a large DLsite collection searchable, downloaded, and organized. It syncs purchases from one or more DLsite accounts, merges them with local folders, tracks download state, and gives each work a consistent place for metadata, tags, ownership, local paths, and actions.
 
 This is an unofficial project and is not affiliated with DLsite.
 
 ![Library view](docs/assets/readme/library.png)
+
+## What It Does
+
+- Builds one unified library from DLsite purchases, multiple accounts, and local-only folders.
+- Searches and filters by title, work ID, maker, credits, account source, local/not-owned source, age class, work type, and custom tags.
+- Shows product details such as thumbnail, maker, credits, ownership, dates, local path, download state, and DLsite product link.
+- Downloads archive-based works with progress, cancellation, resume, and a dedicated Downloads queue.
+- Handles normal archives, serial-required products, and legacy split archives.
+- Keeps downloaded works in a managed library folder and resumable partial files in a staging folder.
+- Records app activity and detailed failures in file-backed audit logs for troubleshooting.
 
 ## Download
 
@@ -14,18 +24,27 @@ Get the latest build from the [GitHub releases page](https://github.com/AcrylicS
 
 The current published binary is a macOS Apple Silicon DMG. Other platforms can be built from source until additional packaging is added.
 
-## Features
+## Main Workflows
 
-- Sync purchased works through the DLsite Play v3 API.
-- Manage multiple DLsite accounts as one unified library.
-- Search and filter by title, work ID, maker, credits, account source, ownership source, age class, work type, and custom tags.
-- Add custom tags and include or exclude them in Library filters.
-- Scan existing local folders and track local-only / not-owned works.
-- Download direct archives, legacy split archives, and serial-required products.
-- Resume interrupted downloads from staging files.
-- Cancel active downloads and inspect current download jobs from a dedicated Downloads page.
-- Open downloaded works, product folders, DLsite product pages, and support log folders from the app.
-- Record app operations and detailed failures in file-backed audit logs.
+### Library
+
+The Library page is the main workspace. Use it to browse synced purchases and local-only works, search or filter the collection, open product details, copy useful fields, add custom tags, open DLsite product pages, download works, or open downloaded folders.
+
+### Downloads
+
+The Downloads page shows currently queued and running downloads. Download jobs expose status, progress, cancellation, and current phase information such as resolving files, downloading, checking files, decompressing, and finalizing.
+
+### Accounts
+
+Add one or more DLsite accounts and sync them into the same unified library. Products owned by multiple accounts are shown once with account ownership preserved.
+
+### Local Library
+
+Existing folders can be scanned into the library as local-only / not-owned works. This lets the app manage downloaded or imported works even when they were not synced from the configured accounts.
+
+### Activity
+
+The Activity page shows recent jobs and audit log entries. Audit logs are written to the app log directory so support reports can include concrete operation history without relying only on screenshots or memory.
 
 ## Screenshots
 
@@ -39,7 +58,7 @@ The current published binary is a macOS Apple Silicon DMG. Other platforms can b
 
 ![Activity and audit log page](docs/assets/readme/activity.png)
 
-## Basic Usage
+## Getting Started
 
 1. Open **Accounts** and add a DLsite account.
 2. Run **Sync** to cache purchased works.
@@ -56,9 +75,9 @@ Saved account credentials are kept in the app credential store, separate from th
 
 Audit logs are written to the app log directory. When reporting a bug, include the app version, affected work ID, steps to reproduce, and relevant audit log entries.
 
-## Supported Download Paths
+## Current Scope
 
-The v3 download path currently targets DLsite archive downloads:
+Download support currently targets archive downloads:
 
 - normal single-archive products
 - serial-required products
@@ -67,7 +86,7 @@ The v3 download path currently targets DLsite archive downloads:
 - re-download with confirmation
 - local folder import / manual downloaded-state marking
 
-Browser-reader-only workflows, including manga download behavior, still need separate research and are not part of the current v3 release.
+Browser-reader-only workflows, including manga download behavior, still need separate research.
 
 ## Development
 
@@ -95,7 +114,7 @@ Live DLsite API/download tests are env-gated. Use the `.env.example` files in th
 
 ## Architecture
 
-The app keeps DLsite/domain behavior in reusable Rust crates and leaves the Tauri layer as a thin adapter.
+The app keeps DLsite/domain behavior in reusable Rust crates and leaves the Tauri layer as a thin adapter. The current implementation targets DLsite Play v3 APIs.
 
 - `crates/dm-api` - DLsite Play v3 API, authentication, metadata, download-plan discovery, authenticated byte streams
 - `crates/dm-download` - resumable file downloads and progress reporting
