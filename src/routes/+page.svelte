@@ -4890,6 +4890,7 @@
     background: var(--border);
     border-radius: 7px 7px 0 0;
     box-shadow: 0 14px 26px rgb(0 0 0 / 22%);
+    overflow: hidden;
   }
 
   .library-search-panel,
