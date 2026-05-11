@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getIdentifier, getName, getTauriVersion, getVersion } from "@tauri-apps/api/app";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { downloadDir } from "@tauri-apps/api/path";
@@ -8,6 +9,13 @@
   type AppSettings = {
     libraryRoot: string | null;
     downloadRoot: string | null;
+  };
+
+  type AppInfo = {
+    name: string;
+    version: string;
+    identifier: string;
+    tauriVersion: string;
   };
 
   type Account = {
@@ -325,6 +333,8 @@
   let downloadRoot = $state("");
   let settingsLoading = $state(true);
   let settingsSaving = $state(false);
+  let appInfo = $state<AppInfo | null>(null);
+  let appInfoLoading = $state(true);
 
   let accounts = $state<Account[]>([]);
   let accountsLoading = $state(true);
@@ -404,12 +414,38 @@
   async function loadInitial() {
     await Promise.all([
       loadSettings(),
+      loadAppInfo(),
       loadAccounts(),
       loadProducts(),
       loadJobs(),
       loadAuditLogDir(),
       loadAuditEvents(),
     ]);
+  }
+
+  async function loadAppInfo() {
+    appInfoLoading = true;
+
+    try {
+      const [name, version, identifier, tauriVersion] = await Promise.all([
+        getName(),
+        getVersion(),
+        getIdentifier(),
+        getTauriVersion(),
+      ]);
+
+      appInfo = {
+        name,
+        version,
+        identifier,
+        tauriVersion,
+      };
+    } catch (err) {
+      appInfo = null;
+      notifyError(errorMessage(err));
+    } finally {
+      appInfoLoading = false;
+    }
   }
 
   async function loadSettings() {
@@ -2055,6 +2091,14 @@
   function errorMessage(err: unknown) {
     return err instanceof Error ? err.message : String(err);
   }
+
+  function appInfoValue(value: string | undefined) {
+    if (value) {
+      return value;
+    }
+
+    return appInfoLoading ? "Loading" : "Unavailable";
+  }
 </script>
 
 <svelte:head>
@@ -2729,6 +2773,25 @@
             </button>
           </div>
         </div>
+
+        <section class="about-section" aria-label="About">
+          <div class="about-heading">
+            <h2>About</h2>
+          </div>
+          <dl class="about-grid">
+            <dt>Application</dt>
+            <dd>{appInfoValue(appInfo?.name)}</dd>
+
+            <dt>Version</dt>
+            <dd>{appInfoValue(appInfo?.version)}</dd>
+
+            <dt>Identifier</dt>
+            <dd>{appInfoValue(appInfo?.identifier)}</dd>
+
+            <dt>Tauri</dt>
+            <dd>{appInfoValue(appInfo?.tauriVersion)}</dd>
+          </dl>
+        </section>
 
         <div class="actions">
           <span></span>
@@ -4643,6 +4706,44 @@
   .settings-field {
     display: grid;
     gap: 8px;
+  }
+
+  .about-section {
+    display: grid;
+    gap: 10px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+
+  .about-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .about-grid {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    column-gap: 18px;
+    row-gap: 8px;
+    margin: 0;
+    font-size: 13px;
+  }
+
+  .about-grid dt {
+    color: var(--muted);
+    font-weight: 650;
+  }
+
+  .about-grid dd {
+    min-width: 0;
+    margin: 0;
+    color: var(--text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .path-control {
