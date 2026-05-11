@@ -4810,6 +4810,8 @@
   .job-list.large {
     flex: 1 1 auto;
     gap: 0;
+    align-content: start;
+    grid-auto-rows: max-content;
     min-height: 0;
     padding-right: 4px;
     overflow: auto;
@@ -5057,6 +5059,8 @@
     display: grid;
     flex: 1 1 auto;
     gap: 0;
+    align-content: start;
+    grid-auto-rows: max-content;
     min-height: 0;
     padding-right: 4px;
     overflow: auto;
