@@ -15,6 +15,7 @@
     AGE_FILTERS,
     DLSITE_URL,
     GITHUB_URL,
+    SOURCE_FILTERS,
     SORT_OPTIONS,
     TYPE_FILTERS,
   } from "$lib/model/constants";
@@ -124,6 +125,7 @@
   let selectedAccountIds = $state<string[]>([]);
   let selectedProductTypes = $state<string[]>([]);
   let selectedAgeCategories = $state<string[]>([]);
+  let selectedProductSources = $state<string[]>([]);
   let selectedMakerNames = $state<string[]>([]);
   let selectedCustomTagNames = $state<string[]>([]);
   let excludedCustomTagNames = $state<string[]>([]);
@@ -440,6 +442,7 @@
       accountIds: selectedAccountIds,
       typeGroups: selectedProductTypes,
       ageCategories: selectedAgeCategories,
+      sourceGroups: selectedProductSources,
       makerNames: selectedMakerNames,
       customTagNames: selectedCustomTagNames,
       excludedCustomTagNames,
@@ -455,6 +458,7 @@
       accountIds: selectedAccountIds,
       typeGroups: selectedProductTypes,
       ageCategories: selectedAgeCategories,
+      sourceGroups: selectedProductSources,
       makerNames: selectedMakerNames,
       customTagNames: selectedCustomTagNames,
       excludedCustomTagNames,
@@ -486,6 +490,11 @@
 
   async function toggleAgeFilter(ageCategory: string) {
     selectedAgeCategories = toggleFilterValue(selectedAgeCategories, ageCategory);
+    await loadProducts();
+  }
+
+  async function toggleProductSourceFilter(sourceGroup: string) {
+    selectedProductSources = toggleFilterValue(selectedProductSources, sourceGroup);
     await loadProducts();
   }
 
@@ -537,6 +546,11 @@
     await loadProducts();
   }
 
+  async function clearSourceFilters() {
+    selectedProductSources = [];
+    await loadProducts();
+  }
+
   async function clearMakerFilters() {
     selectedMakerNames = [];
     await loadProducts();
@@ -558,6 +572,7 @@
     selectedAccountIds = [];
     selectedProductTypes = [];
     selectedAgeCategories = [];
+    selectedProductSources = [];
     selectedMakerNames = [];
     selectedCustomTagNames = [];
     excludedCustomTagNames = [];
@@ -1549,6 +1564,17 @@
     return !!job || (product.download.status === "downloaded" && !product.download.localPath);
   }
 
+  function productIsLocalOnly(product: Product | ProductDetail) {
+    return (
+      product.owners.length === 1 &&
+      product.owners[0]?.accountId === "__local__"
+    );
+  }
+
+  function localOnlyTooltip(workId: string) {
+    return `${workId} is present in the local library but is not owned by any enabled account.`;
+  }
+
   async function runProductDownloadAction(product: Product) {
     if (product.download.status === "downloaded") {
       await openDownloadedProduct(product);
@@ -1715,7 +1741,7 @@
                 type="search"
                 autocomplete="off"
                 spellcheck="false"
-                placeholder="Search title, maker, credit, custom tag, work ID"
+                placeholder="Search title, maker, credit, tag, source, work ID"
                 bind:value={productSearch}
               />
               <button type="submit" disabled={productsLoading}>Search</button>
@@ -1808,6 +1834,29 @@
                     onclick={() => toggleAccountFilter(account.id)}
                   >
                     <span class="filter-chip-label">{account.label}</span>
+                  </button>
+                {/each}
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <span>Source</span>
+              <div class="toggle-row">
+                <button
+                  class:active={selectedProductSources.length === 0}
+                  type="button"
+                  onclick={clearSourceFilters}
+                >
+                  <span class="filter-chip-label">Any</span>
+                </button>
+                {#each SOURCE_FILTERS as [value, label] (value)}
+                  <button
+                    class:active={selectedProductSources.includes(value)}
+                    data-source-filter={value}
+                    type="button"
+                    onclick={() => toggleProductSourceFilter(value)}
+                  >
+                    <span class="filter-chip-label">{label}</span>
                   </button>
                 {/each}
               </div>
@@ -2020,18 +2069,27 @@
                         >
                           {ageLabel(product.ageCategory)}
                         </span>
-	                      {/if}
-	                      {#each product.customTags as tag (tag.name)}
-	                        <span
-	                          class="chip custom-tag-chip"
-	                          role="note"
-	                          title={`Custom tag: ${tag.name}`}
-	                        >
-	                          {tag.name}
-	                        </span>
-	                      {/each}
-	                    </div>
-	                  </div>
+                      {/if}
+                      {#if productIsLocalOnly(product)}
+                        <span
+                          class="chip source-chip source-chip--local"
+                          role="note"
+                          title={localOnlyTooltip(product.workId)}
+                        >
+                          Local Only
+                        </span>
+                      {/if}
+                      {#each product.customTags as tag (tag.name)}
+                        <span
+                          class="chip custom-tag-chip"
+                          role="note"
+                          title={`Custom tag: ${tag.name}`}
+                        >
+                          {tag.name}
+                        </span>
+                      {/each}
+                    </div>
+                  </div>
                   <div class="product-footer">
                     <div class="labeled-row owner-row" aria-label="Owners">
                       <span class="credit-label">Owned by</span>
@@ -2797,11 +2855,20 @@
             <section class="detail-section">
               <h3>Ownership</h3>
               <div class="detail-chip-list">
-                {#each detail.owners as owner (owner.accountId)}
-                  <span title={owner.purchasedAt ? `${owner.label}: ${shortDate(owner.purchasedAt)}` : owner.label}>
-                    {owner.label}
+                {#if productIsLocalOnly(detail)}
+                  <span
+                    class="chip source-chip source-chip--local"
+                    title={localOnlyTooltip(detail.workId)}
+                  >
+                    Local Only
                   </span>
-                {/each}
+                {:else}
+                  {#each detail.owners as owner (owner.accountId)}
+                    <span title={owner.purchasedAt ? `${owner.label}: ${shortDate(owner.purchasedAt)}` : owner.label}>
+                      {owner.label}
+                    </span>
+                  {/each}
+                {/if}
               </div>
             </section>
 
@@ -3625,6 +3692,12 @@
     white-space: nowrap;
   }
 
+  .detail-chip-list .source-chip--local {
+    border-color: rgb(100 181 217 / 58%);
+    color: #9ed8ef;
+    background: rgb(100 181 217 / 13%);
+  }
+
   .detail-chip-list .detail-custom-tag {
     gap: 5px;
     max-width: 100%;
@@ -4009,6 +4082,7 @@
   }
 
   .toggle-row button[data-age-filter],
+  .toggle-row button[data-source-filter],
   .toggle-row button[data-type-filter] {
     --filter-color: #8b949e;
     --filter-soft: rgb(139 148 158 / 12%);
@@ -4019,12 +4093,14 @@
   }
 
   .toggle-row button[data-age-filter]:hover:not(:disabled),
+  .toggle-row button[data-source-filter]:hover:not(:disabled),
   .toggle-row button[data-type-filter]:hover:not(:disabled) {
     border-color: color-mix(in srgb, var(--filter-color) 72%, var(--border-strong));
     color: color-mix(in srgb, var(--filter-color) 82%, var(--text-strong));
   }
 
   .toggle-row button[data-age-filter].active,
+  .toggle-row button[data-source-filter].active,
   .toggle-row button[data-type-filter].active {
     border-color: color-mix(in srgb, var(--filter-color) 82%, white);
     color: var(--text-strong);
@@ -4044,6 +4120,16 @@
   .toggle-row button[data-age-filter="r18"] {
     --filter-color: #d77b7b;
     --filter-soft: rgb(185 64 64 / 16%);
+  }
+
+  .toggle-row button[data-source-filter="owned"] {
+    --filter-color: #9bc89f;
+    --filter-soft: rgb(112 165 120 / 14%);
+  }
+
+  .toggle-row button[data-source-filter="localOnly"] {
+    --filter-color: #64b5d9;
+    --filter-soft: rgb(100 181 217 / 14%);
   }
 
   .toggle-row button[data-type-filter="audio"] {
@@ -4435,6 +4521,12 @@
     border-color: rgb(96 165 250 / 54%);
     color: #9fc8ff;
     background: rgb(96 165 250 / 13%);
+  }
+
+  .source-chip--local {
+    border-color: rgb(100 181 217 / 58%);
+    color: #9ed8ef;
+    background: rgb(100 181 217 / 13%);
   }
 
   .product-footer {

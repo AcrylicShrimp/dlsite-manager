@@ -292,6 +292,12 @@ impl ProductTypeGroup {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductSourceGroup {
+    Owned,
+    LocalOnly,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductListQuery {
     pub search: Option<String>,
@@ -301,6 +307,7 @@ pub struct ProductListQuery {
     pub type_groups: Vec<ProductTypeGroup>,
     pub age_category: Option<ProductAgeCategory>,
     pub age_categories: Vec<ProductAgeCategory>,
+    pub source_groups: Vec<ProductSourceGroup>,
     pub maker_names: Vec<String>,
     pub custom_tag_names: Vec<String>,
     pub excluded_custom_tag_names: Vec<String>,
@@ -319,6 +326,7 @@ impl Default for ProductListQuery {
             type_groups: Vec::new(),
             age_category: None,
             age_categories: Vec::new(),
+            source_groups: Vec::new(),
             maker_names: Vec::new(),
             custom_tag_names: Vec::new(),
             excluded_custom_tag_names: Vec::new(),
@@ -1804,39 +1812,12 @@ fn work_download_state_from_product_row(
 fn push_product_visibility_filter(builder: &mut QueryBuilder<Sqlite>, query: &ProductListQuery) {
     let account_ids = product_account_ids(query);
 
-    builder.push(
-        " AND (
-            EXISTS (
-                SELECT 1
-                FROM account_works visible_aw
-                JOIN accounts visible_a ON visible_a.id = visible_aw.account_id
-                WHERE visible_aw.work_id = w.work_id
-                    AND visible_aw.is_current = 1
-                    AND visible_a.enabled = 1",
-    );
-
-    if !account_ids.is_empty() {
-        builder.push(" AND visible_aw.account_id IN (");
-        for (index, account_id) in account_ids.iter().enumerate() {
-            if index > 0 {
-                builder.push(", ");
-            }
-            builder.push_bind((*account_id).to_owned());
-        }
-        builder.push(")");
-    }
-
-    builder.push(")");
+    builder.push(" AND (");
+    push_product_owned_condition(builder, &account_ids);
 
     if account_ids.is_empty() {
-        builder.push(
-            " OR EXISTS (
-                SELECT 1
-                FROM work_downloads visible_wd
-                WHERE visible_wd.work_id = w.work_id
-                    AND visible_wd.status = 'downloaded'
-            )",
-        );
+        builder.push(" OR ");
+        push_product_has_download_condition(builder);
     }
 
     builder.push(")");
@@ -1884,6 +1865,22 @@ fn push_product_filters_internal(
                 builder.push(", ");
             }
             builder.push_bind(type_group.as_storage_value());
+        }
+        builder.push(")");
+    }
+
+    let source_groups = product_source_groups(query);
+    if !source_groups.is_empty() && source_groups.len() < 2 {
+        builder.push(" AND (");
+        for (index, source_group) in source_groups.iter().enumerate() {
+            if index > 0 {
+                builder.push(" OR ");
+            }
+
+            match source_group {
+                ProductSourceGroup::Owned => push_product_owned_condition(builder, &[]),
+                ProductSourceGroup::LocalOnly => push_product_local_only_condition(builder),
+            }
         }
         builder.push(")");
     }
@@ -1983,8 +1980,59 @@ fn push_product_filters_internal(
                         AND search_wct.name LIKE ",
         );
         builder.push_bind(pattern);
-        builder.push(" ESCAPE '\\'))");
+        builder.push(" ESCAPE '\\')");
+
+        if search_matches_local_only_source(search) {
+            builder.push(" OR ");
+            push_product_local_only_condition(builder);
+        }
+
+        builder.push(")");
     }
+}
+
+fn push_product_owned_condition(builder: &mut QueryBuilder<Sqlite>, account_ids: &[&str]) {
+    builder.push(
+        "EXISTS (
+            SELECT 1
+            FROM account_works source_aw
+            JOIN accounts source_a ON source_a.id = source_aw.account_id
+            WHERE source_aw.work_id = w.work_id
+                AND source_aw.is_current = 1
+                AND source_a.enabled = 1",
+    );
+
+    if !account_ids.is_empty() {
+        builder.push(" AND source_aw.account_id IN (");
+        for (index, account_id) in account_ids.iter().enumerate() {
+            if index > 0 {
+                builder.push(", ");
+            }
+            builder.push_bind((*account_id).to_owned());
+        }
+        builder.push(")");
+    }
+
+    builder.push(")");
+}
+
+fn push_product_has_download_condition(builder: &mut QueryBuilder<Sqlite>) {
+    builder.push(
+        "EXISTS (
+            SELECT 1
+            FROM work_downloads source_wd
+            WHERE source_wd.work_id = w.work_id
+                AND source_wd.status = 'downloaded'
+        )",
+    );
+}
+
+fn push_product_local_only_condition(builder: &mut QueryBuilder<Sqlite>) {
+    builder.push("(NOT ");
+    push_product_owned_condition(builder, &[]);
+    builder.push(" AND ");
+    push_product_has_download_condition(builder);
+    builder.push(")");
 }
 
 fn product_account_ids(query: &ProductListQuery) -> Vec<&str> {
@@ -2029,6 +2077,16 @@ fn product_type_groups(query: &ProductListQuery) -> Vec<ProductTypeGroup> {
     values
 }
 
+fn product_source_groups(query: &ProductListQuery) -> Vec<ProductSourceGroup> {
+    let mut values = Vec::new();
+
+    for source_group in &query.source_groups {
+        push_unique_copy(&mut values, *source_group);
+    }
+
+    values
+}
+
 fn product_maker_names(query: &ProductListQuery) -> Vec<&str> {
     let mut names = Vec::new();
 
@@ -2048,6 +2106,15 @@ fn product_custom_tag_names(query: &ProductListQuery) -> Vec<String> {
 
 fn product_excluded_custom_tag_names(query: &ProductListQuery) -> Vec<String> {
     normalize_custom_tags_for_filter(&query.excluded_custom_tag_names)
+}
+
+fn search_matches_local_only_source(search: &str) -> bool {
+    let normalized = search.trim().to_lowercase().replace(['_', '-'], " ");
+
+    normalized.contains("local")
+        || normalized.contains("not owned")
+        || normalized.contains("notowned")
+        || normalized.contains("unowned")
 }
 
 fn normalize_custom_tags_for_filter(tags: &[String]) -> Vec<String> {
@@ -3951,6 +4018,102 @@ mod tests {
         );
         assert_eq!(account_page.total_count, 0);
         assert_eq!(account_page.products.len(), 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn product_list_filters_and_searches_local_only_source() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-1",
+                vec![work(
+                    "RJ000001",
+                    "Owned Work",
+                    "Circle One",
+                    "2026-01-01T00:00:00Z",
+                )],
+                vec![account_work("RJ000001", "2026-02-01T00:00:00Z")],
+            ))
+            .await?;
+        storage
+            .import_local_work_downloads(&[LocalWorkDownloadImport {
+                work: CachedWork {
+                    work_id: "RJ123456".to_owned(),
+                    title: "[RJ123456] Local Folder".to_owned(),
+                    title_json: r#"{"en_US":"[RJ123456] Local Folder"}"#.to_owned(),
+                    maker_id: None,
+                    maker_name: None,
+                    maker_json: None,
+                    work_type: None,
+                    age_category: None,
+                    thumbnail_url: None,
+                    registered_at: None,
+                    published_at: None,
+                    updated_at: None,
+                    raw_json: r#"{"workno":"RJ123456","source":"local_scan","detail_status":"local_only"}"#
+                        .to_owned(),
+                    last_detail_sync_at: "2026-05-11T00:00:00.000Z".to_owned(),
+                },
+                download: WorkDownloadUpdate {
+                    work_id: "RJ123456".to_owned(),
+                    status: WorkDownloadStatus::Downloaded,
+                    local_path: Some("/library/[RJ123456] Local Folder".to_owned()),
+                    staging_path: None,
+                    unpack_policy: "manual".to_owned(),
+                    bytes_received: 0,
+                    bytes_total: None,
+                    error_code: None,
+                    error_message: None,
+                    started_at: Some("2026-05-11T00:00:00.000Z".to_owned()),
+                    completed_at: Some("2026-05-11T00:00:00.000Z".to_owned()),
+                    updated_at: "2026-05-11T00:00:00.000Z".to_owned(),
+                },
+            }])
+            .await?;
+
+        let local_page = storage
+            .list_products(&ProductListQuery {
+                source_groups: vec![ProductSourceGroup::LocalOnly],
+                ..ProductListQuery::default()
+            })
+            .await?;
+        let owned_page = storage
+            .list_products(&ProductListQuery {
+                source_groups: vec![ProductSourceGroup::Owned],
+                ..ProductListQuery::default()
+            })
+            .await?;
+        let searched_page = storage
+            .list_products(&ProductListQuery {
+                search: Some("not owned".to_owned()),
+                ..ProductListQuery::default()
+            })
+            .await?;
+        let account_local_page = storage
+            .list_products(&ProductListQuery {
+                account_id: Some("account-a".to_owned()),
+                source_groups: vec![ProductSourceGroup::LocalOnly],
+                ..ProductListQuery::default()
+            })
+            .await?;
+
+        assert_eq!(local_page.total_count, 1);
+        assert_eq!(local_page.products[0].work_id, "RJ123456");
+        assert_eq!(
+            local_page.products[0].owners[0].account_id,
+            LOCAL_PRODUCT_OWNER_ID
+        );
+        assert_eq!(owned_page.total_count, 1);
+        assert_eq!(owned_page.products[0].work_id, "RJ000001");
+        assert_eq!(searched_page.total_count, 1);
+        assert_eq!(searched_page.products[0].work_id, "RJ123456");
+        assert_eq!(account_local_page.total_count, 0);
 
         Ok(())
     }

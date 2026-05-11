@@ -16,8 +16,8 @@ use dm_library::{
 use dm_storage::{
     Account, AppSettings, ProductAgeCategory, ProductCreditGroup, ProductCustomTag,
     ProductCustomTagFacet, ProductDetail, ProductFilterFacets, ProductListItem, ProductListPage,
-    ProductListQuery, ProductMakerFacet, ProductOwner, ProductSort, ProductTag, ProductTextValue,
-    ProductTypeGroup, Storage, WorkDownloadState, WorkDownloadStatus,
+    ProductListQuery, ProductMakerFacet, ProductOwner, ProductSort, ProductSourceGroup, ProductTag,
+    ProductTextValue, ProductTypeGroup, Storage, WorkDownloadState, WorkDownloadStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -1850,6 +1850,7 @@ struct ListProductsRequest {
     type_groups: Option<Vec<ProductTypeGroupDto>>,
     age_category: Option<ProductAgeCategoryDto>,
     age_categories: Option<Vec<ProductAgeCategoryDto>>,
+    source_groups: Option<Vec<ProductSourceGroupDto>>,
     maker_names: Option<Vec<String>>,
     custom_tag_names: Option<Vec<String>>,
     excluded_custom_tag_names: Option<Vec<String>>,
@@ -1874,6 +1875,12 @@ impl ListProductsRequest {
             age_category: self.age_category.map(Into::into),
             age_categories: self
                 .age_categories
+                .unwrap_or_default()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            source_groups: self
+                .source_groups
                 .unwrap_or_default()
                 .into_iter()
                 .map(Into::into)
@@ -1956,6 +1963,22 @@ impl From<ProductTypeGroupDto> for ProductTypeGroup {
             ProductTypeGroupDto::Game => Self::Game,
             ProductTypeGroupDto::Image => Self::Image,
             ProductTypeGroupDto::Other => Self::Other,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum ProductSourceGroupDto {
+    Owned,
+    LocalOnly,
+}
+
+impl From<ProductSourceGroupDto> for ProductSourceGroup {
+    fn from(source_group: ProductSourceGroupDto) -> Self {
+        match source_group {
+            ProductSourceGroupDto::Owned => Self::Owned,
+            ProductSourceGroupDto::LocalOnly => Self::LocalOnly,
         }
     }
 }
@@ -2401,6 +2424,7 @@ struct BulkWorkDownloadCommandRequest {
     type_groups: Option<Vec<ProductTypeGroupDto>>,
     age_category: Option<ProductAgeCategoryDto>,
     age_categories: Option<Vec<ProductAgeCategoryDto>>,
+    source_groups: Option<Vec<ProductSourceGroupDto>>,
     maker_names: Option<Vec<String>>,
     custom_tag_names: Option<Vec<String>>,
     excluded_custom_tag_names: Option<Vec<String>>,
@@ -2426,6 +2450,13 @@ impl BulkWorkDownloadCommandRequest {
             age_category: self.age_category.map(Into::into),
             age_categories: self
                 .age_categories
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            source_groups: self
+                .source_groups
                 .clone()
                 .unwrap_or_default()
                 .into_iter()

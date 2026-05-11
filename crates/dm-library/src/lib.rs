@@ -2718,6 +2718,11 @@ mod tests {
             )
             .await?;
         let page = library.list_products(&ProductListQuery::default()).await?;
+        let product = page
+            .products
+            .iter()
+            .find(|product| product.work_id == "RJ000001")
+            .expect("downloaded work in product list");
         let events = sink.events.lock().expect("download events lock");
 
         assert_eq!(report.work_id, "RJ000001");
@@ -2729,12 +2734,9 @@ mod tests {
             .join(format!("RJ000001/{SERIAL_INFORMATION_FILE_NAME}"))
             .exists());
         assert!(!download_root.join("RJ000001").exists());
+        assert_eq!(product.download.status, WorkDownloadStatus::Downloaded);
         assert_eq!(
-            page.products[0].download.status,
-            WorkDownloadStatus::Downloaded
-        );
-        assert_eq!(
-            page.products[0].download.local_path,
+            product.download.local_path,
             Some(library_root.join("RJ000001").to_string_lossy().into_owned())
         );
         assert!(matches!(
@@ -2902,10 +2904,12 @@ mod tests {
         assert_eq!(state.unpack_policy, Some("manual".to_owned()));
 
         let page = library.list_products(&ProductListQuery::default()).await?;
-        assert_eq!(
-            page.products[0].download.status,
-            WorkDownloadStatus::Downloaded
-        );
+        let product = page
+            .products
+            .iter()
+            .find(|product| product.work_id == "RJ000001")
+            .expect("marked work in product list");
+        assert_eq!(product.download.status, WorkDownloadStatus::Downloaded);
 
         std::fs::remove_dir_all(root).unwrap();
 

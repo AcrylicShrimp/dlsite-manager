@@ -17,6 +17,11 @@ export const AGE_FILTERS = [
   ["r18", "R-18"],
 ] as const;
 
+export const SOURCE_FILTERS = [
+  ["owned", "Owned"],
+  ["localOnly", "Local Only"],
+] as const;
+
 export const SORT_OPTIONS = [
   ["latestPurchaseDesc", "Latest Purchase"],
   ["publishedAtDesc", "Published"],
