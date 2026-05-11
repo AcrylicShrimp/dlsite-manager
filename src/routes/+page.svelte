@@ -93,6 +93,15 @@
     preview: BulkWorkDownloadPreview;
   };
 
+  type ConfirmationDialog = {
+    eyebrow: string;
+    title: string;
+    message: string;
+    confirmLabel: string;
+    cancelLabel: string;
+    tone: "danger" | "default";
+  };
+
   type BulkSucceededWork = {
     workId: string;
     localPath: string | null;
@@ -346,9 +355,11 @@
   let productActionMenu = $state<ProductActionMenu | null>(null);
   let chipTooltip = $state<ChipTooltip | null>(null);
   let bulkDownloadDialog = $state<BulkDownloadDialog | null>(null);
+  let confirmationDialog = $state<ConfirmationDialog | null>(null);
 
   let toastSequence = 0;
   let bulkDownloadDialogResolve: ((confirmed: boolean) => void) | null = null;
+  let confirmationDialogResolve: ((confirmed: boolean) => void) | null = null;
   const toastTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   onMount(() => {
@@ -382,6 +393,11 @@
     if (bulkDownloadDialogResolve) {
       bulkDownloadDialogResolve(false);
       bulkDownloadDialogResolve = null;
+    }
+
+    if (confirmationDialogResolve) {
+      confirmationDialogResolve(false);
+      confirmationDialogResolve = null;
     }
   });
 
@@ -743,6 +759,11 @@
       return;
     }
 
+    if (confirmationDialog) {
+      closeConfirmationDialog(false);
+      return;
+    }
+
     if (bulkDownloadDialog) {
       closeBulkDownloadDialog(false);
       return;
@@ -911,9 +932,15 @@
   async function redownloadProduct(product: Product) {
     closeProductActionMenu();
 
-    const confirmed = window.confirm(
-      `Re-download ${product.workId}?\n\nThis will replace the local folder after the new download completes. Any changes you made inside that folder will be removed.`,
-    );
+    const confirmed = await showConfirmationDialog({
+      eyebrow: "Re-download",
+      title: `Re-download ${product.workId}?`,
+      message:
+        "This will replace the local folder after the new download completes. Any changes inside that folder will be removed.",
+      confirmLabel: "Re-download",
+      cancelLabel: "Cancel",
+      tone: "danger",
+    });
 
     if (!confirmed) {
       return;
@@ -932,9 +959,15 @@
   async function deleteDownloadedProduct(product: Product) {
     closeProductActionMenu();
 
-    const confirmed = window.confirm(
-      `Delete downloaded files for ${product.workId}?\n\nThis removes the local downloaded folder and any staging files. Cached ownership stays intact, so you can download it again later.`,
-    );
+    const confirmed = await showConfirmationDialog({
+      eyebrow: "Delete Download",
+      title: `Delete downloaded files for ${product.workId}?`,
+      message:
+        "This removes the local downloaded folder and any staging files. Cached ownership stays intact, so you can download it again later.",
+      confirmLabel: "Delete Download",
+      cancelLabel: "Cancel",
+      tone: "danger",
+    });
 
     if (!confirmed) {
       return;
@@ -1483,6 +1516,25 @@
 
     bulkDownloadDialogResolve = null;
     bulkDownloadDialog = null;
+    resolve?.(confirmed);
+  }
+
+  function showConfirmationDialog(dialog: ConfirmationDialog) {
+    if (confirmationDialogResolve) {
+      confirmationDialogResolve(false);
+    }
+
+    return new Promise<boolean>((resolve) => {
+      confirmationDialogResolve = resolve;
+      confirmationDialog = dialog;
+    });
+  }
+
+  function closeConfirmationDialog(confirmed = false) {
+    const resolve = confirmationDialogResolve;
+
+    confirmationDialogResolve = null;
+    confirmationDialog = null;
     resolve?.(confirmed);
   }
 
@@ -2443,6 +2495,58 @@
     {/if}
   </section>
 
+  {#if confirmationDialog}
+    <div
+      class="confirmation-dialog-layer"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="confirmation-dialog-title"
+      aria-describedby="confirmation-dialog-message"
+    >
+      <button
+        class="confirmation-dialog-backdrop"
+        type="button"
+        aria-label="Close confirmation dialog"
+        onclick={() => closeConfirmationDialog(false)}
+      ></button>
+      <section class:danger={confirmationDialog.tone === "danger"} class="confirmation-dialog-panel">
+        <div class="confirmation-dialog-heading">
+          <div>
+            <p>{confirmationDialog.eyebrow}</p>
+            <h2 id="confirmation-dialog-title">{confirmationDialog.title}</h2>
+          </div>
+          <button
+            class="confirmation-dialog-close"
+            type="button"
+            aria-label="Close confirmation dialog"
+            onclick={() => closeConfirmationDialog(false)}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <p id="confirmation-dialog-message" class="confirmation-dialog-message">
+          {confirmationDialog.message}
+        </p>
+
+        <div class="confirmation-dialog-actions">
+          <button class="secondary" type="button" onclick={() => closeConfirmationDialog(false)}>
+            {confirmationDialog.cancelLabel}
+          </button>
+          <button
+            class:danger-action={confirmationDialog.tone === "danger"}
+            type="button"
+            onclick={() => closeConfirmationDialog(true)}
+          >
+            {confirmationDialog.confirmLabel}
+          </button>
+        </div>
+      </section>
+    </div>
+  {/if}
+
   {#if bulkDownloadDialog}
     <div
       class="bulk-dialog-layer"
@@ -2901,6 +3005,118 @@
     stroke-linecap: round;
     stroke-linejoin: round;
     stroke-width: 2.2;
+  }
+
+  .confirmation-dialog-layer {
+    position: fixed;
+    z-index: 60;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+  }
+
+  .confirmation-dialog-backdrop {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: rgb(0 0 0 / 68%);
+    cursor: default;
+  }
+
+  .confirmation-dialog-panel {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    gap: 16px;
+    width: min(520px, calc(100vw - 40px));
+    padding: 18px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--panel);
+    box-shadow: 0 24px 64px rgb(0 0 0 / 52%);
+  }
+
+  .confirmation-dialog-panel.danger {
+    border-color: rgb(248 113 113 / 42%);
+  }
+
+  .confirmation-dialog-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: start;
+  }
+
+  .confirmation-dialog-heading p,
+  .confirmation-dialog-message {
+    margin: 0;
+  }
+
+  .confirmation-dialog-heading p {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .confirmation-dialog-heading h2 {
+    margin-top: 2px;
+    font-size: 20px;
+    line-height: 1.2;
+  }
+
+  .confirmation-dialog-close {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    padding: 0;
+    border-color: var(--border-strong);
+    color: var(--muted);
+    background: var(--panel-raised);
+  }
+
+  .confirmation-dialog-close:hover {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+
+  .confirmation-dialog-close svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 2.35;
+  }
+
+  .confirmation-dialog-message {
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .confirmation-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  button.danger-action {
+    border-color: #fca5a5;
+    color: #1b0707;
+    background: #fca5a5;
+  }
+
+  button.danger-action:hover:not(:disabled) {
+    border-color: #fecaca;
+    background: #fecaca;
   }
 
   .bulk-dialog-layer {
