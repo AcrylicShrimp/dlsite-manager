@@ -14,9 +14,9 @@ use dm_library::{
     WorkDownloadRemovalRequest, WorkDownloadRequest,
 };
 use dm_storage::{
-    Account, AppSettings, ProductAgeCategory, ProductCreditGroup, ProductListItem, ProductListPage,
-    ProductListQuery, ProductOwner, ProductSort, ProductTypeGroup, Storage, WorkDownloadState,
-    WorkDownloadStatus,
+    Account, AppSettings, ProductAgeCategory, ProductCreditGroup, ProductDetail, ProductListItem,
+    ProductListPage, ProductListQuery, ProductOwner, ProductSort, ProductTag, ProductTextValue,
+    ProductTypeGroup, Storage, WorkDownloadState, WorkDownloadStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -402,6 +402,21 @@ async fn list_products(
         .list_products(&request.into_query()?)
         .await
         .map(ProductListPageDto::from)
+        .map_err(command_error)
+}
+
+#[tauri::command]
+async fn get_product_detail(
+    state: State<'_, AppState>,
+    request: GetProductDetailRequest,
+) -> Result<ProductDetailDto, String> {
+    let work_id = normalize_required_id(request.work_id)?;
+
+    state
+        .library
+        .product_detail(&work_id)
+        .await
+        .map(ProductDetailDto::from)
         .map_err(command_error)
 }
 
@@ -1772,6 +1787,12 @@ impl ListProductsRequest {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GetProductDetailRequest {
+    work_id: String,
+}
+
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 enum ProductSortDto {
@@ -1929,6 +1950,90 @@ impl From<ProductListItem> for ProductListItemDto {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ProductDetailDto {
+    work_id: String,
+    title: String,
+    title_variants: Vec<ProductTextValueDto>,
+    maker_id: Option<String>,
+    maker_name: Option<String>,
+    maker_names: Vec<ProductTextValueDto>,
+    work_type: Option<String>,
+    age_category: Option<String>,
+    thumbnail_url: Option<String>,
+    content_size_bytes: Option<u64>,
+    registered_at: Option<String>,
+    published_at: Option<String>,
+    updated_at: Option<String>,
+    last_detail_sync_at: String,
+    earliest_purchased_at: Option<String>,
+    latest_purchased_at: Option<String>,
+    credit_groups: Vec<ProductCreditGroupDto>,
+    tags: Vec<ProductTagDto>,
+    download: WorkDownloadStateDto,
+    owners: Vec<ProductOwnerDto>,
+}
+
+impl From<ProductDetail> for ProductDetailDto {
+    fn from(detail: ProductDetail) -> Self {
+        Self {
+            work_id: detail.work_id,
+            title: detail.title,
+            title_variants: detail
+                .title_variants
+                .into_iter()
+                .map(ProductTextValueDto::from)
+                .collect(),
+            maker_id: detail.maker_id,
+            maker_name: detail.maker_name,
+            maker_names: detail
+                .maker_names
+                .into_iter()
+                .map(ProductTextValueDto::from)
+                .collect(),
+            work_type: detail.work_type,
+            age_category: detail.age_category,
+            thumbnail_url: detail.thumbnail_url,
+            content_size_bytes: detail.content_size_bytes,
+            registered_at: detail.registered_at,
+            published_at: detail.published_at,
+            updated_at: detail.updated_at,
+            last_detail_sync_at: detail.last_detail_sync_at,
+            earliest_purchased_at: detail.earliest_purchased_at,
+            latest_purchased_at: detail.latest_purchased_at,
+            credit_groups: detail
+                .credit_groups
+                .into_iter()
+                .map(ProductCreditGroupDto::from)
+                .collect(),
+            tags: detail.tags.into_iter().map(ProductTagDto::from).collect(),
+            download: WorkDownloadStateDto::from(detail.download),
+            owners: detail
+                .owners
+                .into_iter()
+                .map(ProductOwnerDto::from)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProductTextValueDto {
+    language: String,
+    value: String,
+}
+
+impl From<ProductTextValue> for ProductTextValueDto {
+    fn from(value: ProductTextValue) -> Self {
+        Self {
+            language: value.language,
+            value: value.value,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct WorkDownloadStateDto {
     status: WorkDownloadStatusDto,
     local_path: Option<String>,
@@ -2043,6 +2148,22 @@ impl From<ProductCreditGroup> for ProductCreditGroupDto {
             kind: group.kind,
             label: group.label,
             names: group.names,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProductTagDto {
+    class: String,
+    name: String,
+}
+
+impl From<ProductTag> for ProductTagDto {
+    fn from(tag: ProductTag) -> Self {
+        Self {
+            class: tag.class,
+            name: tag.name,
         }
     }
 }
@@ -3205,6 +3326,7 @@ pub fn run() {
             set_account_enabled,
             remove_account,
             list_products,
+            get_product_detail,
             start_account_sync,
             start_work_download,
             start_bulk_work_download,

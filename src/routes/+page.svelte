@@ -69,6 +69,16 @@
     names: string[];
   };
 
+  type ProductTextValue = {
+    language: string;
+    value: string;
+  };
+
+  type ProductTag = {
+    class: string;
+    name: string;
+  };
+
   type Product = {
     workId: string;
     title: string;
@@ -88,6 +98,29 @@
   type ProductListPage = {
     totalCount: number;
     products: Product[];
+  };
+
+  type ProductDetail = {
+    workId: string;
+    title: string;
+    titleVariants: ProductTextValue[];
+    makerId: string | null;
+    makerName: string | null;
+    makerNames: ProductTextValue[];
+    workType: string | null;
+    ageCategory: string | null;
+    thumbnailUrl: string | null;
+    contentSizeBytes: number | null;
+    registeredAt: string | null;
+    publishedAt: string | null;
+    updatedAt: string | null;
+    lastDetailSyncAt: string;
+    earliestPurchasedAt: string | null;
+    latestPurchasedAt: string | null;
+    creditGroups: ProductCreditGroup[];
+    tags: ProductTag[];
+    download: ProductDownload;
+    owners: ProductOwner[];
   };
 
   type BulkWorkDownloadPreview = {
@@ -380,6 +413,8 @@
   let toasts = $state<Toast[]>([]);
   let productImagePreview = $state<ProductImagePreview | null>(null);
   let productActionMenu = $state<ProductActionMenu | null>(null);
+  let productDetail = $state<ProductDetail | null>(null);
+  let productDetailLoadingWorkId = $state<string | null>(null);
   let chipTooltip = $state<ChipTooltip | null>(null);
   let bulkDownloadDialog = $state<BulkDownloadDialog | null>(null);
   let confirmationDialog = $state<ConfirmationDialog | null>(null);
@@ -788,6 +823,16 @@
         },
       };
     });
+
+    if (productDetail?.workId === workId) {
+      productDetail = {
+        ...productDetail,
+        download: {
+          ...productDetail.download,
+          ...patch,
+        },
+      };
+    }
   }
 
   function setProductDownload(workId: string, download: ProductDownload) {
@@ -796,9 +841,16 @@
         ? {
             ...product,
             download,
-          }
+        }
         : product,
     );
+
+    if (productDetail?.workId === workId) {
+      productDetail = {
+        ...productDetail,
+        download,
+      };
+    }
   }
 
   async function searchProducts(event: Event) {
@@ -828,6 +880,42 @@
     }
   }
 
+  async function copyText(label: string, value: string | null | undefined) {
+    const normalized = value?.trim();
+
+    if (!normalized) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(normalized);
+      notifySuccess(`Copied ${label}`);
+    } catch (err) {
+      notifyError(errorMessage(err));
+    }
+  }
+
+  async function openProductDetail(product: Product) {
+    closeProductActionMenu();
+    productDetailLoadingWorkId = product.workId;
+
+    try {
+      productDetail = await invoke<ProductDetail>("get_product_detail", {
+        request: {
+          workId: product.workId,
+        },
+      });
+    } catch (err) {
+      notifyError(errorMessage(err));
+    } finally {
+      productDetailLoadingWorkId = null;
+    }
+  }
+
+  function closeProductDetail() {
+    productDetail = null;
+  }
+
   function openProductImage(product: Product) {
     if (!product.thumbnailUrl) {
       return;
@@ -838,6 +926,24 @@
       title: product.title,
       workId: product.workId,
     };
+  }
+
+  function openProductImageFromDetail(detail: ProductDetail) {
+    openProductImage({
+      workId: detail.workId,
+      title: detail.title,
+      makerName: detail.makerName,
+      workType: detail.workType,
+      ageCategory: detail.ageCategory,
+      thumbnailUrl: detail.thumbnailUrl,
+      publishedAt: detail.publishedAt,
+      updatedAt: detail.updatedAt,
+      earliestPurchasedAt: detail.earliestPurchasedAt,
+      latestPurchasedAt: detail.latestPurchasedAt,
+      creditGroups: detail.creditGroups,
+      download: detail.download,
+      owners: detail.owners,
+    });
   }
 
   function closeProductImage() {
@@ -865,6 +971,11 @@
 
     if (productImagePreview) {
       closeProductImage();
+      return;
+    }
+
+    if (productDetail) {
+      closeProductDetail();
     }
   }
 
@@ -1918,7 +2029,11 @@
   }
 
   function productType(product: Product): ProductTypeInfo {
-    const raw = product.workType?.trim() || "";
+    return productTypeFromCode(product.workType);
+  }
+
+  function productTypeFromCode(workType: string | null): ProductTypeInfo {
+    const raw = workType?.trim() || "";
     const upper = raw.toUpperCase();
     const knownType = productTypeCodeDetails[upper];
 
@@ -2086,7 +2201,7 @@
     return group.names.join(", ");
   }
 
-  function productCreditFields(product: Product): ProductCreditField[] {
+  function productCreditFields(product: { makerName: string | null; creditGroups: ProductCreditGroup[] }): ProductCreditField[] {
     return creditFieldDefinitions.map((definition) => {
       const value =
         definition.key === "maker"
@@ -2101,13 +2216,65 @@
     });
   }
 
-  function creditTextForKind(product: Product, kind: string) {
+  function creditTextForKind(product: { creditGroups: ProductCreditGroup[] }, kind: string) {
     const group = product.creditGroups?.find((item) => item.kind === kind);
     return group ? creditText(group).trim() : "";
   }
 
   function creditTooltip(field: ProductCreditField) {
     return field.missing ? `${field.label}: Not available` : `${field.label}: ${field.value}`;
+  }
+
+  function textVariantsLabel(values: ProductTextValue[]) {
+    return values.map((item) => `${languageLabel(item.language)}: ${item.value}`).join("\n");
+  }
+
+  function languageLabel(value: string) {
+    switch (value) {
+      case "en_US":
+        return "English";
+      case "ja_JP":
+        return "Japanese";
+      case "ko_KR":
+        return "Korean";
+      case "zh_CN":
+        return "Chinese";
+      case "zh_TW":
+        return "Taiwanese";
+      default:
+        return value;
+    }
+  }
+
+  function detailTags(detail: ProductDetail) {
+    return detail.tags.filter((tag) => !tag.class.endsWith("_by"));
+  }
+
+  function detailValue(value: string | number | null | undefined) {
+    if (value === null || value === undefined || value === "") {
+      return "-";
+    }
+
+    return String(value);
+  }
+
+  function detailDate(value: string | null) {
+    return value ? shortDate(value) : "-";
+  }
+
+  function downloadStatusLabel(status: WorkDownloadStatus) {
+    switch (status) {
+      case "notDownloaded":
+        return "Not downloaded";
+      case "downloading":
+        return "Downloading";
+      case "downloaded":
+        return "Downloaded";
+      case "failed":
+        return "Failed";
+      case "cancelled":
+        return "Cancelled";
+    }
   }
 
   function notifySuccess(message: string) {
@@ -2357,7 +2524,10 @@
                     type="button"
                     title={`Preview ${product.title}`}
                     aria-label={`Preview image for ${product.title}`}
-                    onclick={() => openProductImage(product)}
+                    onclick={(event) => {
+                      event.stopPropagation();
+                      openProductImage(product);
+                    }}
                   >
                     <img src={product.thumbnailUrl} alt="" loading="lazy" />
                   </button>
@@ -2368,12 +2538,23 @@
                 {/if}
                 <div class="product-main">
                   <div class="product-title-row">
-                    <div class="product-title" title={product.title}>{product.title}</div>
+                    <button
+                      class="product-title"
+                      type="button"
+                      title={`Open details for ${product.title}`}
+                      disabled={productDetailLoadingWorkId === product.workId}
+                      onclick={() => openProductDetail(product)}
+                    >
+                      {product.title}
+                    </button>
                     <button
                       class="work-id"
                       type="button"
                       title={`Copy ${product.workId}`}
-                      onclick={() => copyWorkId(product.workId)}
+                      onclick={(event) => {
+                        event.stopPropagation();
+                        void copyWorkId(product.workId);
+                      }}
                     >
                       {product.workId}
                     </button>
@@ -2386,7 +2567,10 @@
                         title={creditTooltip(field)}
                         aria-label={field.missing ? `${field.label} is not available` : `Copy ${field.label}: ${field.value}`}
                         disabled={field.missing}
-                        onclick={() => copyCreditField(field)}
+                        onclick={(event) => {
+                          event.stopPropagation();
+                          void copyCreditField(field);
+                        }}
                       >
                         <span class="credit-label">{field.label}</span>
                         <span class:missing={field.missing} class="credit-value">{field.value}</span>
@@ -2440,7 +2624,10 @@
                         type="button"
                         title={productDownloadActionTitle(product, downloadJob)}
                         disabled={productDownloadActionDisabled(product, downloadJob)}
-                        onclick={() => runProductDownloadAction(product)}
+                        onclick={(event) => {
+                          event.stopPropagation();
+                          void runProductDownloadAction(product);
+                        }}
                       >
                         {productDownloadActionLabel(product, downloadJob)}
                       </button>
@@ -2449,7 +2636,10 @@
                         type="button"
                         title="More actions"
                         aria-expanded={productActionMenu?.workId === product.workId}
-                        onclick={(event) => toggleProductActionMenu(product, event)}
+                        onclick={(event) => {
+                          event.stopPropagation();
+                          toggleProductActionMenu(product, event);
+                        }}
                       >
                         ...
                       </button>
@@ -3051,6 +3241,203 @@
               Start Download
             </button>
           {/if}
+        </div>
+      </section>
+    </div>
+  {/if}
+
+  {#if productDetail}
+    {@const detail = productDetail}
+    {@const detailTypeInfo = productTypeFromCode(detail.workType)}
+    {@const genericTags = detailTags(detail)}
+    <div
+      class="product-detail"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="product-detail-title"
+      tabindex="-1"
+    >
+      <button
+        class="product-detail-backdrop"
+        type="button"
+        aria-label="Close product detail"
+        onclick={closeProductDetail}
+      ></button>
+      <section class="product-detail-panel" data-tone={detailTypeInfo.tone}>
+        <div class="product-detail-belt" aria-hidden="true"></div>
+        <div class="product-detail-heading">
+          {#if detail.thumbnailUrl}
+            <button
+              class="detail-thumb"
+              type="button"
+              aria-label={`Preview image for ${detail.title}`}
+              onclick={() => openProductImageFromDetail(detail)}
+            >
+              <img src={detail.thumbnailUrl} alt="" />
+            </button>
+          {:else}
+            <div class="detail-thumb missing-thumb" aria-hidden="true">?</div>
+          {/if}
+
+          <div class="product-detail-title-block">
+            <p>Product detail</p>
+            <h2 id="product-detail-title">{detail.title}</h2>
+            {#if detail.titleVariants.length > 0}
+              <button
+                class="link-button"
+                type="button"
+                title={textVariantsLabel(detail.titleVariants)}
+                onclick={() => copyText("title", detail.title)}
+              >
+                Copy title
+              </button>
+            {/if}
+          </div>
+
+          <button
+            class="work-id detail-work-id"
+            type="button"
+            title={`Copy ${detail.workId}`}
+            onclick={() => copyWorkId(detail.workId)}
+          >
+            {detail.workId}
+          </button>
+
+          <button
+            class="image-preview-close"
+            type="button"
+            aria-label="Close product detail"
+            onclick={closeProductDetail}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="product-detail-body">
+          <section class="detail-section">
+            <h3>Identity</h3>
+            <div class="detail-grid">
+              <div>
+                <span>Maker</span>
+                <button type="button" onclick={() => copyText("maker", detail.makerName)}>
+                  {detailValue(detail.makerName)}
+                </button>
+              </div>
+              <div>
+                <span>Maker ID</span>
+                <button type="button" onclick={() => copyText("maker ID", detail.makerId)}>
+                  {detailValue(detail.makerId)}
+                </button>
+              </div>
+              <div>
+                <span>Type</span>
+                <span>{detailTypeInfo.label}</span>
+              </div>
+              <div>
+                <span>Age</span>
+                <span>{ageLabel(detail.ageCategory) || "-"}</span>
+              </div>
+              <div>
+                <span>Size</span>
+                <span>{detail.contentSizeBytes ? formatBytes(detail.contentSizeBytes) : "-"}</span>
+              </div>
+              <div>
+                <span>Last detail sync</span>
+                <span>{detailDate(detail.lastDetailSyncAt)}</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="detail-section">
+            <h3>Credits</h3>
+            <div class="detail-credit-list">
+              {#each productCreditFields(detail) as field (field.key)}
+                <button
+                  type="button"
+                  disabled={field.missing}
+                  title={creditTooltip(field)}
+                  onclick={() => copyCreditField(field)}
+                >
+                  <span>{field.label}</span>
+                  <strong class:missing={field.missing}>{field.value}</strong>
+                </button>
+              {/each}
+            </div>
+          </section>
+
+          <section class="detail-section">
+            <h3>Ownership</h3>
+            <div class="detail-chip-list">
+              {#each detail.owners as owner (owner.accountId)}
+                <span title={owner.purchasedAt ? `${owner.label}: ${shortDate(owner.purchasedAt)}` : owner.label}>
+                  {owner.label}
+                </span>
+              {/each}
+            </div>
+          </section>
+
+          <section class="detail-section">
+            <h3>Download</h3>
+            <div class="detail-grid">
+              <div>
+                <span>Status</span>
+                <span>{downloadStatusLabel(detail.download.status)}</span>
+              </div>
+              <div>
+                <span>Policy</span>
+                <span>{detailValue(detail.download.unpackPolicy)}</span>
+              </div>
+              <div class="wide">
+                <span>Local path</span>
+                <button type="button" onclick={() => copyText("local path", detail.download.localPath)}>
+                  {detailValue(detail.download.localPath)}
+                </button>
+              </div>
+              {#if detail.download.errorMessage}
+                <div class="wide">
+                  <span>Error</span>
+                  <span>{detail.download.errorMessage}</span>
+                </div>
+              {/if}
+            </div>
+          </section>
+
+          <section class="detail-section">
+            <h3>Dates</h3>
+            <div class="detail-grid">
+              <div>
+                <span>Registered</span>
+                <span>{detailDate(detail.registeredAt)}</span>
+              </div>
+              <div>
+                <span>Published</span>
+                <span>{detailDate(detail.publishedAt)}</span>
+              </div>
+              <div>
+                <span>Updated</span>
+                <span>{detailDate(detail.updatedAt)}</span>
+              </div>
+              <div>
+                <span>Latest purchase</span>
+                <span>{detailDate(detail.latestPurchasedAt)}</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="detail-section">
+            <h3>Tags</h3>
+            {#if genericTags.length > 0}
+              <div class="detail-chip-list">
+                {#each genericTags as tag (`${tag.class}:${tag.name}`)}
+                  <span title={tag.class}>{tag.name}</span>
+                {/each}
+              </div>
+            {:else}
+              <p class="detail-muted">No tags cached</p>
+            {/if}
+          </section>
         </div>
       </section>
     </div>
@@ -3697,9 +4084,273 @@
     gap: 8px;
   }
 
+  .product-detail {
+    position: fixed;
+    z-index: 45;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 28px;
+  }
+
+  .product-detail-backdrop {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: rgb(0 0 0 / 70%);
+    cursor: default;
+  }
+
+  .product-detail-panel {
+    --type-color: #6b7177;
+    --type-soft: rgb(107 113 119 / 18%);
+
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: 5px minmax(0, 1fr);
+    width: min(980px, 94vw);
+    max-height: 90vh;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--panel);
+    box-shadow: 0 24px 64px rgb(0 0 0 / 52%);
+    overflow: hidden;
+  }
+
+  .product-detail-panel[data-tone="audio"] {
+    --type-color: #d8a62d;
+    --type-soft: rgb(216 166 45 / 17%);
+  }
+
+  .product-detail-panel[data-tone="video"] {
+    --type-color: #d64b92;
+    --type-soft: rgb(214 75 146 / 17%);
+  }
+
+  .product-detail-panel[data-tone="voice-comic"] {
+    --type-color: #55bfe6;
+    --type-soft: rgb(85 191 230 / 16%);
+  }
+
+  .product-detail-panel[data-tone="game"] {
+    --type-color: #9863df;
+    --type-soft: rgb(152 99 223 / 17%);
+  }
+
+  .product-detail-panel[data-tone="image"] {
+    --type-color: #4fb85b;
+    --type-soft: rgb(79 184 91 / 16%);
+  }
+
+  .product-detail-belt {
+    grid-row: 1 / 3;
+    background: var(--type-color);
+  }
+
+  .product-detail-heading {
+    display: grid;
+    grid-template-columns: 120px minmax(0, 1fr) auto auto;
+    gap: 14px;
+    align-items: start;
+    min-width: 0;
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .detail-thumb {
+    width: 120px;
+    height: 120px;
+    min-width: 0;
+    padding: 0;
+    border-color: var(--border-strong);
+    border-radius: 6px;
+    background: var(--panel-raised);
+    overflow: hidden;
+  }
+
+  .detail-thumb:hover {
+    border-color: var(--type-color);
+  }
+
+  .detail-thumb img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .missing-thumb {
+    display: grid;
+    place-items: center;
+    color: var(--text-subtle);
+    font-weight: 700;
+  }
+
+  .product-detail-title-block {
+    display: grid;
+    align-content: start;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .product-detail-title-block p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .product-detail-title-block h2 {
+    font-size: 22px;
+    line-height: 1.24;
+    overflow-wrap: anywhere;
+  }
+
+  .link-button {
+    justify-self: start;
+    min-height: 26px;
+    padding: 0;
+    border: 0;
+    color: var(--accent);
+    background: transparent;
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .link-button:hover {
+    color: var(--text-strong);
+    background: transparent;
+  }
+
+  .detail-work-id {
+    align-self: start;
+  }
+
+  .product-detail-body {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    min-height: 0;
+    max-height: calc(90vh - 154px);
+    padding: 16px;
+    overflow: auto;
+  }
+
+  .detail-section {
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel-soft);
+  }
+
+  .detail-section h3 {
+    margin: 0 0 10px;
+    color: var(--text-strong);
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 14px;
+  }
+
+  .detail-grid div,
+  .detail-credit-list button {
+    display: grid;
+    grid-template-columns: 104px minmax(0, 1fr);
+    gap: 8px;
+    align-items: baseline;
+    min-width: 0;
+  }
+
+  .detail-grid .wide {
+    grid-column: 1 / -1;
+  }
+
+  .detail-grid span:first-child,
+  .detail-credit-list span {
+    color: var(--text-subtle);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .detail-grid span:last-child,
+  .detail-grid button,
+  .detail-credit-list strong {
+    min-width: 0;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
+  .detail-grid button,
+  .detail-credit-list button {
+    width: 100%;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    text-align: left;
+  }
+
+  .detail-grid button:hover:not(:disabled),
+  .detail-credit-list button:hover:not(:disabled) strong {
+    color: var(--text-strong);
+  }
+
+  .detail-credit-list {
+    display: grid;
+    gap: 7px;
+  }
+
+  .detail-credit-list strong.missing {
+    color: var(--text-subtle);
+    opacity: 0.72;
+  }
+
+  .detail-chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .detail-chip-list span {
+    max-width: 100%;
+    padding: 4px 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    color: var(--text);
+    background: var(--panel-raised);
+    font-size: 12px;
+    font-weight: 650;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .detail-muted {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
   .image-preview {
     position: fixed;
-    z-index: 30;
+    z-index: 90;
     inset: 0;
     display: grid;
     place-items: center;
@@ -4056,14 +4707,27 @@
   }
 
   .product-title {
+    display: block;
+    width: 100%;
+    min-height: 0;
     min-width: 0;
+    height: auto;
+    padding: 0;
+    border: 0;
     color: var(--text-strong);
+    background: transparent;
     font-size: 17px;
     font-weight: 700;
     line-height: 1.25;
+    text-align: left;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .product-title:hover:not(:disabled) {
+    color: var(--accent);
+    background: transparent;
   }
 
   .work-id {

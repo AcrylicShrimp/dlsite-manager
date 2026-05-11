@@ -4,7 +4,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteQueryResult},
     QueryBuilder, Row, Sqlite, SqlitePool, Transaction,
 };
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 const LIBRARY_ROOT_KEY: &str = "library_root";
@@ -336,10 +336,46 @@ pub struct ProductListItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductDetail {
+    pub work_id: String,
+    pub title: String,
+    pub title_variants: Vec<ProductTextValue>,
+    pub maker_id: Option<String>,
+    pub maker_name: Option<String>,
+    pub maker_names: Vec<ProductTextValue>,
+    pub work_type: Option<String>,
+    pub age_category: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub content_size_bytes: Option<u64>,
+    pub registered_at: Option<String>,
+    pub published_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub last_detail_sync_at: String,
+    pub earliest_purchased_at: Option<String>,
+    pub latest_purchased_at: Option<String>,
+    pub credit_groups: Vec<ProductCreditGroup>,
+    pub tags: Vec<ProductTag>,
+    pub download: WorkDownloadState,
+    pub owners: Vec<ProductOwner>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductTextValue {
+    pub language: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductCreditGroup {
     pub kind: String,
     pub label: String,
     pub names: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductTag {
+    pub class: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -606,6 +642,130 @@ impl Storage {
             total_count,
             products,
         })
+    }
+
+    pub async fn product_detail(&self, work_id: &str) -> Result<ProductDetail> {
+        let row = sqlx::query(
+            "SELECT
+                w.work_id,
+                w.title,
+                w.title_json,
+                w.maker_id,
+                w.maker_name,
+                w.maker_json,
+                w.work_type,
+                w.age_category,
+                w.thumbnail_url,
+                w.registered_at,
+                w.published_at,
+                w.updated_at,
+                w.raw_json,
+                w.last_detail_sync_at,
+                (
+                    SELECT MIN(owned_aw.purchased_at)
+                    FROM account_works owned_aw
+                    JOIN accounts owned_a ON owned_a.id = owned_aw.account_id
+                    WHERE owned_aw.work_id = w.work_id
+                        AND owned_aw.is_current = 1
+                        AND owned_a.enabled = 1
+                ) AS earliest_purchased_at,
+                (
+                    SELECT MAX(owned_aw.purchased_at)
+                    FROM account_works owned_aw
+                    JOIN accounts owned_a ON owned_a.id = owned_aw.account_id
+                    WHERE owned_aw.work_id = w.work_id
+                        AND owned_aw.is_current = 1
+                        AND owned_a.enabled = 1
+                ) AS latest_purchased_at,
+                wd.status AS download_status,
+                wd.local_path AS download_local_path,
+                wd.staging_path AS download_staging_path,
+                wd.unpack_policy AS download_unpack_policy,
+                wd.bytes_received AS download_bytes_received,
+                wd.bytes_total AS download_bytes_total,
+                wd.error_code AS download_error_code,
+                wd.error_message AS download_error_message,
+                wd.started_at AS download_started_at,
+                wd.completed_at AS download_completed_at,
+                wd.updated_at AS download_updated_at
+             FROM works w
+             LEFT JOIN work_downloads wd ON wd.work_id = w.work_id
+             WHERE w.work_id = ?1
+                AND COALESCE(
+                    CASE
+                        WHEN json_valid(w.raw_json) THEN json_extract(w.raw_json, '$.detail_status')
+                    END,
+                    ''
+                ) <> ?2",
+        )
+        .bind(work_id)
+        .bind(MISSING_WORK_DETAIL_STATUS)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| StorageError::NotFound {
+            entity: "product detail",
+            id: work_id.to_owned(),
+        })?;
+
+        let raw_json: String = row.try_get("raw_json")?;
+        let download = work_download_state_from_product_row(&row)?;
+        let mut owners = self.product_owners(work_id).await?;
+
+        if owners.is_empty() {
+            owners.push(local_product_owner());
+        }
+
+        Ok(ProductDetail {
+            work_id: row.try_get("work_id")?,
+            title: row.try_get("title")?,
+            title_variants: product_text_values_from_json(&row.try_get::<String, _>("title_json")?),
+            maker_id: row.try_get("maker_id")?,
+            maker_name: row.try_get("maker_name")?,
+            maker_names: row
+                .try_get::<Option<String>, _>("maker_json")?
+                .as_deref()
+                .map(product_text_values_from_json)
+                .unwrap_or_default(),
+            work_type: row.try_get("work_type")?,
+            age_category: row.try_get("age_category")?,
+            thumbnail_url: row.try_get("thumbnail_url")?,
+            content_size_bytes: product_content_size_from_raw_json(&raw_json),
+            registered_at: row.try_get("registered_at")?,
+            published_at: row.try_get("published_at")?,
+            updated_at: row.try_get("updated_at")?,
+            last_detail_sync_at: row.try_get("last_detail_sync_at")?,
+            earliest_purchased_at: row.try_get("earliest_purchased_at")?,
+            latest_purchased_at: row.try_get("latest_purchased_at")?,
+            credit_groups: product_credit_groups_from_raw_json(&raw_json),
+            tags: product_tags_from_raw_json(&raw_json),
+            download,
+            owners,
+        })
+    }
+
+    async fn product_owners(&self, work_id: &str) -> Result<Vec<ProductOwner>> {
+        let rows = sqlx::query(
+            "SELECT a.id, a.label, aw.purchased_at
+             FROM account_works aw
+             JOIN accounts a ON a.id = aw.account_id
+             WHERE aw.work_id = ?1
+                AND aw.is_current = 1
+                AND a.enabled = 1
+             ORDER BY lower(a.label) ASC, a.id ASC",
+        )
+        .bind(work_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(ProductOwner {
+                    account_id: row.try_get("id")?,
+                    label: row.try_get("label")?,
+                    purchased_at: row.try_get("purchased_at")?,
+                })
+            })
+            .collect()
     }
 
     async fn count_products(&self, query: &ProductListQuery) -> Result<u64> {
@@ -1693,6 +1853,60 @@ fn product_content_size_from_raw_json(raw_json: &str) -> Option<u64> {
     json_value_as_u64(value.get("content_size")?)
 }
 
+fn product_text_values_from_json(raw_json: &str) -> Vec<ProductTextValue> {
+    let Ok(values) = serde_json::from_str::<BTreeMap<String, String>>(raw_json) else {
+        return Vec::new();
+    };
+
+    values
+        .into_iter()
+        .filter_map(|(language, value)| {
+            let value = value.trim();
+
+            if value.is_empty() {
+                None
+            } else {
+                Some(ProductTextValue {
+                    language,
+                    value: value.to_owned(),
+                })
+            }
+        })
+        .collect()
+}
+
+fn product_tags_from_raw_json(raw_json: &str) -> Vec<ProductTag> {
+    let Ok(work) = serde_json::from_str::<RawWorkTags>(raw_json) else {
+        return Vec::new();
+    };
+
+    let mut tags = work
+        .tags
+        .into_iter()
+        .filter_map(|tag| {
+            let class = tag.class.trim();
+            let name = tag.name.trim();
+
+            if class.is_empty() || name.is_empty() {
+                None
+            } else {
+                Some(ProductTag {
+                    class: class.to_owned(),
+                    name: name.to_owned(),
+                })
+            }
+        })
+        .collect::<Vec<_>>();
+
+    tags.sort_by(|left, right| {
+        left.class
+            .cmp(&right.class)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
+    tags.dedup();
+    tags
+}
+
 fn json_value_as_u64(value: &serde_json::Value) -> Option<u64> {
     match value {
         serde_json::Value::Number(number) => number.as_u64(),
@@ -1735,6 +1949,12 @@ fn credit_kind_label_and_rank(class: &str) -> Option<(&'static str, &'static str
 
 #[derive(Debug, Deserialize)]
 struct RawWorkCredits {
+    #[serde(default)]
+    tags: Vec<RawWorkCreditTag>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawWorkTags {
     #[serde(default)]
     tags: Vec<RawWorkCreditTag>,
 }
@@ -2472,6 +2692,72 @@ mod tests {
         let page = storage.list_products(&ProductListQuery::default()).await?;
 
         assert_eq!(page.products[0].content_size_bytes, Some(123456));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn product_detail_assembles_cached_metadata_without_new_storage() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-1",
+                vec![CachedWork {
+                    title_json: r#"{"en_US":"Detail Work","ja_JP":"詳細作品"}"#.to_owned(),
+                    maker_json: Some(r#"{"ja_JP":"Maker JP","en_US":"Maker EN"}"#.to_owned()),
+                    raw_json: r#"{
+                        "workno": "RJ000001",
+                        "content_size": "2048",
+                        "tags": [
+                            { "class": "genre", "name": "ASMR" },
+                            { "class": "voice_by", "name": "Voice One" },
+                            { "class": "genre", "name": "ASMR" }
+                        ],
+                        "viewer_type": "download"
+                    }"#
+                    .to_owned(),
+                    ..work(
+                        "RJ000001",
+                        "Detail Work",
+                        "Maker JP",
+                        "2026-01-01T00:00:00Z",
+                    )
+                }],
+                vec![account_work("RJ000001", "2026-02-01T00:00:00Z")],
+            ))
+            .await?;
+        storage
+            .save_work_download(&WorkDownloadUpdate {
+                work_id: "RJ000001".to_owned(),
+                status: WorkDownloadStatus::Downloaded,
+                local_path: Some("/library/RJ000001".to_owned()),
+                staging_path: None,
+                unpack_policy: "unpack_when_recognized".to_owned(),
+                bytes_received: 2048,
+                bytes_total: Some(2048),
+                error_code: None,
+                error_message: None,
+                started_at: Some("2026-05-11T00:00:00.000Z".to_owned()),
+                completed_at: Some("2026-05-11T00:01:00.000Z".to_owned()),
+                updated_at: "2026-05-11T00:01:00.000Z".to_owned(),
+            })
+            .await?;
+
+        let detail = storage.product_detail("RJ000001").await?;
+
+        assert_eq!(detail.work_id, "RJ000001");
+        assert_eq!(detail.content_size_bytes, Some(2048));
+        assert_eq!(detail.title_variants.len(), 2);
+        assert_eq!(detail.maker_names.len(), 2);
+        assert_eq!(detail.credit_groups[0].names, vec!["Voice One".to_owned()]);
+        assert_eq!(detail.tags.len(), 2);
+        assert_eq!(detail.tags[0].class, "genre");
+        assert_eq!(detail.download.status, WorkDownloadStatus::Downloaded);
+        assert_eq!(detail.owners[0].label, "Account A");
 
         Ok(())
     }
