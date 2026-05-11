@@ -20,7 +20,7 @@ use dm_storage::{
     ProductTextValue, ProductTypeGroup, Storage, WorkDownloadState, WorkDownloadStatus,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
@@ -3063,26 +3063,7 @@ fn account_sync_failure(error: dm_library::LibraryError) -> JobFailure {
         return JobFailure::cancelled();
     }
 
-    let code = match &error {
-        dm_library::LibraryError::Storage(_) => "storage",
-        dm_library::LibraryError::Credentials(_) => "credentials",
-        dm_library::LibraryError::Api(_) => "api",
-        dm_library::LibraryError::SyncSource(_) => "sync_source",
-        dm_library::LibraryError::AccountNotFound(_) => "account_not_found",
-        dm_library::LibraryError::AccountDisabled(_) => "account_disabled",
-        dm_library::LibraryError::MissingLoginName(_) => "missing_login_name",
-        dm_library::LibraryError::MissingPassword(_) => "missing_password",
-        dm_library::LibraryError::Cancelled => "cancelled",
-        dm_library::LibraryError::Download(_) => "download",
-        dm_library::LibraryError::DownloadAccountNotFound(_) => "download_account_not_found",
-        dm_library::LibraryError::DownloadTargetExists(_) => "download_target_exists",
-        dm_library::LibraryError::DownloadPathOutsideRoots(_) => "download_path_outside_roots",
-        dm_library::LibraryError::DownloadPathNotDirectory(_) => "download_path_not_directory",
-        dm_library::LibraryError::Io(_) => "io",
-        dm_library::LibraryError::Json(_) => "json",
-    };
-
-    JobFailure::with_code(code, error.to_string())
+    library_job_failure(error)
 }
 
 fn work_download_failure(error: dm_library::LibraryError) -> JobFailure {
@@ -3095,26 +3076,36 @@ fn work_download_failure(error: dm_library::LibraryError) -> JobFailure {
         return JobFailure::cancelled();
     }
 
-    let code = match &error {
-        dm_library::LibraryError::Storage(_) => "storage",
-        dm_library::LibraryError::Credentials(_) => "credentials",
-        dm_library::LibraryError::Api(_) => "api",
-        dm_library::LibraryError::SyncSource(_) => "sync_source",
-        dm_library::LibraryError::AccountNotFound(_) => "account_not_found",
-        dm_library::LibraryError::AccountDisabled(_) => "account_disabled",
-        dm_library::LibraryError::MissingLoginName(_) => "missing_login_name",
-        dm_library::LibraryError::MissingPassword(_) => "missing_password",
-        dm_library::LibraryError::Cancelled => "cancelled",
-        dm_library::LibraryError::Download(_) => "download",
-        dm_library::LibraryError::DownloadAccountNotFound(_) => "download_account_not_found",
-        dm_library::LibraryError::DownloadTargetExists(_) => "download_target_exists",
-        dm_library::LibraryError::DownloadPathOutsideRoots(_) => "download_path_outside_roots",
-        dm_library::LibraryError::DownloadPathNotDirectory(_) => "download_path_not_directory",
-        dm_library::LibraryError::Io(_) => "io",
-        dm_library::LibraryError::Json(_) => "json",
-    };
+    library_job_failure(error)
+}
 
-    JobFailure::with_code(code, error.to_string())
+fn library_job_failure(error: dm_library::LibraryError) -> JobFailure {
+    let code = error.failure_code().to_owned();
+    let message = error.support_message();
+    let details = error.support_details();
+
+    job_failure_with_details(code, message, details)
+}
+
+fn job_failure_with_details(
+    code: impl Into<String>,
+    message: impl Into<String>,
+    details: Value,
+) -> JobFailure {
+    let mut failure = JobFailure::with_code(code, message);
+
+    match details {
+        Value::Object(details) => {
+            for (key, value) in details {
+                failure = failure.with_detail(key, value);
+            }
+        }
+        other => {
+            failure = failure.with_detail("diagnostic", other);
+        }
+    }
+
+    failure
 }
 
 fn command_error(error: impl ToString) -> String {

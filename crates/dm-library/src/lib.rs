@@ -15,6 +15,7 @@ use dm_storage::{
     Storage, StorageError, SyncCancellation, SyncFailure, WorkDownloadState, WorkDownloadStatus,
     WorkDownloadUpdate,
 };
+use serde_json::{json, Map, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
@@ -68,7 +69,7 @@ pub enum LibraryError {
 }
 
 impl LibraryError {
-    fn failure_code(&self) -> &'static str {
+    pub fn failure_code(&self) -> &'static str {
         match self {
             Self::Storage(_) => "storage",
             Self::Credentials(_) => "credentials",
@@ -88,6 +89,500 @@ impl LibraryError {
             Self::Json(_) => "json",
         }
     }
+
+    pub fn support_message(&self) -> String {
+        match self {
+            Self::Storage(error) => format!("Storage error: {error}"),
+            Self::Credentials(error) => format!("Credential error: {error}"),
+            Self::Api(error) => dm_api_error_support_message(error),
+            Self::SyncSource(error) => format!("Sync source error: {error}"),
+            Self::AccountNotFound(account_id) => format!("Account not found: {account_id}"),
+            Self::AccountDisabled(account_id) => format!("Account is disabled: {account_id}"),
+            Self::MissingLoginName(account_id) => {
+                format!("Account has no login name: {account_id}")
+            }
+            Self::MissingPassword(account_id) => {
+                format!("Account has no saved password: {account_id}")
+            }
+            Self::Cancelled => "Operation was cancelled".to_owned(),
+            Self::Download(error) => download_error_support_message(error),
+            Self::DownloadAccountNotFound(work_id) => {
+                format!("Work is not owned by an enabled account: {work_id}")
+            }
+            Self::DownloadTargetExists(path) => {
+                format!("Download final path already exists: {}", path.display())
+            }
+            Self::DownloadPathOutsideRoots(path) => {
+                format!(
+                    "Download path is outside configured roots: {}",
+                    path.display()
+                )
+            }
+            Self::DownloadPathNotDirectory(path) => {
+                format!("Download path is not a directory: {}", path.display())
+            }
+            Self::Io(error) => format!("I/O error: {error}"),
+            Self::Json(error) => format!("JSON error: {error}"),
+        }
+    }
+
+    pub fn support_details(&self) -> Value {
+        match self {
+            Self::Storage(error) => json!({
+                "failureKind": "storage",
+                "message": error.to_string(),
+            }),
+            Self::Credentials(error) => json!({
+                "failureKind": "credentials",
+                "message": error.to_string(),
+            }),
+            Self::Api(error) => dm_api_error_support_details(error),
+            Self::SyncSource(error) => json!({
+                "failureKind": "sync_source",
+                "message": error,
+            }),
+            Self::AccountNotFound(account_id) => json!({
+                "failureKind": "account_not_found",
+                "accountId": account_id,
+            }),
+            Self::AccountDisabled(account_id) => json!({
+                "failureKind": "account_disabled",
+                "accountId": account_id,
+            }),
+            Self::MissingLoginName(account_id) => json!({
+                "failureKind": "missing_login_name",
+                "accountId": account_id,
+            }),
+            Self::MissingPassword(account_id) => json!({
+                "failureKind": "missing_password",
+                "accountId": account_id,
+            }),
+            Self::Cancelled => json!({
+                "failureKind": "cancelled",
+            }),
+            Self::Download(error) => download_error_support_details(error),
+            Self::DownloadAccountNotFound(work_id) => json!({
+                "failureKind": "download_account_not_found",
+                "workId": work_id,
+            }),
+            Self::DownloadTargetExists(path) => json!({
+                "failureKind": "download_target_exists",
+                "path": path.to_string_lossy(),
+            }),
+            Self::DownloadPathOutsideRoots(path) => json!({
+                "failureKind": "download_path_outside_roots",
+                "path": path.to_string_lossy(),
+            }),
+            Self::DownloadPathNotDirectory(path) => json!({
+                "failureKind": "download_path_not_directory",
+                "path": path.to_string_lossy(),
+            }),
+            Self::Io(error) => json!({
+                "failureKind": "io",
+                "message": error.to_string(),
+            }),
+            Self::Json(error) => json!({
+                "failureKind": "json",
+                "message": error.to_string(),
+            }),
+        }
+    }
+}
+
+fn dm_api_error_support_message(error: &DmApiError) -> String {
+    match error {
+        DmApiError::InvalidCredentials => "DLsite rejected the account credentials".to_owned(),
+        DmApiError::NotAuthorized => "DLsite session is not authorized".to_owned(),
+        DmApiError::XsrfTokenNotFound => "DLsite session did not provide an XSRF token".to_owned(),
+        DmApiError::LocationHeaderMissing { endpoint } => {
+            format!(
+                "DLsite redirect response did not include a Location header at {}",
+                safe_url_for_log(endpoint.as_str())
+            )
+        }
+        DmApiError::InvalidLocationHeader { endpoint, .. } => {
+            format!(
+                "DLsite returned an invalid redirect Location header at {}",
+                safe_url_for_log(endpoint.as_str())
+            )
+        }
+        DmApiError::UnexpectedStatus {
+            endpoint, status, ..
+        } => {
+            format!(
+                "DLsite returned HTTP {} from {}",
+                status.as_u16(),
+                safe_url_for_log(endpoint.as_str())
+            )
+        }
+        DmApiError::UnexpectedResponse { endpoint, .. } => {
+            format!(
+                "DLsite returned an unexpected response from {}",
+                safe_url_for_log(endpoint.as_str())
+            )
+        }
+        DmApiError::UnexpectedJson { endpoint, path, .. } => {
+            format!(
+                "DLsite returned an unexpected JSON shape at {path} from {}",
+                safe_url_for_log(endpoint.as_str())
+            )
+        }
+        DmApiError::RedirectLimitExceeded { endpoint, limit } => {
+            format!(
+                "DLsite redirect limit exceeded after {limit} redirects from {}",
+                safe_url_for_log(endpoint.as_str())
+            )
+        }
+        DmApiError::DownloadPageLinkNotFound { kind, page } => {
+            format!(
+                "DLsite {kind} download page did not contain an expected download link at {}",
+                safe_url_for_log(page.as_str())
+            )
+        }
+        DmApiError::DownloadUnavailable { work_id, reason } => {
+            format!("DLsite reports download unavailable for {work_id}: {reason:?}")
+        }
+        DmApiError::DownloadUnknownRedirect { work_id, location } => {
+            format!(
+                "DLsite returned an unknown download redirect for {work_id}: {}",
+                safe_url_for_log(location.as_str())
+            )
+        }
+        DmApiError::BatchLimitExceeded { limit, .. } => {
+            format!("DLsite works batch limit exceeded; detected limit: {limit}")
+        }
+        DmApiError::CookieStore(error) => format!("DLsite cookie store error: {error}"),
+        DmApiError::Request(error) => format!("DLsite HTTP request failed: {error}"),
+        DmApiError::Url(error) => format!("DLsite URL parse failed: {error}"),
+        DmApiError::Json(error) => format!("DLsite JSON operation failed: {error}"),
+    }
+}
+
+fn dm_api_error_support_details(error: &DmApiError) -> Value {
+    match error {
+        DmApiError::InvalidCredentials => json!({
+            "failureKind": "api",
+            "apiErrorKind": "invalid_credentials",
+        }),
+        DmApiError::NotAuthorized => json!({
+            "failureKind": "api",
+            "apiErrorKind": "not_authorized",
+        }),
+        DmApiError::XsrfTokenNotFound => json!({
+            "failureKind": "api",
+            "apiErrorKind": "xsrf_token_not_found",
+        }),
+        DmApiError::LocationHeaderMissing { endpoint } => json!({
+            "failureKind": "api",
+            "apiErrorKind": "location_header_missing",
+            "endpoint": safe_url_for_log(endpoint.as_str()),
+        }),
+        DmApiError::InvalidLocationHeader {
+            endpoint,
+            location,
+            source,
+        } => json!({
+            "failureKind": "api",
+            "apiErrorKind": "invalid_location_header",
+            "endpoint": safe_url_for_log(endpoint.as_str()),
+            "location": safe_url_for_log(location),
+            "parseError": source.to_string(),
+        }),
+        DmApiError::UnexpectedStatus {
+            endpoint,
+            status,
+            body_snippet,
+        } => {
+            let mut details = Map::new();
+            details.insert("failureKind".to_owned(), json!("api"));
+            details.insert("apiErrorKind".to_owned(), json!("unexpected_status"));
+            details.insert(
+                "endpoint".to_owned(),
+                json!(safe_url_for_log(endpoint.as_str())),
+            );
+            details.insert("httpStatus".to_owned(), json!(status.as_u16()));
+            details.insert(
+                "httpStatusText".to_owned(),
+                json!(status.canonical_reason().unwrap_or("unknown")),
+            );
+
+            if let Some(snippet) = body_snippet.as_deref().and_then(safe_body_snippet_for_log) {
+                details.insert("bodySnippet".to_owned(), json!(snippet));
+            }
+
+            Value::Object(details)
+        }
+        DmApiError::UnexpectedResponse { endpoint, source } => json!({
+            "failureKind": "api",
+            "apiErrorKind": "unexpected_response",
+            "endpoint": safe_url_for_log(endpoint.as_str()),
+            "source": source.to_string(),
+        }),
+        DmApiError::UnexpectedJson {
+            endpoint,
+            path,
+            source,
+        } => json!({
+            "failureKind": "api",
+            "apiErrorKind": "unexpected_json",
+            "endpoint": safe_url_for_log(endpoint.as_str()),
+            "jsonPath": path,
+            "source": source.to_string(),
+        }),
+        DmApiError::RedirectLimitExceeded { endpoint, limit } => json!({
+            "failureKind": "api",
+            "apiErrorKind": "redirect_limit_exceeded",
+            "endpoint": safe_url_for_log(endpoint.as_str()),
+            "limit": limit,
+        }),
+        DmApiError::DownloadPageLinkNotFound { page, kind } => json!({
+            "failureKind": "api",
+            "apiErrorKind": "download_page_link_not_found",
+            "page": safe_url_for_log(page.as_str()),
+            "pageKind": kind,
+        }),
+        DmApiError::DownloadUnavailable { work_id, reason } => json!({
+            "failureKind": "api",
+            "apiErrorKind": "download_unavailable",
+            "workId": work_id.as_ref(),
+            "reason": format!("{reason:?}"),
+        }),
+        DmApiError::DownloadUnknownRedirect { work_id, location } => json!({
+            "failureKind": "api",
+            "apiErrorKind": "download_unknown_redirect",
+            "workId": work_id.as_ref(),
+            "location": safe_url_for_log(location.as_str()),
+        }),
+        DmApiError::BatchLimitExceeded {
+            limit,
+            body_snippet,
+        } => {
+            let mut details = Map::new();
+            details.insert("failureKind".to_owned(), json!("api"));
+            details.insert("apiErrorKind".to_owned(), json!("batch_limit_exceeded"));
+            details.insert("limit".to_owned(), json!(limit));
+
+            if let Some(snippet) = body_snippet.as_deref().and_then(safe_body_snippet_for_log) {
+                details.insert("bodySnippet".to_owned(), json!(snippet));
+            }
+
+            Value::Object(details)
+        }
+        DmApiError::CookieStore(error) => json!({
+            "failureKind": "api",
+            "apiErrorKind": "cookie_store",
+            "source": error,
+        }),
+        DmApiError::Request(error) => {
+            let mut details = Map::new();
+            details.insert("failureKind".to_owned(), json!("api"));
+            details.insert("apiErrorKind".to_owned(), json!("request"));
+            details.insert("source".to_owned(), json!(error.to_string()));
+            details.insert("isTimeout".to_owned(), json!(error.is_timeout()));
+            details.insert("isConnect".to_owned(), json!(error.is_connect()));
+            details.insert("isStatus".to_owned(), json!(error.is_status()));
+
+            if let Some(status) = error.status() {
+                details.insert("httpStatus".to_owned(), json!(status.as_u16()));
+            }
+
+            if let Some(url) = error.url() {
+                details.insert("endpoint".to_owned(), json!(safe_url_for_log(url.as_str())));
+            }
+
+            Value::Object(details)
+        }
+        DmApiError::Url(error) => json!({
+            "failureKind": "api",
+            "apiErrorKind": "url",
+            "source": error.to_string(),
+        }),
+        DmApiError::Json(error) => json!({
+            "failureKind": "api",
+            "apiErrorKind": "json",
+            "source": error.to_string(),
+        }),
+    }
+}
+
+fn download_error_support_message(error: &dm_download::DownloadError) -> String {
+    match error {
+        dm_download::DownloadError::Api(error) => {
+            format!(
+                "Download failed while calling DLsite: {}",
+                dm_api_error_support_message(error)
+            )
+        }
+        dm_download::DownloadError::Archive(error) => {
+            format!("Archive extraction error: {error}")
+        }
+        dm_download::DownloadError::Io(error) => format!("Download I/O error: {error}"),
+        other => format!("Download error: {other}"),
+    }
+}
+
+fn download_error_support_details(error: &dm_download::DownloadError) -> Value {
+    match error {
+        dm_download::DownloadError::Cancelled => json!({
+            "failureKind": "download",
+            "downloadErrorKind": "cancelled",
+        }),
+        dm_download::DownloadError::InvalidDownloadResponse { reason } => json!({
+            "failureKind": "download",
+            "downloadErrorKind": "invalid_response",
+            "reason": reason.to_string(),
+        }),
+        dm_download::DownloadError::FileNameUnknown { file_index } => json!({
+            "failureKind": "download",
+            "downloadErrorKind": "file_name_unknown",
+            "fileIndex": file_index,
+        }),
+        dm_download::DownloadError::InvalidFileName { file_name } => json!({
+            "failureKind": "download",
+            "downloadErrorKind": "invalid_file_name",
+            "fileName": file_name,
+        }),
+        dm_download::DownloadError::TargetAlreadyExists { path } => json!({
+            "failureKind": "download",
+            "downloadErrorKind": "target_already_exists",
+            "path": path.to_string_lossy(),
+        }),
+        dm_download::DownloadError::PlanWorkMismatch {
+            job_work_id,
+            plan_work_id,
+        } => json!({
+            "failureKind": "download",
+            "downloadErrorKind": "plan_work_mismatch",
+            "jobWorkId": job_work_id.as_ref(),
+            "planWorkId": plan_work_id.as_ref(),
+        }),
+        dm_download::DownloadError::IncompleteDownload { expected, actual } => json!({
+            "failureKind": "download",
+            "downloadErrorKind": "incomplete_download",
+            "expectedBytes": expected,
+            "actualBytes": actual,
+        }),
+        dm_download::DownloadError::SizeExceeded { expected, actual } => json!({
+            "failureKind": "download",
+            "downloadErrorKind": "size_exceeded",
+            "expectedBytes": expected,
+            "actualBytes": actual,
+        }),
+        dm_download::DownloadError::Stream(error) => json!({
+            "failureKind": "download",
+            "downloadErrorKind": "stream",
+            "source": error,
+        }),
+        dm_download::DownloadError::Api(error) => {
+            let mut details = value_object(dm_api_error_support_details(error));
+            details.insert("downloadErrorKind".to_owned(), json!("api"));
+            Value::Object(details)
+        }
+        dm_download::DownloadError::Archive(error) => json!({
+            "failureKind": "download",
+            "downloadErrorKind": "archive",
+            "source": error.to_string(),
+        }),
+        dm_download::DownloadError::Io(error) => json!({
+            "failureKind": "download",
+            "downloadErrorKind": "io",
+            "source": error.to_string(),
+        }),
+    }
+}
+
+fn value_object(value: Value) -> Map<String, Value> {
+    match value {
+        Value::Object(map) => map,
+        other => {
+            let mut map = Map::new();
+            map.insert("detail".to_owned(), other);
+            map
+        }
+    }
+}
+
+fn safe_url_for_log(value: &str) -> String {
+    let without_fragment = value.split_once('#').map_or(value, |(prefix, _)| prefix);
+    let without_query = without_fragment
+        .split_once('?')
+        .map_or(without_fragment, |(prefix, _)| prefix);
+
+    if without_query.contains("download.dlsite")
+        || without_query.contains("/get/")
+        || without_query.contains("/file/")
+    {
+        if let Some((origin, _)) = without_query.split_once("/get/") {
+            return format!("{origin}/<download-url-redacted>");
+        }
+
+        if let Some((origin, _)) = without_query.split_once("/file/") {
+            return format!("{origin}/<download-url-redacted>");
+        }
+
+        return "<download-url-redacted>".to_owned();
+    }
+
+    without_query.to_owned()
+}
+
+fn safe_body_snippet_for_log(snippet: &str) -> Option<String> {
+    let lower = snippet.to_ascii_lowercase();
+    if lower.contains("serial") || snippet.contains("\u{30b7}\u{30ea}\u{30a2}\u{30eb}") {
+        return Some("[redacted because response may contain serial information]".to_owned());
+    }
+
+    let collapsed = snippet.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return None;
+    }
+
+    let sanitized = redact_urls_in_text(&collapsed);
+
+    Some(truncate_chars(&sanitized, 300))
+}
+
+fn redact_urls_in_text(value: &str) -> String {
+    let mut output = String::new();
+    let mut rest = value;
+
+    loop {
+        let Some((start, marker_len)) = earliest_url_marker(rest) else {
+            output.push_str(rest);
+            return output;
+        };
+
+        output.push_str(&rest[..start]);
+        output.push_str("[redacted-url]");
+
+        let url_start = start + marker_len;
+        let url_end = rest[url_start..]
+            .char_indices()
+            .find_map(|(index, ch)| {
+                (ch.is_whitespace() || matches!(ch, '"' | '\'' | '<' | '>' | ')' | ']' | '}'))
+                    .then_some(url_start + index)
+            })
+            .unwrap_or(rest.len());
+
+        rest = &rest[url_end..];
+    }
+}
+
+fn earliest_url_marker(value: &str) -> Option<(usize, usize)> {
+    [("https://", 8usize), ("http://", 7usize)]
+        .into_iter()
+        .filter_map(|(marker, len)| value.find(marker).map(|index| (index, len)))
+        .min_by_key(|(index, _)| *index)
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let mut output = value.chars().take(max_chars).collect::<String>();
+
+    if value.chars().count() > max_chars {
+        output.push_str("...");
+    }
+
+    output
 }
 
 #[derive(Clone)]
@@ -267,7 +762,7 @@ impl Library {
                     bytes_received: 0,
                     bytes_total: None,
                     error_code: Some(error.failure_code().to_owned()),
-                    error_message: Some(error.to_string()),
+                    error_message: Some(error.support_message()),
                     started_at: Some(started_at),
                     completed_at: Some(completed_at.clone()),
                     updated_at: completed_at,
@@ -369,7 +864,7 @@ impl Library {
                 }
                 Err(error) => {
                     let error_code = error.failure_code().to_owned();
-                    let error_message = error.to_string();
+                    let error_message = error.support_message();
 
                     report.failed_count += 1;
                     report.failed_works.push(BulkWorkDownloadFailure {
@@ -665,7 +1160,7 @@ impl Library {
                         started_at,
                         completed_at,
                         error_code: Some(error.failure_code().to_owned()),
-                        error_message: Some(error.to_string()),
+                        error_message: Some(error.support_message()),
                     })
                     .await;
             }
@@ -2103,6 +2598,65 @@ mod tests {
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
     use url::Url;
+
+    #[test]
+    fn support_details_preserve_safe_api_failure_context() {
+        let error = LibraryError::Api(DmApiError::DownloadUnknownRedirect {
+            work_id: WorkId::from("RJ123456"),
+            location: Url::parse(
+                "https://download.dlsite.com/get/=/file/RJ123456.zip?token=secret",
+            )
+            .unwrap(),
+        });
+
+        let details = error.support_details();
+
+        assert_eq!(error.failure_code(), "api");
+        assert!(error
+            .support_message()
+            .contains("unknown download redirect for RJ123456"));
+        assert_eq!(details["failureKind"], "api");
+        assert_eq!(details["apiErrorKind"], "download_unknown_redirect");
+        assert_eq!(details["workId"], "RJ123456");
+        assert_eq!(
+            details["location"],
+            "https://download.dlsite.com/<download-url-redacted>"
+        );
+        assert!(!details.to_string().contains("secret"));
+    }
+
+    #[test]
+    fn support_details_preserve_download_api_failure_context() {
+        let error =
+            LibraryError::Download(dm_download::DownloadError::Api(DmApiError::NotAuthorized));
+
+        let details = error.support_details();
+
+        assert_eq!(error.failure_code(), "download");
+        assert!(error
+            .support_message()
+            .contains("DLsite session is not authorized"));
+        assert_eq!(details["failureKind"], "api");
+        assert_eq!(details["downloadErrorKind"], "api");
+        assert_eq!(details["apiErrorKind"], "not_authorized");
+    }
+
+    #[test]
+    fn support_body_snippets_redact_urls_and_serial_material() {
+        let html = r#"<a href="https://download.dlsite.com/get/secret?token=value">download</a>"#;
+
+        let snippet = safe_body_snippet_for_log(html).unwrap();
+
+        assert!(snippet.contains("[redacted-url]"));
+        assert!(!snippet.contains("download.dlsite.com"));
+        assert!(!snippet.contains("token=value"));
+
+        let serial_snippet = safe_body_snippet_for_log("serial number: ABCD-1234").unwrap();
+        assert_eq!(
+            serial_snippet,
+            "[redacted because response may contain serial information]"
+        );
+    }
 
     #[derive(Debug, Clone)]
     struct FakeSyncSource {

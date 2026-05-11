@@ -1,5 +1,9 @@
 # Work Log
 
+## 2026-05-12
+
+- Improved support diagnostics for failed jobs and audit logs. `dm-library` now exposes safe support messages/details for nested DLsite API and download errors, including API/download error kinds, HTTP status, redacted endpoints, safe body snippets, byte counts, and local paths where relevant. Tauri job failures now copy those details into job `errorDetails`, so audit entries no longer collapse download failures to only `dlsite api error`. Download state and bulk failure records now use the same support-oriented messages. Validation: `cargo fmt --all`, targeted `cargo test -p dm-library support_ -- --nocapture`, `cargo check -p dlsite-manager`, `cargo test -p dm-library`, `cargo test -p dlsite-manager`, `cargo check --workspace`, and `git diff --check` passed. Did not restart or stop the already-running dev process per user preference.
+
 ## 2026-05-11
 
 - Created `docs/todos/2026-05-11.01.refactor-frontend-into-reusable-components.md` to track the frontend refactor plan. The plan splits the current all-in-one Svelte page into pure model/utils extraction, shared shell/overlay components, Library components, secondary page components, and later Tauri/state cleanup, with behavior-preserving validation rules. Validation: documentation-only change; `git diff --check` passed.
