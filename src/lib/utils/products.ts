@@ -3,7 +3,6 @@ import type {
   Product,
   ProductCreditField,
   ProductCreditGroup,
-  ProductDetail,
   ProductTypeInfo,
 } from "$lib/model/types";
 
@@ -190,8 +189,4 @@ export function creditTextForKind(product: { creditGroups: ProductCreditGroup[] 
 
 export function creditTooltip(field: ProductCreditField) {
   return field.missing ? `${field.label}: Not available` : `${field.label}: ${field.value}`;
-}
-
-export function detailTags(detail: ProductDetail) {
-  return detail.tags.filter((tag) => !tag.class.endsWith("_by"));
 }

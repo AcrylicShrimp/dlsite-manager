@@ -65,7 +65,6 @@
     ageTooltip,
     creditTextForKind,
     creditTooltip,
-    detailTags,
     productCreditFields,
     productType,
     productTypeFromCode,
@@ -782,7 +781,9 @@
     try {
       const customTags = await saveProductCustomTags(productDetail.workId, nextNames);
       customTagInput = "";
-      notifySuccess(`Saved ${customTags.length} custom tag${customTags.length === 1 ? "" : "s"}`);
+      notifySuccess(
+        `Saved ${customTags.length} custom tag${customTags.length === 1 ? "" : "s"} for ${productDetail.workId}`,
+      );
     } catch (err) {
       notifyError(errorMessage(err));
     }
@@ -799,7 +800,7 @@
 
     try {
       await saveProductCustomTags(productDetail.workId, nextNames);
-      notifySuccess(`Removed ${tagName}`);
+      notifySuccess(`Removed custom tag ${tagName} from ${productDetail.workId}`);
     } catch (err) {
       notifyError(errorMessage(err));
     }
@@ -813,26 +814,26 @@
   async function copyWorkId(workId: string) {
     try {
       await navigator.clipboard.writeText(workId);
-      notifySuccess(`Copied ${workId}`);
+      notifySuccess(`Copied work ID ${workId}`);
     } catch (err) {
       notifyError(errorMessage(err));
     }
   }
 
-  async function copyCreditField(field: ProductCreditField) {
+  async function copyCreditField(field: ProductCreditField, workId?: string) {
     if (field.missing) {
       return;
     }
 
     try {
       await navigator.clipboard.writeText(field.value);
-      notifySuccess(`Copied ${field.label}`);
+      notifySuccess(workId ? `Copied ${field.label} for ${workId}` : `Copied ${field.label}`);
     } catch (err) {
       notifyError(errorMessage(err));
     }
   }
 
-  async function copyText(label: string, value: string | null | undefined) {
+  async function copyText(label: string, value: string | null | undefined, workId?: string) {
     const normalized = value?.trim();
 
     if (!normalized) {
@@ -841,7 +842,7 @@
 
     try {
       await navigator.clipboard.writeText(normalized);
-      notifySuccess(`Copied ${label}`);
+      notifySuccess(workId ? `Copied ${label} for ${workId}` : `Copied ${label}`);
     } catch (err) {
       notifyError(errorMessage(err));
     }
@@ -998,7 +999,7 @@
         },
       });
       const queuedMessage = options.queuedMessage ?? "Download queued";
-      notifyInfo(queuedMessage);
+      notifyInfo(`${queuedMessage} for ${product.workId}`);
       jobMessages = {
         ...jobMessages,
         [response.jobId]: queuedMessage,
@@ -1142,7 +1143,7 @@
           workId: product.workId,
         },
       });
-      notifySuccess("Download deleted");
+      notifySuccess(`Deleted download for ${product.workId}`);
       setProductDownload(product.workId, download);
     } catch (err) {
       notifyError(errorMessage(err));
@@ -1172,7 +1173,7 @@
           localPath: selected,
         },
       });
-      notifySuccess("Marked as downloaded");
+      notifySuccess(`Marked ${product.workId} as downloaded`);
       setProductDownload(product.workId, download);
     } catch (err) {
       notifyError(errorMessage(err));
@@ -1223,7 +1224,8 @@
           jobId: job.id,
         },
       });
-      notifyInfo("Cancellation requested");
+      const workId = jobWorkId(job) ?? jobOutputString(job, "workId");
+      notifyInfo(workId ? `Cancellation requested for ${workId}` : "Cancellation requested");
       await loadJobs();
     } catch (err) {
       notifyError(errorMessage(err));
@@ -1824,6 +1826,7 @@
                 {#each AGE_FILTERS as [value, label] (value)}
                   <button
                     class:active={selectedAgeCategories.includes(value)}
+                    data-age-filter={value}
                     type="button"
                     onclick={() => toggleAgeFilter(value)}
                   >
@@ -1846,6 +1849,7 @@
                 {#each TYPE_FILTERS as [value, label] (value)}
                   <button
                     class:active={selectedProductTypes.includes(value)}
+                    data-type-filter={value}
                     type="button"
                     onclick={() => toggleProductTypeFilter(value)}
                   >
@@ -1981,7 +1985,7 @@
                         disabled={field.missing}
                         onclick={(event) => {
                           event.stopPropagation();
-                          void copyCreditField(field);
+                          void copyCreditField(field, product.workId);
                         }}
                       >
                         <span class="credit-label">{field.label}</span>
@@ -2643,7 +2647,6 @@
   {#if productDetail}
     {@const detail = productDetail}
     {@const detailTypeInfo = productTypeFromCode(detail.workType)}
-    {@const genericTags = detailTags(detail)}
     <div
       class="product-detail"
       role="dialog"
@@ -2680,7 +2683,7 @@
               class="product-detail-title-copy"
               type="button"
               title={detail.titleVariants.length > 0 ? textVariantsLabel(detail.titleVariants) : `Copy ${detail.title}`}
-              onclick={() => copyText("title", detail.title)}
+              onclick={() => copyText("title", detail.title, detail.workId)}
             >
               {detail.title}
             </button>
@@ -2721,13 +2724,13 @@
               <div class="detail-grid">
                 <div>
                   <span>Maker</span>
-                  <button type="button" onclick={() => copyText("maker", detail.makerName)}>
+                  <button type="button" onclick={() => copyText("maker name", detail.makerName, detail.workId)}>
                     {detailValue(detail.makerName)}
                   </button>
                 </div>
                 <div>
                   <span>Maker ID</span>
-                  <button type="button" onclick={() => copyText("maker ID", detail.makerId)}>
+                  <button type="button" onclick={() => copyText("maker ID", detail.makerId, detail.workId)}>
                     {detailValue(detail.makerId)}
                   </button>
                 </div>
@@ -2751,12 +2754,18 @@
             </section>
 
             <section class="detail-section">
-              <h3>Ownership</h3>
-              <div class="detail-chip-list">
-                {#each detail.owners as owner (owner.accountId)}
-                  <span title={owner.purchasedAt ? `${owner.label}: ${shortDate(owner.purchasedAt)}` : owner.label}>
-                    {owner.label}
-                  </span>
+              <h3>Credits</h3>
+              <div class="detail-credit-list">
+                {#each productCreditFields(detail) as field (field.key)}
+                  <button
+                    type="button"
+                    disabled={field.missing}
+                    title={creditTooltip(field)}
+                    onclick={() => copyCreditField(field, detail.workId)}
+                  >
+                    <span>{field.label}</span>
+                    <strong class:missing={field.missing}>{field.value}</strong>
+                  </button>
                 {/each}
               </div>
             </section>
@@ -2786,18 +2795,12 @@
 
           <div class="detail-column">
             <section class="detail-section">
-              <h3>Credits</h3>
-              <div class="detail-credit-list">
-                {#each productCreditFields(detail) as field (field.key)}
-                  <button
-                    type="button"
-                    disabled={field.missing}
-                    title={creditTooltip(field)}
-                    onclick={() => copyCreditField(field)}
-                  >
-                    <span>{field.label}</span>
-                    <strong class:missing={field.missing}>{field.value}</strong>
-                  </button>
+              <h3>Ownership</h3>
+              <div class="detail-chip-list">
+                {#each detail.owners as owner (owner.accountId)}
+                  <span title={owner.purchasedAt ? `${owner.label}: ${shortDate(owner.purchasedAt)}` : owner.label}>
+                    {owner.label}
+                  </span>
                 {/each}
               </div>
             </section>
@@ -2815,7 +2818,10 @@
                 </div>
                 <div class="wide">
                   <span>Local path</span>
-                  <button type="button" onclick={() => copyText("local path", detail.download.localPath)}>
+                  <button
+                    type="button"
+                    onclick={() => copyText("local path", detail.download.localPath, detail.workId)}
+                  >
                     {detailValue(detail.download.localPath)}
                   </button>
                 </div>
@@ -2834,7 +2840,7 @@
                 <div class="detail-chip-list custom-tag-list">
                   {#each detail.customTags as tag (tag.name)}
                     <span class="chip custom-tag-chip detail-custom-tag" title={`Custom tag: ${tag.name}`}>
-                      <button type="button" onclick={() => copyText("custom tag", tag.name)}>
+                      <button type="button" onclick={() => copyText("custom tag", tag.name, detail.workId)}>
                         {tag.name}
                       </button>
                       <button
@@ -2867,19 +2873,6 @@
                   Add Tag
                 </button>
               </form>
-            </section>
-
-            <section class="detail-section">
-              <h3>Tags</h3>
-              {#if genericTags.length > 0}
-                <div class="detail-chip-list">
-                  {#each genericTags as tag (`${tag.class}:${tag.name}`)}
-                    <span title={tag.class}>{tag.name}</span>
-                  {/each}
-                </div>
-              {:else}
-                <p class="detail-muted">No tags cached</p>
-              {/if}
             </section>
           </div>
         </div>
@@ -4013,6 +4006,69 @@
     border-color: var(--accent);
     color: var(--text-strong);
     background: var(--accent-muted);
+  }
+
+  .toggle-row button[data-age-filter],
+  .toggle-row button[data-type-filter] {
+    --filter-color: #8b949e;
+    --filter-soft: rgb(139 148 158 / 12%);
+
+    border-color: color-mix(in srgb, var(--filter-color) 22%, var(--border-strong));
+    color: color-mix(in srgb, var(--filter-color) 28%, var(--text-subtle));
+    background: color-mix(in srgb, var(--filter-soft) 24%, var(--field));
+  }
+
+  .toggle-row button[data-age-filter]:hover:not(:disabled),
+  .toggle-row button[data-type-filter]:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--filter-color) 72%, var(--border-strong));
+    color: color-mix(in srgb, var(--filter-color) 82%, var(--text-strong));
+  }
+
+  .toggle-row button[data-age-filter].active,
+  .toggle-row button[data-type-filter].active {
+    border-color: color-mix(in srgb, var(--filter-color) 82%, white);
+    color: var(--text-strong);
+    background: color-mix(in srgb, var(--filter-color) 28%, var(--field));
+  }
+
+  .toggle-row button[data-age-filter="all"] {
+    --filter-color: #9bc89f;
+    --filter-soft: rgb(112 165 120 / 14%);
+  }
+
+  .toggle-row button[data-age-filter="r15"] {
+    --filter-color: #d2b56c;
+    --filter-soft: rgb(204 166 61 / 14%);
+  }
+
+  .toggle-row button[data-age-filter="r18"] {
+    --filter-color: #d77b7b;
+    --filter-soft: rgb(185 64 64 / 16%);
+  }
+
+  .toggle-row button[data-type-filter="audio"] {
+    --filter-color: #d8a62d;
+    --filter-soft: rgb(216 166 45 / 14%);
+  }
+
+  .toggle-row button[data-type-filter="video"] {
+    --filter-color: #d64b92;
+    --filter-soft: rgb(214 75 146 / 14%);
+  }
+
+  .toggle-row button[data-type-filter="game"] {
+    --filter-color: #9863df;
+    --filter-soft: rgb(152 99 223 / 15%);
+  }
+
+  .toggle-row button[data-type-filter="image"] {
+    --filter-color: #4fb85b;
+    --filter-soft: rgb(79 184 91 / 14%);
+  }
+
+  .toggle-row button[data-type-filter="other"] {
+    --filter-color: #8b949e;
+    --filter-soft: rgb(139 148 158 / 12%);
   }
 
   .toggle-row button.excluded {
