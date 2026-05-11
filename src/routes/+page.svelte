@@ -3007,82 +3007,91 @@
         </section>
       </div>
     {:else}
-      <form class="settings-panel" onsubmit={saveSettings}>
-        <div class="panel-title">
-          <div>
-            <h2>Storage paths</h2>
-            <p>Library is the final managed collection. Download staging keeps resumable partial files and fetched archives.</p>
-          </div>
-          <button
-            class="secondary small"
-            type="button"
-            onclick={loadSettings}
-            disabled={settingsLoading || settingsSaving}
-          >
-            Reload
-          </button>
-        </div>
-
-        <div class="settings-field">
-          <label for="library-root">
-            <span>Library folder</span>
-            <small>Final location for managed works after download and unpacking.</small>
-          </label>
-          <div class="path-control">
-            <input
-              id="library-root"
-              type="text"
-              autocomplete="off"
-              spellcheck="false"
-              bind:value={libraryRoot}
-              disabled={settingsLoading || settingsSaving}
-            />
+      <div class="settings-layout">
+        <form class="settings-panel" onsubmit={saveSettings}>
+          <div class="panel-title">
+            <div>
+              <h2>Storage paths</h2>
+              <p>Library is the final managed collection. Download staging keeps resumable partial files and fetched archives.</p>
+            </div>
             <button
               class="secondary small"
               type="button"
-              onclick={() => chooseSettingsDirectory("library")}
+              onclick={loadSettings}
               disabled={settingsLoading || settingsSaving}
             >
-              Browse
+              Reload
             </button>
           </div>
-        </div>
 
-        <div class="settings-field">
-          <label for="download-root">
-            <span>Download staging folder</span>
-            <small>Working folder for partial downloads, retries, and fetched archives. Defaults to your system Downloads folder.</small>
-          </label>
-          <div class="path-control">
-            <input
-              id="download-root"
-              type="text"
-              autocomplete="off"
-              spellcheck="false"
-              bind:value={downloadRoot}
-              disabled={settingsLoading || settingsSaving}
-            />
-            <button
-              class="secondary small"
-              type="button"
-              onclick={() => chooseSettingsDirectory("download")}
-              disabled={settingsLoading || settingsSaving}
-            >
-              Browse
-            </button>
-            <button
-              class="secondary small"
-              type="button"
-              onclick={useDefaultDownloadRoot}
-              disabled={settingsLoading || settingsSaving}
-            >
-              Use default
+          <div class="settings-field">
+            <label for="library-root">
+              <span>Library folder</span>
+              <small>Final location for managed works after download and unpacking.</small>
+            </label>
+            <div class="path-control">
+              <input
+                id="library-root"
+                type="text"
+                autocomplete="off"
+                spellcheck="false"
+                bind:value={libraryRoot}
+                disabled={settingsLoading || settingsSaving}
+              />
+              <button
+                class="secondary small"
+                type="button"
+                onclick={() => chooseSettingsDirectory("library")}
+                disabled={settingsLoading || settingsSaving}
+              >
+                Browse
+              </button>
+            </div>
+          </div>
+
+          <div class="settings-field">
+            <label for="download-root">
+              <span>Download staging folder</span>
+              <small>Working folder for partial downloads, retries, and fetched archives. Defaults to your system Downloads folder.</small>
+            </label>
+            <div class="path-control">
+              <input
+                id="download-root"
+                type="text"
+                autocomplete="off"
+                spellcheck="false"
+                bind:value={downloadRoot}
+                disabled={settingsLoading || settingsSaving}
+              />
+              <button
+                class="secondary small"
+                type="button"
+                onclick={() => chooseSettingsDirectory("download")}
+                disabled={settingsLoading || settingsSaving}
+              >
+                Browse
+              </button>
+              <button
+                class="secondary small"
+                type="button"
+                onclick={useDefaultDownloadRoot}
+                disabled={settingsLoading || settingsSaving}
+              >
+                Use default
+              </button>
+            </div>
+          </div>
+
+          <div class="actions">
+            <span></span>
+            <button type="submit" disabled={settingsLoading || settingsSaving}>
+              {settingsSaving ? "Saving" : "Save"}
             </button>
           </div>
-        </div>
+        </form>
 
-        <section class="about-section" aria-label="About">
-          <div class="about-heading">
+        <section class="settings-panel about-panel" aria-label="About">
+          <div class="panel-title">
             <h2>About</h2>
           </div>
           <dl class="about-grid">
@@ -3099,14 +3108,7 @@
             <dd>{appInfoValue(appInfo?.tauriVersion)}</dd>
           </dl>
         </section>
-
-        <div class="actions">
-          <span></span>
-          <button type="submit" disabled={settingsLoading || settingsSaving}>
-            {settingsSaving ? "Saving" : "Save"}
-          </button>
-        </div>
-      </form>
+      </div>
     {/if}
   </section>
 
@@ -4525,6 +4527,18 @@
     min-width: 0;
   }
 
+  .settings-layout {
+    display: grid;
+    flex: 1 1 auto;
+    align-content: start;
+    gap: 14px;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    scrollbar-gutter: stable;
+  }
+
   .accounts-layout {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
@@ -5546,18 +5560,8 @@
     gap: 8px;
   }
 
-  .about-section {
-    display: grid;
+  .about-panel {
     gap: 10px;
-    padding-top: 14px;
-    border-top: 1px solid var(--border);
-  }
-
-  .about-heading {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
   }
 
   .about-grid {
