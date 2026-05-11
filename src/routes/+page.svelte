@@ -1393,7 +1393,68 @@
       return job.error.message;
     }
 
+    if (isActiveJob(job)) {
+      const activeDetail = activeJobDetail(job);
+
+      if (activeDetail) {
+        return activeDetail;
+      }
+    }
+
     return jobMessages[job.id] ?? shortDate(job.finishedAt ?? job.startedAt ?? job.createdAt);
+  }
+
+  function activeJobDetail(job: JobSnapshot) {
+    if (job.kind === "workDownload") {
+      return activeWorkDownloadDetail(job);
+    }
+
+    if (job.kind === "bulkWorkDownload") {
+      return activeBulkDownloadDetail(job);
+    }
+
+    return null;
+  }
+
+  function activeWorkDownloadDetail(job: JobSnapshot) {
+    if (job.status === "queued") {
+      return "Waiting to start";
+    }
+
+    switch (job.phase) {
+      case "loggingIn":
+        return "Signing in";
+      case "resolvingDownload":
+        return "Resolving download files";
+      case "probingDownload":
+      case "downloading":
+        return downloadProgressDetail(job);
+      case "unpacking":
+        return "Decompressing archive";
+      case "finalizing":
+        return "Moving files into the library";
+      case "completed":
+        return "Completing";
+      default:
+        return "Preparing download";
+    }
+  }
+
+  function activeBulkDownloadDetail(job: JobSnapshot) {
+    if (job.status === "queued") {
+      return "Waiting to start";
+    }
+
+    if (job.phase === "bulkDownloading" && job.progress?.unit === "items") {
+      const current = job.progress.current ?? 0;
+      const total = job.progress.total;
+
+      return typeof total === "number" && total > 0
+        ? `${current} of ${total} products processed`
+        : "Processing products";
+    }
+
+    return "Preparing bulk download";
   }
 
   function downloadQueueTitle(job: JobSnapshot) {
@@ -1544,6 +1605,21 @@
     }
 
     return "Downloading";
+  }
+
+  function downloadProgressDetail(job: JobSnapshot) {
+    if (job.progress?.unit !== "bytes") {
+      return "Downloading files";
+    }
+
+    const current = job.progress.current ?? 0;
+    const total = job.progress.total;
+
+    if (typeof total === "number" && total > 0) {
+      return `${formatBytes(current)} of ${formatBytes(total)}`;
+    }
+
+    return `${formatBytes(current)} downloaded`;
   }
 
   function bulkDownloadJobProgressLabel(job: JobSnapshot) {
