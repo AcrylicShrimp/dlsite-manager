@@ -10,9 +10,9 @@ use dm_download::{
 };
 pub use dm_jobs::CancellationToken;
 use dm_storage::{
-    Account, AccountSyncCommit, AccountUpsert, AccountWork, CachedWork, ProductListPage,
-    ProductListQuery, Storage, StorageError, SyncCancellation, SyncFailure, WorkDownloadState,
-    WorkDownloadStatus, WorkDownloadUpdate,
+    Account, AccountSyncCommit, AccountUpsert, AccountWork, CachedWork, LocalWorkDownloadImport,
+    ProductListPage, ProductListQuery, Storage, StorageError, SyncCancellation, SyncFailure,
+    WorkDownloadState, WorkDownloadStatus, WorkDownloadUpdate,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -488,6 +488,94 @@ impl Library {
             .await?;
 
         Ok(self.storage.work_download_state(request.work_id).await?)
+    }
+
+    pub async fn import_local_work_downloads(
+        &self,
+        request: LocalWorkImportRequest<'_>,
+    ) -> Result<LocalWorkImportReport> {
+        let library_root = canonicalize_existing_directory(request.library_root)?;
+        let mut entries = tokio::fs::read_dir(&library_root).await?;
+        let scanned_at = now_string();
+        let mut imports = Vec::new();
+        let mut imported_works = Vec::new();
+        let mut scanned_directories = 0;
+        let mut skipped_no_id = 0;
+        let mut skipped_ambiguous = 0;
+        let mut skipped_non_utf8 = 0;
+        let mut skipped_existing = 0;
+
+        while let Some(entry) = entries.next_entry().await? {
+            let file_type = entry.file_type().await?;
+
+            if !file_type.is_dir() {
+                continue;
+            }
+
+            scanned_directories += 1;
+
+            let folder_name = match entry.file_name().into_string() {
+                Ok(folder_name) => folder_name,
+                Err(_) => {
+                    skipped_non_utf8 += 1;
+                    continue;
+                }
+            };
+            let detected = detect_work_ids_in_text(&folder_name);
+
+            if detected.is_empty() {
+                skipped_no_id += 1;
+                continue;
+            }
+
+            if detected.len() > 1 {
+                skipped_ambiguous += 1;
+                continue;
+            }
+
+            let work_id = detected[0].to_string();
+            if self.storage.work_download_state(&work_id).await?.status
+                != WorkDownloadStatus::NotDownloaded
+            {
+                skipped_existing += 1;
+                continue;
+            }
+
+            let local_path = entry.path().canonicalize()?;
+            let work = cached_work_from_local_folder(&work_id, &folder_name, &scanned_at)?;
+            let download = WorkDownloadUpdate {
+                work_id: work_id.clone(),
+                status: WorkDownloadStatus::Downloaded,
+                local_path: Some(local_path.to_string_lossy().into_owned()),
+                staging_path: None,
+                unpack_policy: "manual".to_owned(),
+                bytes_received: 0,
+                bytes_total: None,
+                error_code: None,
+                error_message: None,
+                started_at: Some(scanned_at.clone()),
+                completed_at: Some(scanned_at.clone()),
+                updated_at: scanned_at.clone(),
+            };
+
+            imports.push(LocalWorkDownloadImport { work, download });
+            imported_works.push(LocalWorkImportItem {
+                work_id,
+                local_path,
+            });
+        }
+
+        self.storage.import_local_work_downloads(&imports).await?;
+
+        Ok(LocalWorkImportReport {
+            scanned_directories,
+            imported_count: imported_works.len(),
+            skipped_no_id,
+            skipped_ambiguous,
+            skipped_non_utf8,
+            skipped_existing,
+            imported_works,
+        })
     }
 
     pub async fn sync_account_with_source<S>(
@@ -1070,6 +1158,33 @@ impl<'a> WorkDownloadMarkRequest<'a> {
     }
 }
 
+pub struct LocalWorkImportRequest<'a> {
+    pub library_root: &'a Path,
+}
+
+impl<'a> LocalWorkImportRequest<'a> {
+    pub fn new(library_root: &'a Path) -> Self {
+        Self { library_root }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalWorkImportReport {
+    pub scanned_directories: usize,
+    pub imported_count: usize,
+    pub skipped_no_id: usize,
+    pub skipped_ambiguous: usize,
+    pub skipped_non_utf8: usize,
+    pub skipped_existing: usize,
+    pub imported_works: Vec<LocalWorkImportItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalWorkImportItem {
+    pub work_id: String,
+    pub local_path: PathBuf,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkDownloadReport {
     pub work_id: String,
@@ -1549,6 +1664,38 @@ fn cached_work_from_purchase_placeholder(
         updated_at: None,
         raw_json,
         last_detail_sync_at: synced_at.to_owned(),
+    })
+}
+
+fn cached_work_from_local_folder(
+    work_id: &str,
+    folder_name: &str,
+    scanned_at: &str,
+) -> Result<CachedWork> {
+    let title = folder_name.trim();
+    let title = if title.is_empty() { work_id } else { title };
+    let raw_json = serde_json::to_string(&serde_json::json!({
+        "workno": work_id,
+        "source": "local_scan",
+        "detail_status": "local_only",
+        "folder_name": folder_name,
+    }))?;
+
+    Ok(CachedWork {
+        work_id: work_id.to_owned(),
+        title: title.to_owned(),
+        title_json: serde_json::to_string(&serde_json::json!({ "en_US": title }))?,
+        maker_id: None,
+        maker_name: None,
+        maker_json: None,
+        work_type: None,
+        age_category: None,
+        thumbnail_url: None,
+        registered_at: None,
+        published_at: None,
+        updated_at: None,
+        raw_json,
+        last_detail_sync_at: scanned_at.to_owned(),
     })
 }
 
@@ -2517,6 +2664,89 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, LibraryError::DownloadPathOutsideRoots(_)));
+
+        std::fs::remove_dir_all(root).unwrap();
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn imports_local_work_folders_as_downloaded_products() -> Result<()> {
+        let library = migrated_library().await?;
+        let root = test_dir("import-local-work-folders");
+        let library_root = root.join("library");
+        let local_path = library_root.join("[RJ123456] Local Work");
+        std::fs::create_dir_all(&local_path).unwrap();
+        std::fs::create_dir_all(library_root.join("No Work Id")).unwrap();
+        std::fs::create_dir_all(library_root.join("RJ000001 VJ000001 ambiguous")).unwrap();
+
+        let report = library
+            .import_local_work_downloads(LocalWorkImportRequest::new(&library_root))
+            .await?;
+        let page = library.list_products(&ProductListQuery::default()).await?;
+
+        assert_eq!(report.scanned_directories, 3);
+        assert_eq!(report.imported_count, 1);
+        assert_eq!(report.skipped_no_id, 1);
+        assert_eq!(report.skipped_ambiguous, 1);
+        assert_eq!(report.skipped_existing, 0);
+        assert_eq!(report.imported_works[0].work_id, "RJ123456");
+        assert_eq!(
+            report.imported_works[0].local_path,
+            local_path.canonicalize().unwrap()
+        );
+
+        assert_eq!(page.total_count, 1);
+        assert_eq!(page.products[0].work_id, "RJ123456");
+        assert_eq!(page.products[0].title, "[RJ123456] Local Work");
+        assert_eq!(page.products[0].owners[0].label, "Local");
+        assert_eq!(
+            page.products[0].download.status,
+            WorkDownloadStatus::Downloaded
+        );
+        assert_eq!(
+            page.products[0].download.local_path,
+            Some(
+                local_path
+                    .canonicalize()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            )
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn local_work_import_skips_existing_download_records() -> Result<()> {
+        let library = migrated_library().await?;
+        let root = test_dir("import-local-skips-existing");
+        let library_root = root.join("library");
+        let local_path = library_root.join("[RJ000001] Local Duplicate");
+        std::fs::create_dir_all(&local_path).unwrap();
+        library.save_account(save_account_request(true)).await?;
+        library
+            .sync_account_with_source(AccountSyncRequest::new("account-a"), &sync_source())
+            .await?;
+        library
+            .mark_work_downloaded(WorkDownloadMarkRequest::new(
+                "RJ000001",
+                &library_root,
+                &local_path,
+            ))
+            .await?;
+
+        let report = library
+            .import_local_work_downloads(LocalWorkImportRequest::new(&library_root))
+            .await?;
+
+        assert_eq!(report.scanned_directories, 1);
+        assert_eq!(report.imported_count, 0);
+        assert_eq!(report.skipped_existing, 1);
+        assert!(report.imported_works.is_empty());
 
         std::fs::remove_dir_all(root).unwrap();
 

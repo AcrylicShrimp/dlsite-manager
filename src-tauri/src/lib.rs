@@ -8,8 +8,9 @@ use dm_library::{
     AccountSyncRequest, BulkWorkDownloadPreview, BulkWorkDownloadPreviewProgress,
     BulkWorkDownloadPreviewProgressSink, BulkWorkDownloadPreviewRequest, BulkWorkDownloadProgress,
     BulkWorkDownloadProgressSink, BulkWorkDownloadReport, BulkWorkDownloadRequest,
-    DlsiteSyncSource, DlsiteWorkDownloadSource, Library, SaveAccountRequest, SyncProgress,
-    SyncProgressSink, WorkDownloadMarkRequest, WorkDownloadProgress, WorkDownloadProgressSink,
+    DlsiteSyncSource, DlsiteWorkDownloadSource, Library, LocalWorkImportReport,
+    LocalWorkImportRequest, SaveAccountRequest, SyncProgress, SyncProgressSink,
+    WorkDownloadMarkRequest, WorkDownloadProgress, WorkDownloadProgressSink,
     WorkDownloadRemovalRequest, WorkDownloadRequest,
 };
 use dm_storage::{
@@ -1424,6 +1425,70 @@ async fn mark_work_downloaded(
 }
 
 #[tauri::command]
+async fn scan_local_work_downloads(
+    state: State<'_, AppState>,
+) -> Result<LocalWorkImportReportDto, String> {
+    let settings = match state.storage.app_settings().await {
+        Ok(settings) => settings,
+        Err(error) => {
+            let message = command_error(error);
+            record_audit(
+                &state.audit,
+                AuditEvent::failed("work.local.scan", "Failed to load settings")
+                    .with_error(Some("storage"), message.clone()),
+            )
+            .await;
+            return Err(message);
+        }
+    };
+    let library_root = match required_library_root(&settings) {
+        Ok(root) => root,
+        Err(error) => {
+            record_audit(
+                &state.audit,
+                AuditEvent::failed("work.local.scan", "Failed to resolve library folder")
+                    .with_error(Some("settings"), error.clone()),
+            )
+            .await;
+            return Err(error);
+        }
+    };
+
+    match state
+        .library
+        .import_local_work_downloads(LocalWorkImportRequest::new(&library_root))
+        .await
+    {
+        Ok(report) => {
+            record_audit(
+                &state.audit,
+                AuditEvent::succeeded("work.local.scan", "Scanned local work folders")
+                    .with_details(json!({
+                        "scannedDirectories": report.scanned_directories,
+                        "importedCount": report.imported_count,
+                        "skippedNoId": report.skipped_no_id,
+                        "skippedAmbiguous": report.skipped_ambiguous,
+                        "skippedNonUtf8": report.skipped_non_utf8,
+                        "skippedExisting": report.skipped_existing,
+                    })),
+            )
+            .await;
+            Ok(LocalWorkImportReportDto::from(report))
+        }
+        Err(error) => {
+            let message = command_error(error);
+            record_audit(
+                &state.audit,
+                AuditEvent::failed("work.local.scan", "Failed to scan local work folders")
+                    .with_error(Some("library"), message.clone()),
+            )
+            .await;
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
 async fn list_jobs(state: State<'_, AppState>) -> Result<Vec<dm_jobs::JobSnapshot>, String> {
     Ok(state.jobs.list_jobs())
 }
@@ -1845,6 +1910,52 @@ impl From<WorkDownloadStatus> for WorkDownloadStatusDto {
             WorkDownloadStatus::Downloaded => Self::Downloaded,
             WorkDownloadStatus::Failed => Self::Failed,
             WorkDownloadStatus::Cancelled => Self::Cancelled,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalWorkImportReportDto {
+    scanned_directories: usize,
+    imported_count: usize,
+    skipped_no_id: usize,
+    skipped_ambiguous: usize,
+    skipped_non_utf8: usize,
+    skipped_existing: usize,
+    imported_works: Vec<LocalWorkImportItemDto>,
+}
+
+impl From<LocalWorkImportReport> for LocalWorkImportReportDto {
+    fn from(report: LocalWorkImportReport) -> Self {
+        Self {
+            scanned_directories: report.scanned_directories,
+            imported_count: report.imported_count,
+            skipped_no_id: report.skipped_no_id,
+            skipped_ambiguous: report.skipped_ambiguous,
+            skipped_non_utf8: report.skipped_non_utf8,
+            skipped_existing: report.skipped_existing,
+            imported_works: report
+                .imported_works
+                .into_iter()
+                .map(LocalWorkImportItemDto::from)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalWorkImportItemDto {
+    work_id: String,
+    local_path: String,
+}
+
+impl From<dm_library::LocalWorkImportItem> for LocalWorkImportItemDto {
+    fn from(item: dm_library::LocalWorkImportItem) -> Self {
+        Self {
+            work_id: item.work_id,
+            local_path: item.local_path.to_string_lossy().into_owned(),
         }
     }
 }
@@ -3031,6 +3142,7 @@ pub fn run() {
             open_work_download,
             delete_work_download,
             mark_work_downloaded,
+            scan_local_work_downloads,
             list_jobs,
             get_job,
             cancel_job,

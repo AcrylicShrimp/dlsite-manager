@@ -10,6 +10,8 @@ static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 const LIBRARY_ROOT_KEY: &str = "library_root";
 const DOWNLOAD_ROOT_KEY: &str = "download_root";
 const MISSING_WORK_DETAIL_STATUS: &str = "missing_from_content_works";
+pub const LOCAL_PRODUCT_OWNER_ID: &str = "__local__";
+pub const LOCAL_PRODUCT_OWNER_LABEL: &str = "Local";
 
 pub type Result<T> = std::result::Result<T, StorageError>;
 
@@ -108,6 +110,12 @@ pub struct WorkDownloadUpdate {
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalWorkDownloadImport {
+    pub work: CachedWork,
+    pub download: WorkDownloadUpdate,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -566,6 +574,22 @@ impl Storage {
         transaction.commit().await
     }
 
+    pub async fn import_local_work_downloads(
+        &self,
+        imports: &[LocalWorkDownloadImport],
+    ) -> Result<()> {
+        let mut transaction = self.begin_write().await?;
+
+        for import in imports {
+            transaction.insert_work_if_missing(&import.work).await?;
+            transaction
+                .insert_work_download_if_missing(&import.download)
+                .await?;
+        }
+
+        transaction.commit().await
+    }
+
     pub async fn list_products(&self, query: &ProductListQuery) -> Result<ProductListPage> {
         let total_count = self.count_products(query).await?;
         let products = self.fetch_product_page(query).await?;
@@ -581,11 +605,10 @@ impl Storage {
             "SELECT COUNT(*) AS count FROM (
                  SELECT w.work_id
                  FROM works w
-                 JOIN account_works aw ON aw.work_id = w.work_id
-                 JOIN accounts a ON a.id = aw.account_id
-                 WHERE aw.is_current = 1 AND a.enabled = 1",
+                 WHERE 1 = 1",
         );
 
+        push_product_visibility_filter(&mut builder, query);
         push_product_filters(&mut builder, query);
         builder.push(" GROUP BY w.work_id)");
 
@@ -602,14 +625,27 @@ impl Storage {
                     w.work_id,
                     lower(w.title) AS sort_title,
                     COALESCE(w.published_at, '') AS sort_published_at,
-                    MIN(aw.purchased_at) AS earliest_purchased_at,
-                    MAX(aw.purchased_at) AS latest_purchased_at
+                    (
+                        SELECT MIN(owned_aw.purchased_at)
+                        FROM account_works owned_aw
+                        JOIN accounts owned_a ON owned_a.id = owned_aw.account_id
+                        WHERE owned_aw.work_id = w.work_id
+                            AND owned_aw.is_current = 1
+                            AND owned_a.enabled = 1
+                    ) AS earliest_purchased_at,
+                    (
+                        SELECT MAX(owned_aw.purchased_at)
+                        FROM account_works owned_aw
+                        JOIN accounts owned_a ON owned_a.id = owned_aw.account_id
+                        WHERE owned_aw.work_id = w.work_id
+                            AND owned_aw.is_current = 1
+                            AND owned_a.enabled = 1
+                    ) AS latest_purchased_at
                  FROM works w
-                 JOIN account_works aw ON aw.work_id = w.work_id
-                 JOIN accounts a ON a.id = aw.account_id
-                 WHERE aw.is_current = 1 AND a.enabled = 1",
+                 WHERE 1 = 1",
         );
 
+        push_product_visibility_filter(&mut builder, query);
         push_product_filters(&mut builder, query);
         builder.push(" GROUP BY w.work_id ORDER BY ");
         push_product_sort(&mut builder, query.sort);
@@ -642,15 +678,22 @@ impl Storage {
                 wd.started_at AS download_started_at,
                 wd.completed_at AS download_completed_at,
                 wd.updated_at AS download_updated_at,
-                aw.account_id,
+                a.id AS account_id,
                 a.label AS account_label,
                 aw.purchased_at
              FROM visible_works vw
              JOIN works w ON w.work_id = vw.work_id
              LEFT JOIN work_downloads wd ON wd.work_id = w.work_id
-             JOIN account_works aw ON aw.work_id = w.work_id
-             JOIN accounts a ON a.id = aw.account_id
-             WHERE aw.is_current = 1 AND a.enabled = 1
+             LEFT JOIN account_works aw ON aw.work_id = w.work_id AND aw.is_current = 1
+             LEFT JOIN accounts a ON a.id = aw.account_id AND a.enabled = 1
+             WHERE a.id IS NOT NULL OR NOT EXISTS (
+                SELECT 1
+                FROM account_works visible_aw
+                JOIN accounts visible_a ON visible_a.id = visible_aw.account_id
+                WHERE visible_aw.work_id = w.work_id
+                    AND visible_aw.is_current = 1
+                    AND visible_a.enabled = 1
+             )
              ORDER BY ",
         );
         push_outer_product_sort(&mut builder, query.sort);
@@ -662,17 +705,24 @@ impl Storage {
         for row in rows {
             let work_id: String = row.try_get("work_id")?;
             let raw_json: String = row.try_get("raw_json")?;
-            let owner = ProductOwner {
-                account_id: row.try_get("account_id")?,
-                label: row.try_get("account_label")?,
-                purchased_at: row.try_get("purchased_at")?,
-            };
+            let owner = row
+                .try_get::<Option<String>, _>("account_id")?
+                .map(|account_id| {
+                    Ok::<_, StorageError>(ProductOwner {
+                        account_id,
+                        label: row.try_get("account_label")?,
+                        purchased_at: row.try_get("purchased_at")?,
+                    })
+                })
+                .transpose()?;
 
             if let Some(product) = products
                 .last_mut()
                 .filter(|product| product.work_id == work_id)
             {
-                product.owners.push(owner);
+                if let Some(owner) = owner {
+                    product.owners.push(owner);
+                }
                 continue;
             }
 
@@ -690,7 +740,9 @@ impl Storage {
                 latest_purchased_at: row.try_get("latest_purchased_at")?,
                 credit_groups: product_credit_groups_from_raw_json(&raw_json),
                 download: work_download_state_from_product_row(&row)?,
-                owners: vec![owner],
+                owners: owner
+                    .map(|owner| vec![owner])
+                    .unwrap_or_else(|| vec![local_product_owner()]),
             });
         }
 
@@ -972,6 +1024,51 @@ impl WriteTransaction<'_> {
         Ok(())
     }
 
+    async fn insert_work_download_if_missing(
+        &mut self,
+        download: &WorkDownloadUpdate,
+    ) -> Result<()> {
+        self.ensure_work_exists(&download.work_id).await?;
+        let transaction = self
+            .transaction
+            .as_mut()
+            .ok_or(StorageError::TransactionFinished)?;
+
+        sqlx::query(
+            "INSERT INTO work_downloads (
+                work_id, status, local_path, staging_path, unpack_policy,
+                bytes_received, bytes_total, error_code, error_message,
+                started_at, completed_at, updated_at
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             ON CONFLICT(work_id) DO NOTHING",
+        )
+        .bind(&download.work_id)
+        .bind(download.status.as_str())
+        .bind(&download.local_path)
+        .bind(&download.staging_path)
+        .bind(&download.unpack_policy)
+        .bind(u64_to_i64(
+            download.bytes_received,
+            "work_downloads.bytes_received",
+        )?)
+        .bind(
+            download
+                .bytes_total
+                .map(|value| u64_to_i64(value, "work_downloads.bytes_total"))
+                .transpose()?,
+        )
+        .bind(&download.error_code)
+        .bind(&download.error_message)
+        .bind(&download.started_at)
+        .bind(&download.completed_at)
+        .bind(&download.updated_at)
+        .execute(&mut **transaction)
+        .await?;
+
+        Ok(())
+    }
+
     async fn ensure_account_exists(&mut self, account_id: &str) -> Result<()> {
         let transaction = self
             .transaction
@@ -1076,6 +1173,43 @@ impl WriteTransaction<'_> {
                 updated_at = excluded.updated_at,
                 raw_json = excluded.raw_json,
                 last_detail_sync_at = excluded.last_detail_sync_at",
+        )
+        .bind(&work.work_id)
+        .bind(&work.title)
+        .bind(&work.title_json)
+        .bind(&work.maker_id)
+        .bind(&work.maker_name)
+        .bind(&work.maker_json)
+        .bind(&work.work_type)
+        .bind(&work.age_category)
+        .bind(&work.thumbnail_url)
+        .bind(&work.registered_at)
+        .bind(&work.published_at)
+        .bind(&work.updated_at)
+        .bind(&work.raw_json)
+        .bind(&work.last_detail_sync_at)
+        .execute(&mut **transaction)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn insert_work_if_missing(&mut self, work: &CachedWork) -> Result<()> {
+        let transaction = self
+            .transaction
+            .as_mut()
+            .ok_or(StorageError::TransactionFinished)?;
+
+        sqlx::query(
+            "INSERT INTO works (
+                work_id, title, title_json, maker_id, maker_name, maker_json,
+                work_type, age_category, thumbnail_url, registered_at,
+                published_at, updated_at, raw_json, last_detail_sync_at
+             )
+             VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
+             )
+             ON CONFLICT(work_id) DO NOTHING",
         )
         .bind(&work.work_id)
         .bind(&work.title)
@@ -1265,6 +1399,39 @@ fn work_download_state_from_product_row(
     })
 }
 
+fn push_product_visibility_filter(builder: &mut QueryBuilder<Sqlite>, query: &ProductListQuery) {
+    builder.push(
+        " AND (
+            EXISTS (
+                SELECT 1
+                FROM account_works visible_aw
+                JOIN accounts visible_a ON visible_a.id = visible_aw.account_id
+                WHERE visible_aw.work_id = w.work_id
+                    AND visible_aw.is_current = 1
+                    AND visible_a.enabled = 1",
+    );
+
+    if let Some(account_id) = query.account_id.as_deref() {
+        builder.push(" AND visible_aw.account_id = ");
+        builder.push_bind(account_id.to_owned());
+    }
+
+    builder.push(")");
+
+    if query.account_id.is_none() {
+        builder.push(
+            " OR EXISTS (
+                SELECT 1
+                FROM work_downloads visible_wd
+                WHERE visible_wd.work_id = w.work_id
+                    AND visible_wd.status = 'downloaded'
+            )",
+        );
+    }
+
+    builder.push(")");
+}
+
 fn push_product_filters(builder: &mut QueryBuilder<Sqlite>, query: &ProductListQuery) {
     builder.push(
         " AND COALESCE(
@@ -1275,11 +1442,6 @@ fn push_product_filters(builder: &mut QueryBuilder<Sqlite>, query: &ProductListQ
         ) <> ",
     );
     builder.push_bind(MISSING_WORK_DETAIL_STATUS);
-
-    if let Some(account_id) = query.account_id.as_deref() {
-        builder.push(" AND aw.account_id = ");
-        builder.push_bind(account_id.to_owned());
-    }
 
     if let Some(age_category) = query.age_category {
         builder.push(" AND w.age_category = ");
@@ -1330,6 +1492,14 @@ fn push_product_filters(builder: &mut QueryBuilder<Sqlite>, query: &ProductListQ
         );
         builder.push_bind(pattern);
         builder.push(" ESCAPE '\\'))");
+    }
+}
+
+fn local_product_owner() -> ProductOwner {
+    ProductOwner {
+        account_id: LOCAL_PRODUCT_OWNER_ID.to_owned(),
+        label: LOCAL_PRODUCT_OWNER_LABEL.to_owned(),
+        purchased_at: None,
     }
 }
 
@@ -2693,6 +2863,162 @@ mod tests {
             WorkDownloadStatus::NotDownloaded
         );
         assert_eq!(removed_page.products[0].download.local_path, None);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn product_list_includes_local_only_download_imports() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .import_local_work_downloads(&[LocalWorkDownloadImport {
+                work: CachedWork {
+                    work_id: "RJ123456".to_owned(),
+                    title: "[RJ123456] Local Folder".to_owned(),
+                    title_json: r#"{"en_US":"[RJ123456] Local Folder"}"#.to_owned(),
+                    maker_id: None,
+                    maker_name: None,
+                    maker_json: None,
+                    work_type: None,
+                    age_category: None,
+                    thumbnail_url: None,
+                    registered_at: None,
+                    published_at: None,
+                    updated_at: None,
+                    raw_json: r#"{"workno":"RJ123456","source":"local_scan","detail_status":"local_only"}"#
+                        .to_owned(),
+                    last_detail_sync_at: "2026-05-11T00:00:00.000Z".to_owned(),
+                },
+                download: WorkDownloadUpdate {
+                    work_id: "RJ123456".to_owned(),
+                    status: WorkDownloadStatus::Downloaded,
+                    local_path: Some("/library/[RJ123456] Local Folder".to_owned()),
+                    staging_path: None,
+                    unpack_policy: "manual".to_owned(),
+                    bytes_received: 0,
+                    bytes_total: None,
+                    error_code: None,
+                    error_message: None,
+                    started_at: Some("2026-05-11T00:00:00.000Z".to_owned()),
+                    completed_at: Some("2026-05-11T00:00:00.000Z".to_owned()),
+                    updated_at: "2026-05-11T00:00:00.000Z".to_owned(),
+                },
+            }])
+            .await?;
+
+        let page = storage.list_products(&ProductListQuery::default()).await?;
+        let account_page = storage
+            .list_products(&ProductListQuery {
+                account_id: Some("account-a".to_owned()),
+                ..ProductListQuery::default()
+            })
+            .await?;
+
+        assert_eq!(page.total_count, 1);
+        assert_eq!(page.products[0].work_id, "RJ123456");
+        assert_eq!(page.products[0].title, "[RJ123456] Local Folder");
+        assert_eq!(page.products[0].owners.len(), 1);
+        assert_eq!(
+            page.products[0].owners[0].account_id,
+            LOCAL_PRODUCT_OWNER_ID
+        );
+        assert_eq!(page.products[0].owners[0].label, LOCAL_PRODUCT_OWNER_LABEL);
+        assert_eq!(
+            page.products[0].download.status,
+            WorkDownloadStatus::Downloaded
+        );
+        assert_eq!(account_page.total_count, 0);
+        assert_eq!(account_page.products.len(), 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn local_download_import_preserves_existing_work_and_download_state() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-1",
+                vec![work(
+                    "RJ000001",
+                    "Synced Work",
+                    "Circle One",
+                    "2026-01-01T00:00:00Z",
+                )],
+                vec![account_work("RJ000001", "2026-02-01T00:00:00Z")],
+            ))
+            .await?;
+        storage
+            .save_work_download(&WorkDownloadUpdate {
+                work_id: "RJ000001".to_owned(),
+                status: WorkDownloadStatus::Downloaded,
+                local_path: Some("/library/RJ000001".to_owned()),
+                staging_path: None,
+                unpack_policy: "unpack_when_recognized".to_owned(),
+                bytes_received: 42,
+                bytes_total: Some(42),
+                error_code: None,
+                error_message: None,
+                started_at: Some("2026-05-11T00:00:00.000Z".to_owned()),
+                completed_at: Some("2026-05-11T00:01:00.000Z".to_owned()),
+                updated_at: "2026-05-11T00:01:00.000Z".to_owned(),
+            })
+            .await?;
+
+        storage
+            .import_local_work_downloads(&[LocalWorkDownloadImport {
+                work: CachedWork {
+                    work_id: "RJ000001".to_owned(),
+                    title: "[RJ000001] Local Folder".to_owned(),
+                    title_json: r#"{"en_US":"[RJ000001] Local Folder"}"#.to_owned(),
+                    maker_id: None,
+                    maker_name: None,
+                    maker_json: None,
+                    work_type: None,
+                    age_category: None,
+                    thumbnail_url: None,
+                    registered_at: None,
+                    published_at: None,
+                    updated_at: None,
+                    raw_json: r#"{"workno":"RJ000001","source":"local_scan","detail_status":"local_only"}"#
+                        .to_owned(),
+                    last_detail_sync_at: "2026-05-11T00:02:00.000Z".to_owned(),
+                },
+                download: WorkDownloadUpdate {
+                    work_id: "RJ000001".to_owned(),
+                    status: WorkDownloadStatus::Downloaded,
+                    local_path: Some("/library/[RJ000001] Local Folder".to_owned()),
+                    staging_path: None,
+                    unpack_policy: "manual".to_owned(),
+                    bytes_received: 0,
+                    bytes_total: None,
+                    error_code: None,
+                    error_message: None,
+                    started_at: Some("2026-05-11T00:02:00.000Z".to_owned()),
+                    completed_at: Some("2026-05-11T00:02:00.000Z".to_owned()),
+                    updated_at: "2026-05-11T00:02:00.000Z".to_owned(),
+                },
+            }])
+            .await?;
+
+        let page = storage.list_products(&ProductListQuery::default()).await?;
+
+        assert_eq!(page.total_count, 1);
+        assert_eq!(page.products[0].title, "Synced Work");
+        assert_eq!(page.products[0].owners[0].label, "Account A");
+        assert_eq!(
+            page.products[0].download.local_path,
+            Some("/library/RJ000001".to_owned())
+        );
+        assert_eq!(page.products[0].download.bytes_received, 42);
+        assert_eq!(
+            page.products[0].download.unpack_policy,
+            Some("unpack_when_recognized".to_owned())
+        );
 
         Ok(())
     }

@@ -96,6 +96,16 @@
     unknownSizeCount: number;
   };
 
+  type LocalWorkImportReport = {
+    scannedDirectories: number;
+    importedCount: number;
+    skippedNoId: number;
+    skippedAmbiguous: number;
+    skippedNonUtf8: number;
+    skippedExisting: number;
+    importedWorks: { workId: string; localPath: string }[];
+  };
+
   type BulkDownloadDialog = {
     kind: "confirm" | "notice";
     preview: BulkWorkDownloadPreview;
@@ -348,6 +358,7 @@
   let totalProducts = $state(0);
   let productsLoading = $state(true);
   let bulkDownloadPlanning = $state(false);
+  let localScanRunning = $state(false);
   let productSearch = $state("");
   let selectedAccountId = $state("");
   let selectedProductType = $state("");
@@ -938,6 +949,30 @@
       notifyError(errorMessage(err));
     } finally {
       bulkDownloadPlanning = false;
+    }
+  }
+
+  async function scanLocalWorkDownloads() {
+    if (localScanRunning) {
+      return;
+    }
+
+    localScanRunning = true;
+
+    try {
+      const report = await invoke<LocalWorkImportReport>("scan_local_work_downloads");
+      const skipped =
+        report.skippedNoId +
+        report.skippedAmbiguous +
+        report.skippedNonUtf8 +
+        report.skippedExisting;
+      const suffix = skipped > 0 ? `, skipped ${skipped}` : "";
+      notifySuccess(`Imported ${report.importedCount} local folders${suffix}`);
+      await loadProducts();
+    } catch (err) {
+      notifyError(errorMessage(err));
+    } finally {
+      localScanRunning = false;
     }
   }
 
@@ -2232,6 +2267,14 @@
             disabled={productsLoading}
           >
             Reload
+          </button>
+          <button
+            class="secondary"
+            type="button"
+            onclick={scanLocalWorkDownloads}
+            disabled={localScanRunning || productsLoading}
+          >
+            {localScanRunning ? "Scanning" : "Scan local"}
           </button>
           <button
             type="button"
