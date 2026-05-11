@@ -456,6 +456,14 @@ impl Storage {
         Ok(())
     }
 
+    pub async fn delete_account(&self, account_id: &str) -> Result<()> {
+        let mut transaction = self.begin_write().await?;
+        transaction.delete_account(account_id).await?;
+        transaction.commit().await?;
+
+        Ok(())
+    }
+
     pub async fn record_account_login(&self, account_id: &str, logged_in_at: &str) -> Result<()> {
         let mut transaction = self.begin_write().await?;
         transaction
@@ -862,6 +870,20 @@ impl WriteTransaction<'_> {
         .bind(bool_to_i64(enabled))
         .execute(&mut **transaction)
         .await?;
+
+        ensure_changed(result, "account", account_id)
+    }
+
+    pub async fn delete_account(&mut self, account_id: &str) -> Result<()> {
+        let transaction = self
+            .transaction
+            .as_mut()
+            .ok_or(StorageError::TransactionFinished)?;
+
+        let result = sqlx::query("DELETE FROM accounts WHERE id = ?1")
+            .bind(account_id)
+            .execute(&mut **transaction)
+            .await?;
 
         ensure_changed(result, "account", account_id)
     }
@@ -2038,11 +2060,123 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn deletes_account_source_without_deleting_global_work_cache() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+        storage
+            .save_account(&account("account-b", "Account B"))
+            .await?;
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-1",
+                vec![
+                    work(
+                        "RJ000001",
+                        "Shared Work",
+                        "Maker One",
+                        "2026-01-01T00:00:00Z",
+                    ),
+                    work(
+                        "RJ000002",
+                        "Downloaded Local Work",
+                        "Maker Two",
+                        "2026-01-02T00:00:00Z",
+                    ),
+                    work(
+                        "RJ000003",
+                        "Hidden After Removal",
+                        "Maker Three",
+                        "2026-01-03T00:00:00Z",
+                    ),
+                ],
+                vec![
+                    account_work("RJ000001", "2026-02-01T00:00:00Z"),
+                    account_work("RJ000002", "2026-02-02T00:00:00Z"),
+                    account_work("RJ000003", "2026-02-03T00:00:00Z"),
+                ],
+            ))
+            .await?;
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-b",
+                "sync-b-1",
+                vec![work(
+                    "RJ000001",
+                    "Shared Work",
+                    "Maker One",
+                    "2026-01-01T00:00:00Z",
+                )],
+                vec![account_work("RJ000001", "2026-03-01T00:00:00Z")],
+            ))
+            .await?;
+        storage
+            .save_work_download(&WorkDownloadUpdate {
+                work_id: "RJ000002".to_owned(),
+                status: WorkDownloadStatus::Downloaded,
+                local_path: Some("/library/RJ000002".to_owned()),
+                staging_path: None,
+                unpack_policy: "manual".to_owned(),
+                bytes_received: 0,
+                bytes_total: None,
+                error_code: None,
+                error_message: None,
+                started_at: Some("2026-05-11T00:00:00.000Z".to_owned()),
+                completed_at: Some("2026-05-11T00:00:00.000Z".to_owned()),
+                updated_at: "2026-05-11T00:00:00.000Z".to_owned(),
+            })
+            .await?;
+
+        storage.delete_account("account-a").await?;
+
+        let accounts = storage.accounts().await?;
+        let page = storage
+            .list_products(&ProductListQuery {
+                sort: ProductSort::TitleAsc,
+                ..ProductListQuery::default()
+            })
+            .await?;
+        let work_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM works")
+            .fetch_one(&storage.pool)
+            .await?;
+        let removed_owner_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM account_works WHERE account_id = 'account-a'")
+                .fetch_one(&storage.pool)
+                .await?;
+        let removed_sync_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM sync_runs WHERE account_id = 'account-a'")
+                .fetch_one(&storage.pool)
+                .await?;
+
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].id, "account-b");
+        assert_eq!(page.total_count, 2);
+        assert_eq!(page.products[0].work_id, "RJ000002");
+        assert_eq!(page.products[0].owners[0].label, LOCAL_PRODUCT_OWNER_LABEL);
+        assert_eq!(page.products[1].work_id, "RJ000001");
+        assert_eq!(page.products[1].owners[0].account_id, "account-b");
+        assert_eq!(work_count, 3);
+        assert_eq!(removed_owner_count, 0);
+        assert_eq!(removed_sync_count, 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn missing_account_updates_return_not_found() -> Result<()> {
         let storage = migrated_storage().await?;
 
         assert!(matches!(
             storage.set_account_enabled("missing", true).await,
+            Err(StorageError::NotFound {
+                entity: "account",
+                id
+            }) if id == "missing"
+        ));
+        assert!(matches!(
+            storage.delete_account("missing").await,
             Err(StorageError::NotFound {
                 entity: "account",
                 id

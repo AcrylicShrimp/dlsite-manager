@@ -30,6 +30,12 @@
     lastSyncAt: string | null;
   };
 
+  type AccountRemovalReport = {
+    accountId: string;
+    label: string;
+    credentialDeleted: boolean;
+  };
+
   type ProductOwner = {
     accountId: string;
     label: string;
@@ -587,6 +593,43 @@
       });
       await loadAccounts();
       await loadProducts();
+    } catch (err) {
+      notifyError(errorMessage(err));
+    }
+  }
+
+  async function removeAccount(account: Account) {
+    const confirmed = await showConfirmationDialog({
+      eyebrow: "Account source",
+      title: "Remove account?",
+      message: `Remove ${account.label}. Its saved credential and ownership source will be deleted. Cached product metadata and downloaded local folders are kept.`,
+      confirmLabel: "Remove Account",
+      cancelLabel: "Cancel",
+      tone: "danger",
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const report = await invoke<AccountRemovalReport>("remove_account", {
+        request: {
+          accountId: account.id,
+        },
+      });
+
+      notifySuccess(`Removed ${report.label}`);
+
+      if (editingAccountId === account.id) {
+        resetAccountForm();
+      }
+
+      if (selectedAccountId === account.id) {
+        selectedAccountId = "";
+      }
+
+      await Promise.all([loadAccounts(), loadProducts()]);
     } catch (err) {
       notifyError(errorMessage(err));
     }
@@ -2621,8 +2664,9 @@
                     <button
                       class="secondary small"
                       type="button"
-                      disabled
-                      title="Account removal is not implemented yet"
+                      title="Remove account source"
+                      onclick={() => removeAccount(account)}
+                      disabled={Boolean(activeSyncJob)}
                     >
                       Remove
                     </button>

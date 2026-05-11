@@ -151,6 +151,29 @@ impl Library {
             .await?)
     }
 
+    pub async fn remove_account(&self, account_id: &str) -> Result<AccountRemovalReport> {
+        let account = self.find_account(account_id).await?;
+        let credential_ref = account
+            .credential_ref
+            .as_deref()
+            .map(|value| CredentialRef::new(value.to_owned()))
+            .transpose()?;
+        let credential_deleted = if let Some(credential_ref) = credential_ref {
+            self.credentials.delete_password(&credential_ref)?;
+            true
+        } else {
+            false
+        };
+
+        self.storage.delete_account(account_id).await?;
+
+        Ok(AccountRemovalReport {
+            account_id: account.id,
+            label: account.label,
+            credential_deleted,
+        })
+    }
+
     pub async fn list_products(&self, query: &ProductListQuery) -> Result<ProductListPage> {
         Ok(self.storage.list_products(query).await?)
     }
@@ -1183,6 +1206,13 @@ pub struct LocalWorkImportReport {
 pub struct LocalWorkImportItem {
     pub work_id: String,
     pub local_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountRemovalReport {
+    pub account_id: String,
+    pub label: String,
+    pub credential_deleted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2408,6 +2438,29 @@ mod tests {
             Some("account:account-a:password".to_owned())
         );
         assert!(library.account_has_saved_password(&account)?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn removes_account_and_saved_credential() -> Result<()> {
+        let storage = Storage::open_in_memory().await?;
+        storage.run_migrations().await?;
+        let credentials = Arc::new(InMemoryCredentialStore::new());
+        let library = Library::new(storage, credentials.clone());
+
+        let account = library.save_account(save_account_request(true)).await?;
+        let credential_ref = CredentialRef::account_password(&account.id)?;
+
+        assert!(credentials.load_password(&credential_ref)?.is_some());
+
+        let report = library.remove_account(&account.id).await?;
+
+        assert_eq!(report.account_id, "account-a");
+        assert_eq!(report.label, "Account A");
+        assert!(report.credential_deleted);
+        assert!(credentials.load_password(&credential_ref)?.is_none());
+        assert_eq!(library.accounts().await?, Vec::new());
 
         Ok(())
     }

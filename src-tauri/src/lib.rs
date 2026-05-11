@@ -5,12 +5,12 @@ use dm_jobs::{
     JobStatus,
 };
 use dm_library::{
-    AccountSyncRequest, BulkWorkDownloadPreview, BulkWorkDownloadPreviewProgress,
-    BulkWorkDownloadPreviewProgressSink, BulkWorkDownloadPreviewRequest, BulkWorkDownloadProgress,
-    BulkWorkDownloadProgressSink, BulkWorkDownloadReport, BulkWorkDownloadRequest,
-    DlsiteSyncSource, DlsiteWorkDownloadSource, Library, LocalWorkImportReport,
-    LocalWorkImportRequest, SaveAccountRequest, SyncProgress, SyncProgressSink,
-    WorkDownloadMarkRequest, WorkDownloadProgress, WorkDownloadProgressSink,
+    AccountRemovalReport, AccountSyncRequest, BulkWorkDownloadPreview,
+    BulkWorkDownloadPreviewProgress, BulkWorkDownloadPreviewProgressSink,
+    BulkWorkDownloadPreviewRequest, BulkWorkDownloadProgress, BulkWorkDownloadProgressSink,
+    BulkWorkDownloadReport, BulkWorkDownloadRequest, DlsiteSyncSource, DlsiteWorkDownloadSource,
+    Library, LocalWorkImportReport, LocalWorkImportRequest, SaveAccountRequest, SyncProgress,
+    SyncProgressSink, WorkDownloadMarkRequest, WorkDownloadProgress, WorkDownloadProgressSink,
     WorkDownloadRemovalRequest, WorkDownloadRequest,
 };
 use dm_storage::{
@@ -340,6 +340,51 @@ async fn set_account_enabled(
                     "accountId": account_id,
                     "enabled": request.enabled,
                 })),
+            )
+            .await;
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
+async fn remove_account(
+    state: State<'_, AppState>,
+    request: RemoveAccountRequest,
+) -> Result<AccountRemovalReportDto, String> {
+    let account_id = match normalize_required_id(request.account_id) {
+        Ok(account_id) => account_id,
+        Err(error) => {
+            record_audit(
+                &state.audit,
+                AuditEvent::failed("account.remove", "Failed to validate account removal")
+                    .with_error(Some("validation"), error.clone()),
+            )
+            .await;
+            return Err(error);
+        }
+    };
+
+    match state.library.remove_account(&account_id).await {
+        Ok(report) => {
+            record_audit(
+                &state.audit,
+                AuditEvent::succeeded("account.remove", "Removed account").with_details(json!({
+                    "accountId": report.account_id.clone(),
+                    "label": report.label.clone(),
+                    "credentialDeleted": report.credential_deleted,
+                })),
+            )
+            .await;
+            Ok(AccountRemovalReportDto::from(report))
+        }
+        Err(error) => {
+            let message = command_error(error);
+            record_audit(
+                &state.audit,
+                AuditEvent::failed("account.remove", "Failed to remove account")
+                    .with_error(Some("library"), message.clone())
+                    .with_details(json!({ "accountId": account_id })),
             )
             .await;
             Err(message)
@@ -1675,6 +1720,30 @@ impl SaveAccountCommandRequest {
 struct SetAccountEnabledRequest {
     account_id: String,
     enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoveAccountRequest {
+    account_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AccountRemovalReportDto {
+    account_id: String,
+    label: String,
+    credential_deleted: bool,
+}
+
+impl From<AccountRemovalReport> for AccountRemovalReportDto {
+    fn from(report: AccountRemovalReport) -> Self {
+        Self {
+            account_id: report.account_id,
+            label: report.label,
+            credential_deleted: report.credential_deleted,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -3134,6 +3203,7 @@ pub fn run() {
             list_accounts,
             save_account,
             set_account_enabled,
+            remove_account,
             list_products,
             start_account_sync,
             start_work_download,
