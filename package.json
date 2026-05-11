@@ -1,7 +1,7 @@
 {
   "name": "dlsite-manager",
-  "version": "0.1.0",
-  "description": "",
+  "version": "3.0.0-rc.1",
+  "description": "Desktop manager for DLsite works and libraries.",
   "type": "module",
   "scripts": {
     "dev": "vite dev",

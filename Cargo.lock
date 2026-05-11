@@ -916,7 +916,7 @@ dependencies = [
 
 [[package]]
 name = "dlsite-manager"
-version = "0.1.0"
+version = "3.0.0-rc.1"
 dependencies = [
  "dm-api",
  "dm-audit",
@@ -939,7 +939,7 @@ dependencies = [
 
 [[package]]
 name = "dm-api"
-version = "0.1.0"
+version = "3.0.0-rc.1"
 dependencies = [
  "bytes",
  "chrono",
@@ -958,7 +958,7 @@ dependencies = [
 
 [[package]]
 name = "dm-archive"
-version = "0.1.0"
+version = "3.0.0-rc.1"
 dependencies = [
  "dotenvy",
  "thiserror 2.0.18",
@@ -968,7 +968,7 @@ dependencies = [
 
 [[package]]
 name = "dm-audit"
-version = "0.1.0"
+version = "3.0.0-rc.1"
 dependencies = [
  "chrono",
  "serde",
@@ -981,7 +981,7 @@ dependencies = [
 
 [[package]]
 name = "dm-credentials"
-version = "0.1.0"
+version = "3.0.0-rc.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -991,7 +991,7 @@ dependencies = [
 
 [[package]]
 name = "dm-download"
-version = "0.1.0"
+version = "3.0.0-rc.1"
 dependencies = [
  "dm-api",
  "dm-archive",
@@ -1004,7 +1004,7 @@ dependencies = [
 
 [[package]]
 name = "dm-jobs"
-version = "0.1.0"
+version = "3.0.0-rc.1"
 dependencies = [
  "chrono",
  "serde",
@@ -1016,7 +1016,7 @@ dependencies = [
 
 [[package]]
 name = "dm-library"
-version = "0.1.0"
+version = "3.0.0-rc.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1034,7 +1034,7 @@ dependencies = [
 
 [[package]]
 name = "dm-storage"
-version = "0.1.0"
+version = "3.0.0-rc.1"
 dependencies = [
  "serde",
  "serde_json",
