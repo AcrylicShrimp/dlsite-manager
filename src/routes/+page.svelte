@@ -2631,7 +2631,7 @@
                     type="button"
                     onclick={() => setProductSort(value)}
                   >
-                    {label}
+                    <span class="filter-chip-label">{label}</span>
                   </button>
                 {/each}
               </div>
@@ -2645,7 +2645,7 @@
                   type="button"
                   onclick={clearAccountFilters}
                 >
-                  All
+                  <span class="filter-chip-label">All</span>
                 </button>
                 {#each accounts as account (account.id)}
                   <button
@@ -2654,7 +2654,7 @@
                     title={account.loginName ?? account.label}
                     onclick={() => toggleAccountFilter(account.id)}
                   >
-                    {account.label}
+                    <span class="filter-chip-label">{account.label}</span>
                   </button>
                 {/each}
               </div>
@@ -2668,7 +2668,7 @@
                   type="button"
                   onclick={clearAgeFilters}
                 >
-                  Any
+                  <span class="filter-chip-label">Any</span>
                 </button>
                 {#each AGE_FILTERS as [value, label] (value)}
                   <button
@@ -2676,7 +2676,7 @@
                     type="button"
                     onclick={() => toggleAgeFilter(value)}
                   >
-                    {label}
+                    <span class="filter-chip-label">{label}</span>
                   </button>
                 {/each}
               </div>
@@ -2690,7 +2690,7 @@
                   type="button"
                   onclick={clearTypeFilters}
                 >
-                  Any
+                  <span class="filter-chip-label">Any</span>
                 </button>
                 {#each TYPE_FILTERS as [value, label] (value)}
                   <button
@@ -2698,7 +2698,7 @@
                     type="button"
                     onclick={() => toggleProductTypeFilter(value)}
                   >
-                    {label}
+                    <span class="filter-chip-label">{label}</span>
                   </button>
                 {/each}
               </div>
@@ -2712,7 +2712,7 @@
                   type="button"
                   onclick={clearMakerFilters}
                 >
-                  Any
+                  <span class="filter-chip-label">Any</span>
                 </button>
                 {#each productFilterFacets.makers as maker (maker.name)}
                   <button
@@ -2721,7 +2721,7 @@
                     title={`${maker.name} (${maker.count})`}
                     onclick={() => toggleMakerFilter(maker.name)}
                   >
-                    {maker.name}
+                    <span class="filter-chip-label">{maker.name}</span>
                     <small>{maker.count}</small>
                   </button>
                 {/each}
@@ -4975,7 +4975,16 @@
     background: var(--accent-muted);
   }
 
+  .filter-chip-label {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .toggle-row button small {
+    flex: 0 0 auto;
     margin-left: 6px;
     color: var(--text-subtle);
     font-size: 11px;
