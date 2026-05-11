@@ -2468,6 +2468,21 @@ fn bulk_download_output(
     output.insert("succeededCount".to_owned(), json!(report.succeeded_count));
     output.insert("failedCount".to_owned(), json!(report.failed_count));
     output.insert(
+        "succeededWorks".to_owned(),
+        json!(report
+            .succeeded_works
+            .iter()
+            .map(|success| {
+                json!({
+                    "workId": success.work_id.as_str(),
+                    "localPath": success.local_path.to_string_lossy().to_string(),
+                    "fileCount": success.file_count,
+                    "archiveExtracted": success.archive_extracted,
+                })
+            })
+            .collect::<Vec<_>>()),
+    );
+    output.insert(
         "failedWorks".to_owned(),
         json!(report
             .failed_works
@@ -2501,6 +2516,10 @@ fn bulk_download_noop_output(
     output.insert("skippedQueuedCount".to_owned(), json!(skipped_queued_count));
     output.insert("succeededCount".to_owned(), json!(0usize));
     output.insert("failedCount".to_owned(), json!(0usize));
+    output.insert(
+        "succeededWorks".to_owned(),
+        json!(Vec::<serde_json::Value>::new()),
+    );
     output.insert(
         "failedWorks".to_owned(),
         json!(Vec::<serde_json::Value>::new()),

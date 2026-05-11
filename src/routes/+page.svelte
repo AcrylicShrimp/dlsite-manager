@@ -88,6 +88,19 @@
     unknownSizeCount: number;
   };
 
+  type BulkSucceededWork = {
+    workId: string;
+    localPath: string | null;
+    fileCount: number | null;
+    archiveExtracted: boolean | null;
+  };
+
+  type BulkFailedWork = {
+    workId: string;
+    errorCode: string | null;
+    errorMessage: string | null;
+  };
+
   type JobStatus = "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
 
   type JobProgress = {
@@ -572,8 +585,102 @@
       (event.kind === "workDownload" || event.kind === "bulkWorkDownload") &&
       isTerminalJob(event.snapshot)
     ) {
-      await Promise.all([loadProducts(), loadAuditEvents()]);
+      applyDownloadJobResult(event.snapshot);
+      await loadAuditEvents();
     }
+  }
+
+  function applyDownloadJobResult(job: JobSnapshot) {
+    if (job.kind === "workDownload") {
+      applySingleDownloadJobResult(job);
+      return;
+    }
+
+    if (job.kind === "bulkWorkDownload") {
+      applyBulkDownloadJobResult(job);
+    }
+  }
+
+  function applySingleDownloadJobResult(job: JobSnapshot) {
+    if (jobOutputBoolean(job, "skippedQueued")) {
+      return;
+    }
+
+    const workId = jobWorkId(job) ?? jobOutputString(job, "workId");
+
+    if (!workId) {
+      return;
+    }
+
+    if (job.status === "succeeded") {
+      patchProductDownload(workId, {
+        status: "downloaded",
+        localPath: jobOutputString(job, "localPath"),
+        errorCode: null,
+        errorMessage: null,
+        completedAt: job.finishedAt,
+        updatedAt: job.finishedAt ?? new Date().toISOString(),
+      });
+      return;
+    }
+
+    patchProductDownload(workId, {
+      status: job.status === "cancelled" ? "cancelled" : "failed",
+      errorCode: job.error?.code ?? null,
+      errorMessage: job.error?.message ?? null,
+      updatedAt: job.finishedAt ?? new Date().toISOString(),
+    });
+  }
+
+  function applyBulkDownloadJobResult(job: JobSnapshot) {
+    const result = bulkDownloadResult(job);
+
+    for (const success of result.succeededWorks) {
+      patchProductDownload(success.workId, {
+        status: "downloaded",
+        localPath: success.localPath,
+        errorCode: null,
+        errorMessage: null,
+        completedAt: job.finishedAt,
+        updatedAt: job.finishedAt ?? new Date().toISOString(),
+      });
+    }
+
+    for (const failure of result.failedWorks) {
+      patchProductDownload(failure.workId, {
+        status: job.status === "cancelled" ? "cancelled" : "failed",
+        errorCode: failure.errorCode ?? job.error?.code ?? null,
+        errorMessage: failure.errorMessage ?? job.error?.message ?? null,
+        updatedAt: job.finishedAt ?? new Date().toISOString(),
+      });
+    }
+  }
+
+  function patchProductDownload(workId: string, patch: Partial<ProductDownload>) {
+    products = products.map((product) => {
+      if (product.workId !== workId) {
+        return product;
+      }
+
+      return {
+        ...product,
+        download: {
+          ...product.download,
+          ...patch,
+        },
+      };
+    });
+  }
+
+  function setProductDownload(workId: string, download: ProductDownload) {
+    products = products.map((product) =>
+      product.workId === workId
+        ? {
+            ...product,
+            download,
+          }
+        : product,
+    );
   }
 
   async function searchProducts(event: Event) {
@@ -817,13 +924,13 @@
     }
 
     try {
-      await invoke("delete_work_download", {
+      const download = await invoke<ProductDownload>("delete_work_download", {
         request: {
           workId: product.workId,
         },
       });
       notifySuccess("Download deleted");
-      await loadProducts();
+      setProductDownload(product.workId, download);
     } catch (err) {
       notifyError(errorMessage(err));
     }
@@ -1176,9 +1283,80 @@
     return jobMessages[job.id] ?? shortDate(job.finishedAt ?? job.startedAt ?? job.createdAt);
   }
 
+  function jobOutputString(job: JobSnapshot, key: string) {
+    const value = job.output?.[key];
+    return typeof value === "string" ? value : null;
+  }
+
+  function jobOutputBoolean(job: JobSnapshot, key: string) {
+    const value = job.output?.[key];
+    return typeof value === "boolean" ? value : false;
+  }
+
   function jobOutputNumber(job: JobSnapshot, key: string) {
     const value = job.output?.[key];
     return typeof value === "number" ? value : null;
+  }
+
+  function bulkDownloadResult(job: JobSnapshot) {
+    const source = job.output ?? recordValue(job.error?.details.bulkDownload);
+
+    return {
+      succeededWorks: parseBulkSucceededWorks(source?.succeededWorks),
+      failedWorks: parseBulkFailedWorks(source?.failedWorks),
+    };
+  }
+
+  function parseBulkSucceededWorks(value: unknown): BulkSucceededWork[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .map((item) => {
+        const record = recordValue(item);
+
+        if (!record || typeof record.workId !== "string") {
+          return null;
+        }
+
+        return {
+          workId: record.workId,
+          localPath: typeof record.localPath === "string" ? record.localPath : null,
+          fileCount: typeof record.fileCount === "number" ? record.fileCount : null,
+          archiveExtracted:
+            typeof record.archiveExtracted === "boolean" ? record.archiveExtracted : null,
+        };
+      })
+      .filter((item): item is BulkSucceededWork => item !== null);
+  }
+
+  function parseBulkFailedWorks(value: unknown): BulkFailedWork[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .map((item) => {
+        const record = recordValue(item);
+
+        if (!record || typeof record.workId !== "string") {
+          return null;
+        }
+
+        return {
+          workId: record.workId,
+          errorCode: typeof record.errorCode === "string" ? record.errorCode : null,
+          errorMessage: typeof record.errorMessage === "string" ? record.errorMessage : null,
+        };
+      })
+      .filter((item): item is BulkFailedWork => item !== null);
+  }
+
+  function recordValue(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
   }
 
   function downloadJobProgressLabel(job: JobSnapshot) {

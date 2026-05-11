@@ -260,6 +260,7 @@ impl Library {
             skipped_downloaded_count: selection.skipped_downloaded_count,
             succeeded_count: 0,
             failed_count: 0,
+            succeeded_works: Vec::new(),
             failed_works: Vec::new(),
         };
 
@@ -291,8 +292,14 @@ impl Library {
                 .await;
 
             match work_result {
-                Ok(_) => {
+                Ok(report_item) => {
                     report.succeeded_count += 1;
+                    report.succeeded_works.push(BulkWorkDownloadSuccess {
+                        work_id: report_item.work_id.clone(),
+                        local_path: report_item.local_path,
+                        file_count: report_item.file_count,
+                        archive_extracted: report_item.archive_extracted,
+                    });
                     request.emit(BulkWorkDownloadProgress::WorkCompleted {
                         work_id,
                         current,
@@ -1112,7 +1119,16 @@ pub struct BulkWorkDownloadReport {
     pub skipped_downloaded_count: usize,
     pub succeeded_count: usize,
     pub failed_count: usize,
+    pub succeeded_works: Vec<BulkWorkDownloadSuccess>,
     pub failed_works: Vec<BulkWorkDownloadFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BulkWorkDownloadSuccess {
+    pub work_id: String,
+    pub local_path: PathBuf,
+    pub file_count: usize,
+    pub archive_extracted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
