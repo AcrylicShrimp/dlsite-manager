@@ -140,3 +140,4 @@
 ## 2026-05-12
 
 - Clarified remaining v3 GitHub tracking after owner confirmation. Closed #22 because click-to-copy plus paste into Library search is accepted as sufficient; kept #19 open because its body tracks searchable/excludable local-only or `Not Owned` metadata, not generic cached tag search. Updated PR #37, the public `v3 rewrite` milestone, and local v3 TODO trackers to remove stale click-to-search wording. Validation: tracking/documentation-only change; `git diff --check` passed.
+- Recorded owner confirmation that the first v3 preview packaging/release validation path has been exercised and works well. Updated local v3 TODO trackers, PR #37, and the public `v3 rewrite` milestone so packaging validation is no longer listed as a preview blocker. Validation: tracking/documentation-only change; `git diff --check` passed.
