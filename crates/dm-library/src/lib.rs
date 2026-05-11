@@ -11,8 +11,8 @@ use dm_download::{
 pub use dm_jobs::CancellationToken;
 use dm_storage::{
     Account, AccountSyncCommit, AccountUpsert, AccountWork, CachedWork, LocalWorkDownloadImport,
-    ProductDetail, ProductListPage, ProductListQuery, Storage, StorageError, SyncCancellation,
-    SyncFailure, WorkDownloadState, WorkDownloadStatus, WorkDownloadUpdate,
+    ProductDetail, ProductFilterFacets, ProductListPage, ProductListQuery, Storage, StorageError,
+    SyncCancellation, SyncFailure, WorkDownloadState, WorkDownloadStatus, WorkDownloadUpdate,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -179,6 +179,13 @@ impl Library {
 
     pub async fn list_products(&self, query: &ProductListQuery) -> Result<ProductListPage> {
         Ok(self.storage.list_products(query).await?)
+    }
+
+    pub async fn product_filter_facets(
+        &self,
+        query: &ProductListQuery,
+    ) -> Result<ProductFilterFacets> {
+        Ok(self.storage.product_filter_facets(query).await?)
     }
 
     pub async fn product_detail(&self, work_id: &str) -> Result<ProductDetail> {

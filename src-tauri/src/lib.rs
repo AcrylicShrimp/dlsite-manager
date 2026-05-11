@@ -14,9 +14,10 @@ use dm_library::{
     WorkDownloadRemovalRequest, WorkDownloadRequest,
 };
 use dm_storage::{
-    Account, AppSettings, ProductAgeCategory, ProductCreditGroup, ProductDetail, ProductListItem,
-    ProductListPage, ProductListQuery, ProductOwner, ProductSort, ProductTag, ProductTextValue,
-    ProductTypeGroup, Storage, WorkDownloadState, WorkDownloadStatus,
+    Account, AppSettings, ProductAgeCategory, ProductCreditGroup, ProductDetail,
+    ProductFilterFacets, ProductListItem, ProductListPage, ProductListQuery, ProductMakerFacet,
+    ProductOwner, ProductSort, ProductTag, ProductTextValue, ProductTypeGroup, Storage,
+    WorkDownloadState, WorkDownloadStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -402,6 +403,19 @@ async fn list_products(
         .list_products(&request.into_query()?)
         .await
         .map(ProductListPageDto::from)
+        .map_err(command_error)
+}
+
+#[tauri::command]
+async fn list_product_filter_facets(
+    state: State<'_, AppState>,
+    request: ListProductsRequest,
+) -> Result<ProductFilterFacetsDto, String> {
+    state
+        .library
+        .product_filter_facets(&request.into_query()?)
+        .await
+        .map(ProductFilterFacetsDto::from)
         .map_err(command_error)
 }
 
@@ -1766,8 +1780,12 @@ impl From<AccountRemovalReport> for AccountRemovalReportDto {
 struct ListProductsRequest {
     search: Option<String>,
     account_id: Option<String>,
+    account_ids: Option<Vec<String>>,
     type_group: Option<ProductTypeGroupDto>,
+    type_groups: Option<Vec<ProductTypeGroupDto>>,
     age_category: Option<ProductAgeCategoryDto>,
+    age_categories: Option<Vec<ProductAgeCategoryDto>>,
+    maker_names: Option<Vec<String>>,
     sort: Option<ProductSortDto>,
     limit: Option<u32>,
     offset: Option<u32>,
@@ -1778,8 +1796,22 @@ impl ListProductsRequest {
         Ok(ProductListQuery {
             search: normalize_optional_string(self.search)?,
             account_id: normalize_optional_id(self.account_id)?,
+            account_ids: normalize_optional_ids(self.account_ids)?,
             type_group: self.type_group.map(Into::into),
+            type_groups: self
+                .type_groups
+                .unwrap_or_default()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
             age_category: self.age_category.map(Into::into),
+            age_categories: self
+                .age_categories
+                .unwrap_or_default()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            maker_names: normalize_optional_strings(self.maker_names)?,
             sort: self.sort.unwrap_or_default().into(),
             limit: self.limit.unwrap_or(100).clamp(1, 500),
             offset: self.offset.unwrap_or(0),
@@ -1898,6 +1930,40 @@ impl BulkWorkDownloadPreviewDto {
             known_expected_bytes: preview.known_expected_bytes,
             total_expected_bytes: preview.total_expected_bytes,
             unknown_size_count: preview.unknown_size_count,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProductFilterFacetsDto {
+    makers: Vec<ProductMakerFacetDto>,
+}
+
+impl From<ProductFilterFacets> for ProductFilterFacetsDto {
+    fn from(facets: ProductFilterFacets) -> Self {
+        Self {
+            makers: facets
+                .makers
+                .into_iter()
+                .map(ProductMakerFacetDto::from)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProductMakerFacetDto {
+    name: String,
+    count: u64,
+}
+
+impl From<ProductMakerFacet> for ProductMakerFacetDto {
+    fn from(facet: ProductMakerFacet) -> Self {
+        Self {
+            name: facet.name,
+            count: facet.count,
         }
     }
 }
@@ -2208,8 +2274,12 @@ struct StartWorkDownloadRequest {
 struct BulkWorkDownloadCommandRequest {
     search: Option<String>,
     account_id: Option<String>,
+    account_ids: Option<Vec<String>>,
     type_group: Option<ProductTypeGroupDto>,
+    type_groups: Option<Vec<ProductTypeGroupDto>>,
     age_category: Option<ProductAgeCategoryDto>,
+    age_categories: Option<Vec<ProductAgeCategoryDto>>,
+    maker_names: Option<Vec<String>>,
     sort: Option<ProductSortDto>,
     unpack_policy: Option<UnpackPolicyDto>,
     skip_downloaded: Option<bool>,
@@ -2220,8 +2290,24 @@ impl BulkWorkDownloadCommandRequest {
         Ok(ProductListQuery {
             search: normalize_optional_string(self.search.clone())?,
             account_id: normalize_optional_id(self.account_id.clone())?,
+            account_ids: normalize_optional_ids(self.account_ids.clone())?,
             type_group: self.type_group.map(Into::into),
+            type_groups: self
+                .type_groups
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
             age_category: self.age_category.map(Into::into),
+            age_categories: self
+                .age_categories
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            maker_names: normalize_optional_strings(self.maker_names.clone())?,
             sort: self.sort.unwrap_or_default().into(),
             limit: BULK_DOWNLOAD_PAGE_LIMIT,
             offset: 0,
@@ -2735,6 +2821,22 @@ fn normalize_optional_id(value: Option<String>) -> Result<Option<String>, String
     })
 }
 
+fn normalize_optional_ids(values: Option<Vec<String>>) -> Result<Vec<String>, String> {
+    let mut normalized = Vec::new();
+
+    for value in values.unwrap_or_default() {
+        let Some(value) = normalize_optional_string(Some(value))? else {
+            continue;
+        };
+        let value = normalize_required_id(value)?;
+        if !normalized.contains(&value) {
+            normalized.push(value);
+        }
+    }
+
+    Ok(normalized)
+}
+
 fn normalize_label(value: String) -> Result<String, String> {
     let value = value.trim().to_owned();
 
@@ -2764,6 +2866,21 @@ fn normalize_optional_string(value: Option<String>) -> Result<Option<String>, St
     }
 
     Ok(Some(value))
+}
+
+fn normalize_optional_strings(values: Option<Vec<String>>) -> Result<Vec<String>, String> {
+    let mut normalized = Vec::new();
+
+    for value in values.unwrap_or_default() {
+        let Some(value) = normalize_optional_string(Some(value))? else {
+            continue;
+        };
+        if !normalized.contains(&value) {
+            normalized.push(value);
+        }
+    }
+
+    Ok(normalized)
 }
 
 fn normalize_secret(value: Option<String>) -> Result<Option<String>, String> {
@@ -3326,6 +3443,7 @@ pub fn run() {
             set_account_enabled,
             remove_account,
             list_products,
+            list_product_filter_facets,
             get_product_detail,
             start_account_sync,
             start_work_download,

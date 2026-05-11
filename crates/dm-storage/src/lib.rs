@@ -290,8 +290,12 @@ impl ProductTypeGroup {
 pub struct ProductListQuery {
     pub search: Option<String>,
     pub account_id: Option<String>,
+    pub account_ids: Vec<String>,
     pub type_group: Option<ProductTypeGroup>,
+    pub type_groups: Vec<ProductTypeGroup>,
     pub age_category: Option<ProductAgeCategory>,
+    pub age_categories: Vec<ProductAgeCategory>,
+    pub maker_names: Vec<String>,
     pub sort: ProductSort,
     pub limit: u32,
     pub offset: u32,
@@ -302,8 +306,12 @@ impl Default for ProductListQuery {
         Self {
             search: None,
             account_id: None,
+            account_ids: Vec::new(),
             type_group: None,
+            type_groups: Vec::new(),
             age_category: None,
+            age_categories: Vec::new(),
+            maker_names: Vec::new(),
             sort: ProductSort::LatestPurchaseDesc,
             limit: 100,
             offset: 0,
@@ -315,6 +323,17 @@ impl Default for ProductListQuery {
 pub struct ProductListPage {
     pub total_count: u64,
     pub products: Vec<ProductListItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductFilterFacets {
+    pub makers: Vec<ProductMakerFacet>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductMakerFacet {
+    pub name: String,
+    pub count: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -642,6 +661,42 @@ impl Storage {
             total_count,
             products,
         })
+    }
+
+    pub async fn product_filter_facets(
+        &self,
+        query: &ProductListQuery,
+    ) -> Result<ProductFilterFacets> {
+        let mut builder = QueryBuilder::<Sqlite>::new(
+            "SELECT
+                w.maker_name AS maker_name,
+                COUNT(DISTINCT w.work_id) AS work_count
+             FROM works w
+             WHERE 1 = 1",
+        );
+
+        push_product_visibility_filter(&mut builder, query);
+        push_product_filters_internal(&mut builder, query, false);
+        builder.push(
+            " AND w.maker_name IS NOT NULL
+              AND trim(w.maker_name) <> ''
+             GROUP BY w.maker_name
+             ORDER BY work_count DESC, lower(w.maker_name) ASC, w.maker_name ASC",
+        );
+
+        let rows = builder.build().fetch_all(&self.pool).await?;
+        let makers = rows
+            .into_iter()
+            .map(|row| {
+                let count: i64 = row.try_get("work_count")?;
+                Ok(ProductMakerFacet {
+                    name: row.try_get("maker_name")?,
+                    count: count.max(0) as u64,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(ProductFilterFacets { makers })
     }
 
     pub async fn product_detail(&self, work_id: &str) -> Result<ProductDetail> {
@@ -1582,6 +1637,8 @@ fn work_download_state_from_product_row(
 }
 
 fn push_product_visibility_filter(builder: &mut QueryBuilder<Sqlite>, query: &ProductListQuery) {
+    let account_ids = product_account_ids(query);
+
     builder.push(
         " AND (
             EXISTS (
@@ -1593,14 +1650,20 @@ fn push_product_visibility_filter(builder: &mut QueryBuilder<Sqlite>, query: &Pr
                     AND visible_a.enabled = 1",
     );
 
-    if let Some(account_id) = query.account_id.as_deref() {
-        builder.push(" AND visible_aw.account_id = ");
-        builder.push_bind(account_id.to_owned());
+    if !account_ids.is_empty() {
+        builder.push(" AND visible_aw.account_id IN (");
+        for (index, account_id) in account_ids.iter().enumerate() {
+            if index > 0 {
+                builder.push(", ");
+            }
+            builder.push_bind((*account_id).to_owned());
+        }
+        builder.push(")");
     }
 
     builder.push(")");
 
-    if query.account_id.is_none() {
+    if account_ids.is_empty() {
         builder.push(
             " OR EXISTS (
                 SELECT 1
@@ -1615,6 +1678,14 @@ fn push_product_visibility_filter(builder: &mut QueryBuilder<Sqlite>, query: &Pr
 }
 
 fn push_product_filters(builder: &mut QueryBuilder<Sqlite>, query: &ProductListQuery) {
+    push_product_filters_internal(builder, query, true);
+}
+
+fn push_product_filters_internal(
+    builder: &mut QueryBuilder<Sqlite>,
+    query: &ProductListQuery,
+    include_maker_filter: bool,
+) {
     builder.push(
         " AND COALESCE(
             CASE
@@ -1625,16 +1696,42 @@ fn push_product_filters(builder: &mut QueryBuilder<Sqlite>, query: &ProductListQ
     );
     builder.push_bind(MISSING_WORK_DETAIL_STATUS);
 
-    if let Some(age_category) = query.age_category {
-        builder.push(" AND w.age_category = ");
-        builder.push_bind(age_category.as_storage_value());
+    let age_categories = product_age_categories(query);
+    if !age_categories.is_empty() {
+        builder.push(" AND w.age_category IN (");
+        for (index, age_category) in age_categories.iter().enumerate() {
+            if index > 0 {
+                builder.push(", ");
+            }
+            builder.push_bind(age_category.as_storage_value());
+        }
+        builder.push(")");
     }
 
-    if let Some(type_group) = query.type_group {
+    let type_groups = product_type_groups(query);
+    if !type_groups.is_empty() {
         builder.push(" AND ");
         builder.push(product_type_group_case_sql());
-        builder.push(" = ");
-        builder.push_bind(type_group.as_storage_value());
+        builder.push(" IN (");
+        for (index, type_group) in type_groups.iter().enumerate() {
+            if index > 0 {
+                builder.push(", ");
+            }
+            builder.push_bind(type_group.as_storage_value());
+        }
+        builder.push(")");
+    }
+
+    let maker_names = product_maker_names(query);
+    if include_maker_filter && !maker_names.is_empty() {
+        builder.push(" AND w.maker_name IN (");
+        for (index, maker_name) in maker_names.iter().enumerate() {
+            if index > 0 {
+                builder.push(", ");
+            }
+            builder.push_bind((*maker_name).to_owned());
+        }
+        builder.push(")");
     }
 
     if let Some(search) = query
@@ -1674,6 +1771,76 @@ fn push_product_filters(builder: &mut QueryBuilder<Sqlite>, query: &ProductListQ
         );
         builder.push_bind(pattern);
         builder.push(" ESCAPE '\\'))");
+    }
+}
+
+fn product_account_ids(query: &ProductListQuery) -> Vec<&str> {
+    let mut ids = Vec::new();
+
+    if let Some(account_id) = query.account_id.as_deref() {
+        push_unique_str(&mut ids, account_id);
+    }
+
+    for account_id in &query.account_ids {
+        push_unique_str(&mut ids, account_id);
+    }
+
+    ids
+}
+
+fn product_age_categories(query: &ProductListQuery) -> Vec<ProductAgeCategory> {
+    let mut values = Vec::new();
+
+    if let Some(age_category) = query.age_category {
+        push_unique_copy(&mut values, age_category);
+    }
+
+    for age_category in &query.age_categories {
+        push_unique_copy(&mut values, *age_category);
+    }
+
+    values
+}
+
+fn product_type_groups(query: &ProductListQuery) -> Vec<ProductTypeGroup> {
+    let mut values = Vec::new();
+
+    if let Some(type_group) = query.type_group {
+        push_unique_copy(&mut values, type_group);
+    }
+
+    for type_group in &query.type_groups {
+        push_unique_copy(&mut values, *type_group);
+    }
+
+    values
+}
+
+fn product_maker_names(query: &ProductListQuery) -> Vec<&str> {
+    let mut names = Vec::new();
+
+    for maker_name in &query.maker_names {
+        let maker_name = maker_name.trim();
+        if !maker_name.is_empty() {
+            push_unique_str(&mut names, maker_name);
+        }
+    }
+
+    names
+}
+
+fn push_unique_str<'a>(values: &mut Vec<&'a str>, value: &'a str) {
+    if !values.contains(&value) {
+        values.push(value);
+    }
+}
+
+fn push_unique_copy<T>(values: &mut Vec<T>, value: T)
+where
+    T: Copy + PartialEq,
+{
+    if !values.contains(&value) {
+        values.push(value);
     }
 }
 
@@ -3037,6 +3204,47 @@ mod tests {
         assert_eq!(genre_page.products[0].work_id, "RJ000001");
         assert_eq!(credit_page.total_count, 1);
         assert_eq!(credit_page.products[0].work_id, "RJ000001");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn product_filter_facets_return_all_matching_makers() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+
+        let works = (0..30)
+            .map(|index| {
+                work(
+                    &format!("RJ{index:06}"),
+                    &format!("Work {index:02}"),
+                    &format!("Maker {index:02}"),
+                    "2026-01-01T00:00:00Z",
+                )
+            })
+            .collect::<Vec<_>>();
+        let account_works = works
+            .iter()
+            .map(|work| account_work(&work.work_id, "2026-02-01T00:00:00Z"))
+            .collect::<Vec<_>>();
+
+        storage
+            .commit_account_sync(&sync_commit("account-a", "sync-a-1", works, account_works))
+            .await?;
+
+        let facets = storage
+            .product_filter_facets(&ProductListQuery {
+                maker_names: vec!["Maker 00".to_owned()],
+                ..ProductListQuery::default()
+            })
+            .await?;
+
+        assert_eq!(facets.makers.len(), 30);
+        assert_eq!(facets.makers[0].name, "Maker 00");
+        assert_eq!(facets.makers[29].name, "Maker 29");
+        assert!(facets.makers.iter().all(|maker| maker.count == 1));
 
         Ok(())
     }

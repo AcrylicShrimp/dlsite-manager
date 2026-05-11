@@ -9,6 +9,23 @@
 
   const GITHUB_URL = "https://github.com/AcrylicShrimp/dlsite-manager";
   const DLSITE_URL = "https://www.dlsite.com/";
+  const TYPE_FILTERS = [
+    ["audio", "Audio"],
+    ["video", "Video"],
+    ["game", "Game"],
+    ["image", "Image / Comic"],
+    ["other", "Other"],
+  ] as const;
+  const AGE_FILTERS = [
+    ["all", "All Ages"],
+    ["r15", "R-15"],
+    ["r18", "R-18"],
+  ] as const;
+  const SORT_OPTIONS = [
+    ["latestPurchaseDesc", "Latest Purchase"],
+    ["publishedAtDesc", "Published"],
+    ["titleAsc", "Title"],
+  ] as const;
 
   type AppSettings = {
     libraryRoot: string | null;
@@ -102,6 +119,15 @@
   type ProductListPage = {
     totalCount: number;
     products: Product[];
+  };
+
+  type ProductFilterFacets = {
+    makers: ProductMakerFacet[];
+  };
+
+  type ProductMakerFacet = {
+    name: string;
+    count: number;
   };
 
   type ProductDetail = {
@@ -300,30 +326,30 @@
     { label: string; tone: string; group: string; description: string }
   > = {
     ACN: { label: "Action", tone: "game", group: "Game", description: "Action game" },
-    ADL: { label: "Adult", tone: "image", group: "Image / comic", description: "Adult work" },
+    ADL: { label: "Adult", tone: "image", group: "Image / Comic", description: "Adult work" },
     ADV: { label: "Adventure", tone: "game", group: "Game", description: "Adventure game" },
     AMT: {
-      label: "Audio material",
+      label: "Audio Material",
       tone: "audio",
       group: "Audio",
       description: "Audio material or sound assets",
     },
-    COM: { label: "Comic", tone: "image", group: "Image / comic", description: "Comic" },
+    COM: { label: "Comic", tone: "image", group: "Image / Comic", description: "Comic" },
     DNV: {
-      label: "Digital novel",
+      label: "Digital Novel",
       tone: "image",
-      group: "Image / comic",
+      group: "Image / Comic",
       description: "Digital novel or reading work",
     },
     DOH: {
       label: "Doujinshi",
       tone: "image",
-      group: "Image / comic",
+      group: "Image / Comic",
       description: "Doujinshi or self-published book",
     },
     ET3: { label: "Other", tone: "other", group: "Other", description: "Miscellaneous product" },
     ETC: {
-      label: "Other game",
+      label: "Other Game",
       tone: "game",
       group: "Game",
       description: "Game without a narrower type",
@@ -332,28 +358,28 @@
     ICG: {
       label: "Illustration",
       tone: "image",
-      group: "Image / comic",
+      group: "Image / Comic",
       description: "Illustration or CG collection",
     },
     IMT: {
-      label: "Image material",
+      label: "Image Material",
       tone: "image",
-      group: "Image / comic",
+      group: "Image / Comic",
       description: "Image material or visual assets",
     },
     KSV: {
-      label: "Visual novel",
+      label: "Visual Novel",
       tone: "image",
-      group: "Image / comic",
+      group: "Image / Comic",
       description: "Visual novel",
     },
-    MNG: { label: "Manga", tone: "image", group: "Image / comic", description: "Manga" },
+    MNG: { label: "Manga", tone: "image", group: "Image / Comic", description: "Manga" },
     MOV: { label: "Anime", tone: "video", group: "Video", description: "Anime or video" },
     MUS: { label: "Music", tone: "audio", group: "Audio", description: "Music" },
     NRE: {
       label: "Novel",
       tone: "image",
-      group: "Image / comic",
+      group: "Image / Comic",
       description: "Novel or text work",
     },
     PZL: { label: "Puzzle", tone: "game", group: "Game", description: "Puzzle game" },
@@ -362,7 +388,7 @@
     SCM: {
       label: "Gekiga",
       tone: "image",
-      group: "Image / comic",
+      group: "Image / Comic",
       description: "Gekiga or dramatic comic",
     },
     SLN: { label: "Simulation", tone: "game", group: "Game", description: "Simulation game" },
@@ -373,9 +399,9 @@
     TOL: { label: "Utility", tone: "other", group: "Other", description: "Utility tool or app" },
     TYP: { label: "Typing", tone: "game", group: "Game", description: "Typing game" },
     VCM: {
-      label: "Voice comic",
+      label: "Voice Comic",
       tone: "voice-comic",
-      group: "Image / comic",
+      group: "Image / Comic",
       description: "Comic with voice/audio presentation",
     },
   };
@@ -403,10 +429,13 @@
   let bulkDownloadPlanning = $state(false);
   let localScanRunning = $state(false);
   let productSearch = $state("");
-  let selectedAccountId = $state("");
-  let selectedProductType = $state("");
-  let selectedAgeCategory = $state("");
+  let selectedAccountIds = $state<string[]>([]);
+  let selectedProductTypes = $state<string[]>([]);
+  let selectedAgeCategories = $state<string[]>([]);
+  let selectedMakerNames = $state<string[]>([]);
+  let productFilterFacets = $state<ProductFilterFacets>({ makers: [] });
   let productSort = $state("latestPurchaseDesc");
+  let libraryFiltersOpen = $state(false);
 
   let jobs = $state<JobSnapshot[]>([]);
   let jobsLoading = $state(true);
@@ -588,9 +617,9 @@
 
     try {
       accounts = await invoke<Account[]>("list_accounts");
-      if (selectedAccountId && !accounts.some((account) => account.id === selectedAccountId)) {
-        selectedAccountId = "";
-      }
+      selectedAccountIds = selectedAccountIds.filter((accountId) =>
+        accounts.some((account) => account.id === accountId),
+      );
     } catch (err) {
       notifyError(errorMessage(err));
     } finally {
@@ -664,9 +693,7 @@
         resetAccountForm();
       }
 
-      if (selectedAccountId === account.id) {
-        selectedAccountId = "";
-      }
+      selectedAccountIds = selectedAccountIds.filter((accountId) => accountId !== account.id);
 
       await Promise.all([loadAccounts(), loadProducts()]);
     } catch (err) {
@@ -692,24 +719,112 @@
     productsLoading = true;
 
     try {
+      const request = productListRequest();
       const page = await invoke<ProductListPage>("list_products", {
-        request: {
-          search: valueOrNull(productSearch),
-          accountId: selectedAccountId || null,
-          typeGroup: selectedProductType || null,
-          ageCategory: selectedAgeCategory || null,
-          sort: productSort,
-          limit: 100,
-          offset: 0,
-        },
+        request,
+      });
+      const facets = await invoke<ProductFilterFacets>("list_product_filter_facets", {
+        request,
       });
       products = page.products;
       totalProducts = page.totalCount;
+      productFilterFacets = facets;
     } catch (err) {
       notifyError(errorMessage(err));
     } finally {
       productsLoading = false;
     }
+  }
+
+  function productListRequest() {
+    return {
+      search: valueOrNull(productSearch),
+      accountIds: selectedAccountIds,
+      typeGroups: selectedProductTypes,
+      ageCategories: selectedAgeCategories,
+      makerNames: selectedMakerNames,
+      sort: productSort,
+      limit: 100,
+      offset: 0,
+    };
+  }
+
+  function productBulkRequest() {
+    return {
+      search: valueOrNull(productSearch),
+      accountIds: selectedAccountIds,
+      typeGroups: selectedProductTypes,
+      ageCategories: selectedAgeCategories,
+      makerNames: selectedMakerNames,
+      sort: productSort,
+      unpackPolicy: "unpackWhenRecognized",
+      skipDownloaded: true,
+    };
+  }
+
+  function downloadAccountId() {
+    return selectedAccountIds.length === 1 ? selectedAccountIds[0] : null;
+  }
+
+  function toggleFilterValue(values: string[], value: string) {
+    return values.includes(value)
+      ? values.filter((candidate) => candidate !== value)
+      : [...values, value];
+  }
+
+  async function toggleAccountFilter(accountId: string) {
+    selectedAccountIds = toggleFilterValue(selectedAccountIds, accountId);
+    await loadProducts();
+  }
+
+  async function toggleProductTypeFilter(typeGroup: string) {
+    selectedProductTypes = toggleFilterValue(selectedProductTypes, typeGroup);
+    await loadProducts();
+  }
+
+  async function toggleAgeFilter(ageCategory: string) {
+    selectedAgeCategories = toggleFilterValue(selectedAgeCategories, ageCategory);
+    await loadProducts();
+  }
+
+  async function toggleMakerFilter(makerName: string) {
+    selectedMakerNames = toggleFilterValue(selectedMakerNames, makerName);
+    await loadProducts();
+  }
+
+  async function clearAccountFilters() {
+    selectedAccountIds = [];
+    await loadProducts();
+  }
+
+  async function clearTypeFilters() {
+    selectedProductTypes = [];
+    await loadProducts();
+  }
+
+  async function clearAgeFilters() {
+    selectedAgeCategories = [];
+    await loadProducts();
+  }
+
+  async function clearMakerFilters() {
+    selectedMakerNames = [];
+    await loadProducts();
+  }
+
+  async function setProductSort(sort: string) {
+    productSort = sort;
+    await loadProducts();
+  }
+
+  async function resetLibraryFilters() {
+    productSearch = "";
+    selectedAccountIds = [];
+    selectedProductTypes = [];
+    selectedAgeCategories = [];
+    selectedMakerNames = [];
+    productSort = "latestPurchaseDesc";
+    await loadProducts();
   }
 
   async function loadJobs() {
@@ -1041,7 +1156,7 @@
       const response = await invoke<StartJobResponse>("start_work_download", {
         request: {
           workId: product.workId,
-          accountId: selectedAccountId || null,
+          accountId: downloadAccountId(),
           password: null,
           unpackPolicy: options.unpackPolicy ?? "unpackWhenRecognized",
           replaceExisting: options.replaceExisting ?? false,
@@ -1064,15 +1179,7 @@
 
     try {
       const preview = await invoke<BulkWorkDownloadPreview>("preview_bulk_work_download", {
-        request: {
-          search: valueOrNull(productSearch),
-          accountId: selectedAccountId || null,
-          typeGroup: selectedProductType || null,
-          ageCategory: selectedAgeCategory || null,
-          sort: productSort,
-          unpackPolicy: "unpackWhenRecognized",
-          skipDownloaded: true,
-        },
+        request: productBulkRequest(),
       });
 
       if (preview.requestedCount === 0) {
@@ -1087,15 +1194,7 @@
       }
 
       const response = await invoke<StartJobResponse>("start_bulk_work_download", {
-        request: {
-          search: valueOrNull(productSearch),
-          accountId: selectedAccountId || null,
-          typeGroup: selectedProductType || null,
-          ageCategory: selectedAgeCategory || null,
-          sort: productSort,
-          unpackPolicy: "unpackWhenRecognized",
-          skipDownloaded: true,
-        },
+        request: productBulkRequest(),
       });
       notifyInfo("Bulk download queued");
       jobMessages = {
@@ -2070,7 +2169,7 @@
     if (matchesAny(normalized, ["voicecomic", "vcomic"])) {
       return productTypeFallback(
         raw,
-        "Voice comic",
+        "Voice Comic",
         "voice-comic",
         "Comic with voice/audio presentation",
       );
@@ -2125,7 +2224,7 @@
     ) {
       return productTypeFallback(
         raw,
-        "Image / comic",
+        "Image / Comic",
         "image",
         "Image, comic, manga, or reading-material product type",
       );
@@ -2179,7 +2278,7 @@
   function ageLabel(value: string | null) {
     switch (value) {
       case "all":
-        return "All ages";
+        return "All Ages";
       case "r15":
         return "R-15";
       case "r18":
@@ -2456,72 +2555,180 @@
 
     {#if activeView === "library"}
       <section class="product-area" aria-label="Library">
-        <form class="toolbar" onsubmit={searchProducts}>
-          <input
-            type="search"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="Search title, maker, credit, tag, work ID"
-            bind:value={productSearch}
-          />
-          <select bind:value={selectedAccountId} onchange={loadProducts}>
-            <option value="">All accounts</option>
-            {#each accounts as account (account.id)}
-              <option value={account.id}>{account.label}</option>
-            {/each}
-          </select>
-          <select bind:value={selectedProductType} onchange={loadProducts}>
-            <option value="">Any type</option>
-            <option value="audio">Audio</option>
-            <option value="video">Video</option>
-            <option value="game">Game</option>
-            <option value="image">Image / comic</option>
-            <option value="other">Other</option>
-          </select>
-          <select bind:value={selectedAgeCategory} onchange={loadProducts}>
-            <option value="">Any age</option>
-            <option value="all">All ages</option>
-            <option value="r15">R-15</option>
-            <option value="r18">R-18</option>
-          </select>
-          <select bind:value={productSort} onchange={loadProducts}>
-            <option value="latestPurchaseDesc">Latest purchase</option>
-            <option value="publishedAtDesc">Published</option>
-            <option value="titleAsc">Title</option>
-          </select>
-          <button type="submit" disabled={productsLoading}>Search</button>
-          <button
-            class="secondary"
-            type="button"
-            onclick={loadProducts}
-            disabled={productsLoading}
-          >
-            Reload
-          </button>
-          <button
-            class="secondary"
-            type="button"
-            onclick={scanLocalWorkDownloads}
-            disabled={localScanRunning || productsLoading}
-          >
-            {localScanRunning ? "Scanning" : "Scan local"}
-          </button>
-          <button
-            type="button"
-            onclick={syncEnabledAccounts}
-            disabled={accountsLoading || jobsLoading || !hasSyncableEnabledAccount()}
-          >
-            Sync
-          </button>
-          <button
-            class="secondary download-results-button"
-            type="button"
-            onclick={startBulkWorkDownload}
-            disabled={bulkDownloadPlanning || productsLoading || jobsLoading || totalProducts === 0}
-          >
-            {bulkDownloadButtonLabel()}
-          </button>
-        </form>
+        <div class="library-controls">
+          <form class="library-filter-panel" onsubmit={searchProducts}>
+            <div class="library-search-row">
+              <input
+                type="search"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="Search title, maker, credit, tag, work ID"
+                bind:value={productSearch}
+              />
+              <button type="submit" disabled={productsLoading}>Search</button>
+              <button class="secondary" type="button" onclick={resetLibraryFilters}>
+                Reset
+              </button>
+              <button
+                class="secondary filter-fold-button"
+                type="button"
+                aria-expanded={libraryFiltersOpen}
+                aria-controls="library-filter-grid"
+                onclick={() => (libraryFiltersOpen = !libraryFiltersOpen)}
+              >
+                {libraryFiltersOpen ? "Hide Filters" : "Show Filters"}
+              </button>
+            </div>
+
+            {#if libraryFiltersOpen}
+              <div id="library-filter-grid" class="filter-grid">
+                <div class="filter-group sort-filter">
+                  <span>Sort</span>
+                  <div class="toggle-row">
+                    {#each SORT_OPTIONS as [value, label] (value)}
+                      <button
+                        class:active={productSort === value}
+                        type="button"
+                        onclick={() => setProductSort(value)}
+                      >
+                        {label}
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+
+                <div class="filter-group">
+                  <span>Accounts</span>
+                  <div class="toggle-row">
+                    <button
+                      class:active={selectedAccountIds.length === 0}
+                      type="button"
+                      onclick={clearAccountFilters}
+                    >
+                      All
+                    </button>
+                    {#each accounts as account (account.id)}
+                      <button
+                        class:active={selectedAccountIds.includes(account.id)}
+                        type="button"
+                        title={account.loginName ?? account.label}
+                        onclick={() => toggleAccountFilter(account.id)}
+                      >
+                        {account.label}
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+
+                <div class="filter-group">
+                  <span>Age</span>
+                  <div class="toggle-row">
+                    <button
+                      class:active={selectedAgeCategories.length === 0}
+                      type="button"
+                      onclick={clearAgeFilters}
+                    >
+                      Any
+                    </button>
+                    {#each AGE_FILTERS as [value, label] (value)}
+                      <button
+                        class:active={selectedAgeCategories.includes(value)}
+                        type="button"
+                        onclick={() => toggleAgeFilter(value)}
+                      >
+                        {label}
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+
+                <div class="filter-group">
+                  <span>Type</span>
+                  <div class="toggle-row">
+                    <button
+                      class:active={selectedProductTypes.length === 0}
+                      type="button"
+                      onclick={clearTypeFilters}
+                    >
+                      Any
+                    </button>
+                    {#each TYPE_FILTERS as [value, label] (value)}
+                      <button
+                        class:active={selectedProductTypes.includes(value)}
+                        type="button"
+                        onclick={() => toggleProductTypeFilter(value)}
+                      >
+                        {label}
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+
+                <div class="filter-group maker-filter">
+                  <span>Makers</span>
+                  <div class="toggle-row">
+                    <button
+                      class:active={selectedMakerNames.length === 0}
+                      type="button"
+                      onclick={clearMakerFilters}
+                    >
+                      Any
+                    </button>
+                    {#each productFilterFacets.makers as maker (maker.name)}
+                      <button
+                        class:active={selectedMakerNames.includes(maker.name)}
+                        type="button"
+                        title={`${maker.name} (${maker.count})`}
+                        onclick={() => toggleMakerFilter(maker.name)}
+                      >
+                        {maker.name}
+                        <small>{maker.count}</small>
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+              </div>
+            {/if}
+          </form>
+
+          <div class="library-actions-panel" aria-label="Library actions">
+            <div class="library-action-group">
+              <button
+                class="secondary"
+                type="button"
+                onclick={loadProducts}
+                disabled={productsLoading}
+              >
+                Reload
+              </button>
+              <button
+                type="button"
+                onclick={syncEnabledAccounts}
+                disabled={accountsLoading || jobsLoading || !hasSyncableEnabledAccount()}
+              >
+                Sync
+              </button>
+            </div>
+            <div class="library-action-group">
+              <button
+                class="secondary"
+                type="button"
+                onclick={scanLocalWorkDownloads}
+                disabled={localScanRunning || productsLoading}
+              >
+                {localScanRunning ? "Scanning" : "Scan Local"}
+              </button>
+              <button
+                class="secondary download-results-button"
+                type="button"
+                onclick={startBulkWorkDownload}
+                disabled={bulkDownloadPlanning || productsLoading || jobsLoading || totalProducts === 0}
+              >
+                {bulkDownloadButtonLabel()}
+              </button>
+            </div>
+          </div>
+        </div>
 
         <div class="list-header">
           <span>{totalProducts} products</span>
@@ -2784,7 +2991,7 @@
                 onclick={syncEnabledAccounts}
                 disabled={accountsLoading || jobsLoading || !hasSyncableEnabledAccount()}
               >
-                Sync all
+                Sync All
               </button>
             </div>
           </div>
@@ -2880,7 +3087,7 @@
                       title="Update saved credential"
                       onclick={() => editAccount(account)}
                     >
-                      Update credential
+                      Update Credential
                     </button>
                     <button
                       class="secondary small"
@@ -3002,7 +3209,7 @@
                 onclick={openAuditLogDir}
                 disabled={!auditLogDir}
               >
-                Open folder
+                Open Folder
               </button>
               <button
                 class="secondary small"
@@ -3108,7 +3315,7 @@
                 onclick={useDefaultDownloadRoot}
                 disabled={settingsLoading || settingsSaving}
               >
-                Use default
+                Use Default
               </button>
             </div>
           </div>
@@ -3432,7 +3639,7 @@
                   <span>{detailDate(detail.updatedAt)}</span>
                 </div>
                 <div>
-                  <span>Latest purchase</span>
+                  <span>Latest Purchase</span>
                   <span>{detailDate(detail.latestPurchasedAt)}</span>
                 </div>
               </div>
@@ -3573,7 +3780,7 @@
             disabled={!!menuDownloadJob}
             onclick={() => downloadProductArchivesOnly(menuProduct)}
           >
-            Download archives only
+            Download Archives Only
           </button>
           <button
             type="button"
@@ -3581,7 +3788,7 @@
             disabled={!!menuDownloadJob}
             onclick={() => markProductDownloaded(menuProduct)}
           >
-            Mark as downloaded
+            Mark as Downloaded
           </button>
         {/if}
         {#if menuProduct.download.status === "downloaded"}
@@ -3603,7 +3810,7 @@
             disabled={!!menuDownloadJob}
             onclick={() => deleteDownloadedProduct(menuProduct)}
           >
-            Delete download
+            Delete Download
           </button>
         {/if}
       </div>
@@ -4661,14 +4868,112 @@
     gap: 14px;
   }
 
-  .toolbar {
+  .library-controls {
     display: grid;
     flex: 0 0 auto;
-    grid-template-columns: minmax(220px, 1fr) 150px 130px 130px 140px auto auto auto auto;
-    gap: 10px;
-    padding: 14px;
+    gap: 1px;
     border-bottom: 1px solid var(--border);
+    background: var(--border);
+  }
+
+  .library-filter-panel,
+  .library-actions-panel {
+    min-width: 0;
+    padding: 14px;
     background: var(--panel-soft);
+  }
+
+  .library-filter-panel {
+    display: grid;
+    gap: 12px;
+  }
+
+  .library-search-row {
+    display: grid;
+    grid-template-columns: minmax(260px, 1fr) auto auto auto;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .filter-fold-button {
+    min-width: 112px;
+  }
+
+  .filter-grid {
+    display: grid;
+    gap: 10px;
+  }
+
+  .filter-group {
+    display: grid;
+    grid-template-columns: 78px minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+    min-width: 0;
+  }
+
+  .filter-group > span {
+    padding-top: 6px;
+    color: var(--text-subtle);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .toggle-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .maker-filter .toggle-row {
+    align-items: flex-start;
+  }
+
+  .toggle-row button {
+    justify-content: flex-start;
+    min-width: 0;
+    max-width: 210px;
+    height: 30px;
+    padding: 0 10px;
+    border-color: var(--border-strong);
+    color: var(--muted);
+    background: var(--field);
+    font-size: 12px;
+    font-weight: 650;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .toggle-row button.active {
+    border-color: var(--accent);
+    color: var(--text-strong);
+    background: var(--accent-muted);
+  }
+
+  .toggle-row button small {
+    margin-left: 6px;
+    color: var(--text-subtle);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .library-actions-panel {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    width: 100%;
+    padding-block: 10px;
+  }
+
+  .library-action-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-width: 0;
   }
 
   .download-results-button {
@@ -5649,8 +5954,7 @@
     align-items: center;
   }
 
-  input,
-  select {
+  input {
     width: 100%;
     min-width: 0;
     height: 38px;
@@ -5661,14 +5965,12 @@
     background: var(--field);
   }
 
-  input:focus,
-  select:focus {
+  input:focus {
     border-color: var(--accent-strong);
     outline: 2px solid var(--accent-muted);
   }
 
-  input:disabled,
-  select:disabled {
+  input:disabled {
     color: var(--text-subtle);
     background: var(--field-disabled);
   }
@@ -5749,6 +6051,15 @@
       grid-row: 4;
       justify-content: flex-start;
     }
+
+    .library-controls {
+      grid-template-columns: 1fr;
+    }
+
+    .library-actions-panel {
+      justify-content: flex-start;
+      width: 100%;
+    }
   }
 
   @media (max-width: 980px) {
@@ -5760,8 +6071,8 @@
       position: static;
     }
 
-    .toolbar {
-      grid-template-columns: 1fr 1fr;
+    .library-search-row {
+      grid-template-columns: minmax(0, 1fr) auto auto;
     }
 
     .product-card {
@@ -5850,8 +6161,14 @@
       flex-direction: column;
     }
 
-    .toolbar {
+    .library-search-row,
+    .filter-group {
       grid-template-columns: 1fr;
+    }
+
+    .toggle-row button,
+    .library-actions-panel button {
+      flex: 1 1 130px;
     }
 
     .path-control {
