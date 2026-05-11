@@ -6,405 +6,56 @@
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { onDestroy, onMount } from "svelte";
-
-  const GITHUB_URL = "https://github.com/AcrylicShrimp/dlsite-manager";
-  const DLSITE_URL = "https://www.dlsite.com/";
-  const TYPE_FILTERS = [
-    ["audio", "Audio"],
-    ["video", "Video"],
-    ["game", "Game"],
-    ["image", "Image / Comic"],
-    ["other", "Other"],
-  ] as const;
-  const AGE_FILTERS = [
-    ["all", "All Ages"],
-    ["r15", "R-15"],
-    ["r18", "R-18"],
-  ] as const;
-  const SORT_OPTIONS = [
-    ["latestPurchaseDesc", "Latest Purchase"],
-    ["publishedAtDesc", "Published"],
-    ["titleAsc", "Title"],
-  ] as const;
-
-  type AppSettings = {
-    libraryRoot: string | null;
-    downloadRoot: string | null;
-  };
-
-  type AppInfo = {
-    name: string;
-    version: string;
-    identifier: string;
-    tauriVersion: string;
-  };
-
-  type Account = {
-    id: string;
-    label: string;
-    loginName: string | null;
-    hasCredential: boolean;
-    enabled: boolean;
-    createdAt: string;
-    updatedAt: string;
-    lastLoginAt: string | null;
-    lastSyncAt: string | null;
-  };
-
-  type AccountRemovalReport = {
-    accountId: string;
-    label: string;
-    credentialDeleted: boolean;
-  };
-
-  type ProductOwner = {
-    accountId: string;
-    label: string;
-    purchasedAt: string | null;
-  };
-
-  type WorkDownloadStatus =
-    | "notDownloaded"
-    | "downloading"
-    | "downloaded"
-    | "failed"
-    | "cancelled";
-
-  type ProductDownload = {
-    status: WorkDownloadStatus;
-    localPath: string | null;
-    stagingPath: string | null;
-    unpackPolicy: string | null;
-    bytesReceived: number;
-    bytesTotal: number | null;
-    errorCode: string | null;
-    errorMessage: string | null;
-    startedAt: string | null;
-    completedAt: string | null;
-    updatedAt: string | null;
-  };
-
-  type ProductCreditGroup = {
-    kind: string;
-    label: string;
-    names: string[];
-  };
-
-  type ProductTextValue = {
-    language: string;
-    value: string;
-  };
-
-  type ProductTag = {
-    class: string;
-    name: string;
-  };
-
-  type Product = {
-    workId: string;
-    title: string;
-    makerName: string | null;
-    workType: string | null;
-    ageCategory: string | null;
-    thumbnailUrl: string | null;
-    publishedAt: string | null;
-    updatedAt: string | null;
-    earliestPurchasedAt: string | null;
-    latestPurchasedAt: string | null;
-    creditGroups: ProductCreditGroup[];
-    download: ProductDownload;
-    owners: ProductOwner[];
-  };
-
-  type ProductListPage = {
-    totalCount: number;
-    products: Product[];
-  };
-
-  type ProductFilterFacets = {
-    makers: ProductMakerFacet[];
-  };
-
-  type ProductMakerFacet = {
-    name: string;
-    count: number;
-  };
-
-  type ProductDetail = {
-    workId: string;
-    title: string;
-    titleVariants: ProductTextValue[];
-    makerId: string | null;
-    makerName: string | null;
-    makerNames: ProductTextValue[];
-    workType: string | null;
-    ageCategory: string | null;
-    thumbnailUrl: string | null;
-    contentSizeBytes: number | null;
-    registeredAt: string | null;
-    publishedAt: string | null;
-    updatedAt: string | null;
-    lastDetailSyncAt: string;
-    earliestPurchasedAt: string | null;
-    latestPurchasedAt: string | null;
-    creditGroups: ProductCreditGroup[];
-    tags: ProductTag[];
-    download: ProductDownload;
-    owners: ProductOwner[];
-  };
-
-  type BulkWorkDownloadPreview = {
-    totalCount: number;
-    requestedCount: number;
-    skippedDownloadedCount: number;
-    skippedQueuedCount: number;
-    plannedCount: number;
-    failedCount: number;
-    knownExpectedBytes: number;
-    totalExpectedBytes: number | null;
-    unknownSizeCount: number;
-  };
-
-  type LocalWorkImportReport = {
-    scannedDirectories: number;
-    importedCount: number;
-    skippedNoId: number;
-    skippedAmbiguous: number;
-    skippedNonUtf8: number;
-    skippedExisting: number;
-    importedWorks: { workId: string; localPath: string }[];
-  };
-
-  type BulkDownloadDialog = {
-    kind: "confirm" | "notice";
-    preview: BulkWorkDownloadPreview;
-  };
-
-  type ConfirmationDialog = {
-    eyebrow: string;
-    title: string;
-    message: string;
-    confirmLabel: string;
-    cancelLabel: string;
-    tone: "danger" | "default";
-  };
-
-  type BulkSucceededWork = {
-    workId: string;
-    localPath: string | null;
-    fileCount: number | null;
-    archiveExtracted: boolean | null;
-  };
-
-  type BulkFailedWork = {
-    workId: string;
-    errorCode: string | null;
-    errorMessage: string | null;
-  };
-
-  type JobStatus = "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
-
-  type JobProgress = {
-    current: number | null;
-    total: number | null;
-    unit: string | null;
-  };
-
-  type JobFailure = {
-    code: string | null;
-    message: string;
-    details: Record<string, unknown>;
-  };
-
-  type JobSnapshot = {
-    id: string;
-    kind: string;
-    title: string;
-    status: JobStatus;
-    phase: string | null;
-    progress: JobProgress | null;
-    metadata: Record<string, unknown>;
-    output: Record<string, unknown> | null;
-    error: JobFailure | null;
-    cancellable: boolean;
-    createdAt: string;
-    startedAt: string | null;
-    finishedAt: string | null;
-  };
-
-  type JobEvent = {
-    sequence: number;
-    eventKind: string;
-    jobId: string;
-    kind: string;
-    status: JobStatus;
-    phase: string | null;
-    progress: JobProgress | null;
-    message: string | null;
-    log: { message: string } | null;
-    snapshot: JobSnapshot;
-  };
-
-  type StartJobResponse = {
-    jobId: string;
-  };
-
-  type AuditOutcome = "queued" | "succeeded" | "failed" | "cancelled";
-
-  type AuditLevel = "info" | "warn" | "error";
-
-  type AuditEvent = {
-    at: string;
-    level: AuditLevel;
-    operation: string;
-    outcome: AuditOutcome;
-    message: string;
-    errorCode: string | null;
-    errorMessage: string | null;
-    details: Record<string, unknown>;
-  };
-
-  type ToastKind = "success" | "error" | "info";
-
-  type Toast = {
-    id: string;
-    kind: ToastKind;
-    message: string;
-  };
-
-  type ProductCreditField = {
-    key: string;
-    label: string;
-    value: string;
-    missing: boolean;
-  };
-
-  type ProductImagePreview = {
-    url: string;
-    title: string;
-    workId: string;
-  };
-
-  type ProductActionMenu = {
-    workId: string;
-    left: number;
-    top: number;
-  };
-
-  type StartWorkDownloadOptions = {
-    unpackPolicy?: "keepArchives" | "unpackWhenRecognized";
-    replaceExisting?: boolean;
-    queuedMessage?: string;
-  };
-
-  type ChipTooltip = {
-    text: string;
-    left: number;
-    top: number;
-  };
-
-  type ProductTypeInfo = {
-    label: string;
-    tone: string;
-    tooltip: string;
-  };
-
-  type View = "library" | "downloads" | "accounts" | "activity" | "settings";
-
-  const creditFieldDefinitions = [
-    { key: "maker", label: "Maker" },
-    { key: "voice", label: "CV" },
-    { key: "illust", label: "Illust" },
-    { key: "scenario", label: "Scenario" },
-    { key: "creator", label: "Creator" },
-    { key: "music", label: "Music" },
-    { key: "other", label: "Other" },
-  ] as const;
-
-  const productTypeCodeDetails: Record<
-    string,
-    { label: string; tone: string; group: string; description: string }
-  > = {
-    ACN: { label: "Action", tone: "game", group: "Game", description: "Action game" },
-    ADL: { label: "Adult", tone: "image", group: "Image / Comic", description: "Adult work" },
-    ADV: { label: "Adventure", tone: "game", group: "Game", description: "Adventure game" },
-    AMT: {
-      label: "Audio Material",
-      tone: "audio",
-      group: "Audio",
-      description: "Audio material or sound assets",
-    },
-    COM: { label: "Comic", tone: "image", group: "Image / Comic", description: "Comic" },
-    DNV: {
-      label: "Digital Novel",
-      tone: "image",
-      group: "Image / Comic",
-      description: "Digital novel or reading work",
-    },
-    DOH: {
-      label: "Doujinshi",
-      tone: "image",
-      group: "Image / Comic",
-      description: "Doujinshi or self-published book",
-    },
-    ET3: { label: "Other", tone: "other", group: "Other", description: "Miscellaneous product" },
-    ETC: {
-      label: "Other Game",
-      tone: "game",
-      group: "Game",
-      description: "Game without a narrower type",
-    },
-    GAM: { label: "Game", tone: "game", group: "Game", description: "General game" },
-    ICG: {
-      label: "Illustration",
-      tone: "image",
-      group: "Image / Comic",
-      description: "Illustration or CG collection",
-    },
-    IMT: {
-      label: "Image Material",
-      tone: "image",
-      group: "Image / Comic",
-      description: "Image material or visual assets",
-    },
-    KSV: {
-      label: "Visual Novel",
-      tone: "image",
-      group: "Image / Comic",
-      description: "Visual novel",
-    },
-    MNG: { label: "Manga", tone: "image", group: "Image / Comic", description: "Manga" },
-    MOV: { label: "Anime", tone: "video", group: "Video", description: "Anime or video" },
-    MUS: { label: "Music", tone: "audio", group: "Audio", description: "Music" },
-    NRE: {
-      label: "Novel",
-      tone: "image",
-      group: "Image / Comic",
-      description: "Novel or text work",
-    },
-    PZL: { label: "Puzzle", tone: "game", group: "Game", description: "Puzzle game" },
-    QIZ: { label: "Quiz", tone: "game", group: "Game", description: "Quiz game" },
-    RPG: { label: "RPG", tone: "game", group: "Game", description: "Role-playing game" },
-    SCM: {
-      label: "Gekiga",
-      tone: "image",
-      group: "Image / Comic",
-      description: "Gekiga or dramatic comic",
-    },
-    SLN: { label: "Simulation", tone: "game", group: "Game", description: "Simulation game" },
-    SOF: { label: "Software", tone: "other", group: "Other", description: "Software product" },
-    SOU: { label: "Voice", tone: "audio", group: "Audio", description: "Voice/audio work" },
-    STG: { label: "Shooter", tone: "game", group: "Game", description: "Shooter game" },
-    TBL: { label: "Tabletop", tone: "game", group: "Game", description: "Tabletop game" },
-    TOL: { label: "Utility", tone: "other", group: "Other", description: "Utility tool or app" },
-    TYP: { label: "Typing", tone: "game", group: "Game", description: "Typing game" },
-    VCM: {
-      label: "Voice Comic",
-      tone: "voice-comic",
-      group: "Image / Comic",
-      description: "Comic with voice/audio presentation",
-    },
-  };
+  import {
+    AGE_FILTERS,
+    DLSITE_URL,
+    GITHUB_URL,
+    SORT_OPTIONS,
+    TYPE_FILTERS,
+    creditFieldDefinitions,
+    productTypeCodeDetails,
+  } from "$lib/model/constants";
+  import type {
+    Account,
+    AccountRemovalReport,
+    AppInfo,
+    AppSettings,
+    AuditEvent,
+    AuditLevel,
+    AuditOutcome,
+    BulkDownloadDialog,
+    BulkFailedWork,
+    BulkSucceededWork,
+    BulkWorkDownloadPreview,
+    ChipTooltip,
+    ConfirmationDialog,
+    JobEvent,
+    JobFailure,
+    JobProgress,
+    JobSnapshot,
+    JobStatus,
+    LocalWorkImportReport,
+    Product,
+    ProductActionMenu,
+    ProductCreditField,
+    ProductCreditGroup,
+    ProductDetail,
+    ProductDownload,
+    ProductFilterFacets,
+    ProductImagePreview,
+    ProductListPage,
+    ProductMakerFacet,
+    ProductOwner,
+    ProductTag,
+    ProductTextValue,
+    ProductTypeInfo,
+    StartJobResponse,
+    StartWorkDownloadOptions,
+    Toast,
+    ToastKind,
+    View,
+    WorkDownloadStatus,
+  } from "$lib/model/types";
 
   let activeView = $state<View>("library");
 
