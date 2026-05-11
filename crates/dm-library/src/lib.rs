@@ -55,6 +55,8 @@ pub enum LibraryError {
     DownloadTargetExists(PathBuf),
     #[error("download path is outside configured roots: {0}")]
     DownloadPathOutsideRoots(PathBuf),
+    #[error("download path is not a directory: {0}")]
+    DownloadPathNotDirectory(PathBuf),
     #[error("I/O error")]
     Io(#[from] std::io::Error),
     #[error("json error")]
@@ -77,6 +79,7 @@ impl LibraryError {
             Self::DownloadAccountNotFound(_) => "download_account_not_found",
             Self::DownloadTargetExists(_) => "download_target_exists",
             Self::DownloadPathOutsideRoots(_) => "download_path_outside_roots",
+            Self::DownloadPathNotDirectory(_) => "download_path_not_directory",
             Self::Io(_) => "io",
             Self::Json(_) => "json",
         }
@@ -452,6 +455,38 @@ impl Library {
         remove_download_path_from_state(state.local_path.as_deref(), &allowed_roots).await?;
         remove_download_path_from_state(state.staging_path.as_deref(), &allowed_roots).await?;
         self.storage.delete_work_download(request.work_id).await?;
+        Ok(self.storage.work_download_state(request.work_id).await?)
+    }
+
+    pub async fn mark_work_downloaded(
+        &self,
+        request: WorkDownloadMarkRequest<'_>,
+    ) -> Result<WorkDownloadState> {
+        let canonical_path = canonicalize_existing_directory(request.local_path)?;
+        let canonical_root = request.library_root.canonicalize()?;
+
+        if !path_is_download_child_of_any_root(&canonical_path, &[canonical_root]) {
+            return Err(LibraryError::DownloadPathOutsideRoots(canonical_path));
+        }
+
+        let completed_at = now_string();
+        self.storage
+            .save_work_download(&WorkDownloadUpdate {
+                work_id: request.work_id.to_owned(),
+                status: WorkDownloadStatus::Downloaded,
+                local_path: Some(canonical_path.to_string_lossy().into_owned()),
+                staging_path: None,
+                unpack_policy: "manual".to_owned(),
+                bytes_received: 0,
+                bytes_total: None,
+                error_code: None,
+                error_message: None,
+                started_at: Some(completed_at.clone()),
+                completed_at: Some(completed_at.clone()),
+                updated_at: completed_at,
+            })
+            .await?;
+
         Ok(self.storage.work_download_state(request.work_id).await?)
     }
 
@@ -1019,6 +1054,22 @@ impl<'a> WorkDownloadRemovalRequest<'a> {
     }
 }
 
+pub struct WorkDownloadMarkRequest<'a> {
+    pub work_id: &'a str,
+    pub library_root: &'a Path,
+    pub local_path: &'a Path,
+}
+
+impl<'a> WorkDownloadMarkRequest<'a> {
+    pub fn new(work_id: &'a str, library_root: &'a Path, local_path: &'a Path) -> Self {
+        Self {
+            work_id,
+            library_root,
+            local_path,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkDownloadReport {
     pub work_id: String,
@@ -1555,6 +1606,17 @@ async fn remove_existing_download_path(path: &Path, allowed_roots: &[&Path]) -> 
     }
 
     Ok(())
+}
+
+fn canonicalize_existing_directory(path: &Path) -> Result<PathBuf> {
+    let canonical_path = path.canonicalize()?;
+    let metadata = std::fs::metadata(&canonical_path)?;
+
+    if !metadata.is_dir() {
+        return Err(LibraryError::DownloadPathNotDirectory(canonical_path));
+    }
+
+    Ok(canonical_path)
 }
 
 fn path_is_download_child_of_any_root(path: &Path, roots: &[PathBuf]) -> bool {
@@ -2229,6 +2291,80 @@ mod tests {
         assert_eq!(state.status, WorkDownloadStatus::NotDownloaded);
         assert!(!library_root.join("RJ000001").exists());
         assert!(!download_root.join("RJ000001").exists());
+
+        std::fs::remove_dir_all(root).unwrap();
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn marks_existing_library_folder_as_downloaded() -> Result<()> {
+        let library = migrated_library().await?;
+        let root = test_dir("mark-downloaded-work");
+        let library_root = root.join("library");
+        let local_path = library_root.join("manual").join("RJ000001");
+        std::fs::create_dir_all(&local_path).unwrap();
+        library.save_account(save_account_request(true)).await?;
+        library
+            .sync_account_with_source(AccountSyncRequest::new("account-a"), &sync_source())
+            .await?;
+
+        let state = library
+            .mark_work_downloaded(WorkDownloadMarkRequest::new(
+                "RJ000001",
+                &library_root,
+                &local_path,
+            ))
+            .await?;
+
+        assert_eq!(state.status, WorkDownloadStatus::Downloaded);
+        assert_eq!(
+            state.local_path,
+            Some(
+                local_path
+                    .canonicalize()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            )
+        );
+        assert_eq!(state.staging_path, None);
+        assert_eq!(state.unpack_policy, Some("manual".to_owned()));
+
+        let page = library.list_products(&ProductListQuery::default()).await?;
+        assert_eq!(
+            page.products[0].download.status,
+            WorkDownloadStatus::Downloaded
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_manual_download_folder_outside_library_root() -> Result<()> {
+        let library = migrated_library().await?;
+        let root = test_dir("mark-downloaded-outside-root");
+        let library_root = root.join("library");
+        let outside_path = root.join("outside").join("RJ000001");
+        std::fs::create_dir_all(&library_root).unwrap();
+        std::fs::create_dir_all(&outside_path).unwrap();
+        library.save_account(save_account_request(true)).await?;
+        library
+            .sync_account_with_source(AccountSyncRequest::new("account-a"), &sync_source())
+            .await?;
+
+        let err = library
+            .mark_work_downloaded(WorkDownloadMarkRequest::new(
+                "RJ000001",
+                &library_root,
+                &outside_path,
+            ))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, LibraryError::DownloadPathOutsideRoots(_)));
 
         std::fs::remove_dir_all(root).unwrap();
 

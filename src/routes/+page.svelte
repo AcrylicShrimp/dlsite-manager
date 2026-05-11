@@ -1022,6 +1022,36 @@
     }
   }
 
+  async function markProductDownloaded(product: Product) {
+    closeProductActionMenu();
+
+    try {
+      const fallbackRoot = libraryRoot.trim() || (await systemDownloadRoot());
+      const selected = await openDialog({
+        directory: true,
+        multiple: false,
+        canCreateDirectories: false,
+        defaultPath: fallbackRoot || undefined,
+        title: `Choose local folder for ${product.workId}`,
+      });
+
+      if (!selected) {
+        return;
+      }
+
+      const download = await invoke<ProductDownload>("mark_work_downloaded", {
+        request: {
+          workId: product.workId,
+          localPath: selected,
+        },
+      });
+      notifySuccess("Marked as downloaded");
+      setProductDownload(product.workId, download);
+    } catch (err) {
+      notifyError(errorMessage(err));
+    }
+  }
+
   function toggleProductActionMenu(product: Product, event: MouseEvent) {
     event.stopPropagation();
 
@@ -3012,6 +3042,14 @@
             onclick={() => downloadProductArchivesOnly(menuProduct)}
           >
             Download archives only
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!!menuDownloadJob}
+            onclick={() => markProductDownloaded(menuProduct)}
+          >
+            Mark as downloaded
           </button>
         {/if}
         {#if menuProduct.download.status === "downloaded"}

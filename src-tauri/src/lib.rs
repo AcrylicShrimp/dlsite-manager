@@ -9,8 +9,8 @@ use dm_library::{
     BulkWorkDownloadPreviewProgressSink, BulkWorkDownloadPreviewRequest, BulkWorkDownloadProgress,
     BulkWorkDownloadProgressSink, BulkWorkDownloadReport, BulkWorkDownloadRequest,
     DlsiteSyncSource, DlsiteWorkDownloadSource, Library, SaveAccountRequest, SyncProgress,
-    SyncProgressSink, WorkDownloadProgress, WorkDownloadProgressSink, WorkDownloadRemovalRequest,
-    WorkDownloadRequest,
+    SyncProgressSink, WorkDownloadMarkRequest, WorkDownloadProgress, WorkDownloadProgressSink,
+    WorkDownloadRemovalRequest, WorkDownloadRequest,
 };
 use dm_storage::{
     Account, AppSettings, ProductAgeCategory, ProductCreditGroup, ProductListItem, ProductListPage,
@@ -1321,6 +1321,109 @@ async fn delete_work_download(
 }
 
 #[tauri::command]
+async fn mark_work_downloaded(
+    state: State<'_, AppState>,
+    request: MarkWorkDownloadedRequest,
+) -> Result<WorkDownloadStateDto, String> {
+    let work_id = match normalize_required_id(request.work_id) {
+        Ok(work_id) => work_id,
+        Err(error) => {
+            record_audit(
+                &state.audit,
+                AuditEvent::failed(
+                    "work.download.mark",
+                    "Failed to validate manual download request",
+                )
+                .with_error(Some("validation"), error.clone()),
+            )
+            .await;
+            return Err(error);
+        }
+    };
+    let local_path = match normalize_required_path(request.local_path) {
+        Ok(path) => path,
+        Err(error) => {
+            record_audit(
+                &state.audit,
+                AuditEvent::failed(
+                    "work.download.mark",
+                    "Failed to validate manual download path",
+                )
+                .with_error(Some("validation"), error.clone())
+                .with_details(json!({ "workId": work_id })),
+            )
+            .await;
+            return Err(error);
+        }
+    };
+    let settings = match state.storage.app_settings().await {
+        Ok(settings) => settings,
+        Err(error) => {
+            let message = command_error(error);
+            record_audit(
+                &state.audit,
+                AuditEvent::failed("work.download.mark", "Failed to load settings")
+                    .with_error(Some("storage"), message.clone())
+                    .with_details(json!({ "workId": work_id })),
+            )
+            .await;
+            return Err(message);
+        }
+    };
+    let library_root = match required_library_root(&settings) {
+        Ok(root) => root,
+        Err(error) => {
+            record_audit(
+                &state.audit,
+                AuditEvent::failed("work.download.mark", "Failed to resolve library folder")
+                    .with_error(Some("settings"), error.clone())
+                    .with_details(json!({ "workId": work_id })),
+            )
+            .await;
+            return Err(error);
+        }
+    };
+
+    let result = state
+        .library
+        .mark_work_downloaded(WorkDownloadMarkRequest::new(
+            &work_id,
+            &library_root,
+            &local_path,
+        ))
+        .await;
+
+    match result {
+        Ok(state_after_mark) => {
+            record_audit(
+                &state.audit,
+                AuditEvent::succeeded("work.download.mark", "Marked work as downloaded")
+                    .with_details(json!({
+                        "workId": work_id,
+                        "path": state_after_mark.local_path,
+                    })),
+            )
+            .await;
+            Ok(WorkDownloadStateDto::from(state_after_mark))
+        }
+        Err(error) => {
+            let message = command_error(error);
+            record_audit(
+                &state.audit,
+                AuditEvent::failed("work.download.mark", "Failed to mark work as downloaded")
+                    .with_error(Some("library"), message.clone())
+                    .with_details(json!({
+                        "workId": work_id,
+                        "path": local_path.to_string_lossy().to_string(),
+                    })),
+            )
+            .await;
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
 async fn list_jobs(state: State<'_, AppState>) -> Result<Vec<dm_jobs::JobSnapshot>, String> {
     Ok(state.jobs.list_jobs())
 }
@@ -1837,6 +1940,13 @@ struct DeleteWorkDownloadRequest {
     work_id: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MarkWorkDownloadedRequest {
+    work_id: String,
+    local_path: String,
+}
+
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 enum UnpackPolicyDto {
@@ -2303,6 +2413,20 @@ fn normalize_required_id(value: String) -> Result<String, String> {
     Ok(value)
 }
 
+fn normalize_required_path(value: String) -> Result<PathBuf, String> {
+    let value = value.trim().to_owned();
+
+    if value.is_empty() {
+        return Err("path is required".to_owned());
+    }
+
+    if value.contains('\0') {
+        return Err("path contains a NUL byte".to_owned());
+    }
+
+    Ok(PathBuf::from(value))
+}
+
 fn normalize_optional_id(value: Option<String>) -> Result<Option<String>, String> {
     normalize_optional_string(value).and_then(|value| match value {
         Some(value) => normalize_required_id(value).map(Some),
@@ -2376,6 +2500,7 @@ fn account_sync_failure(error: dm_library::LibraryError) -> JobFailure {
         dm_library::LibraryError::DownloadAccountNotFound(_) => "download_account_not_found",
         dm_library::LibraryError::DownloadTargetExists(_) => "download_target_exists",
         dm_library::LibraryError::DownloadPathOutsideRoots(_) => "download_path_outside_roots",
+        dm_library::LibraryError::DownloadPathNotDirectory(_) => "download_path_not_directory",
         dm_library::LibraryError::Io(_) => "io",
         dm_library::LibraryError::Json(_) => "json",
     };
@@ -2407,6 +2532,7 @@ fn work_download_failure(error: dm_library::LibraryError) -> JobFailure {
         dm_library::LibraryError::DownloadAccountNotFound(_) => "download_account_not_found",
         dm_library::LibraryError::DownloadTargetExists(_) => "download_target_exists",
         dm_library::LibraryError::DownloadPathOutsideRoots(_) => "download_path_outside_roots",
+        dm_library::LibraryError::DownloadPathNotDirectory(_) => "download_path_not_directory",
         dm_library::LibraryError::Io(_) => "io",
         dm_library::LibraryError::Json(_) => "json",
     };
@@ -2904,6 +3030,7 @@ pub fn run() {
             preview_bulk_work_download,
             open_work_download,
             delete_work_download,
+            mark_work_downloaded,
             list_jobs,
             get_job,
             cancel_job,
