@@ -3316,128 +3316,132 @@
         </div>
 
         <div class="product-detail-body">
-          <section class="detail-section">
-            <h3>Identity</h3>
-            <div class="detail-grid">
-              <div>
-                <span>Maker</span>
-                <button type="button" onclick={() => copyText("maker", detail.makerName)}>
-                  {detailValue(detail.makerName)}
-                </button>
-              </div>
-              <div>
-                <span>Maker ID</span>
-                <button type="button" onclick={() => copyText("maker ID", detail.makerId)}>
-                  {detailValue(detail.makerId)}
-                </button>
-              </div>
-              <div>
-                <span>Type</span>
-                <span>{detailTypeInfo.label}</span>
-              </div>
-              <div>
-                <span>Age</span>
-                <span>{ageLabel(detail.ageCategory) || "-"}</span>
-              </div>
-              <div>
-                <span>Size</span>
-                <span>{detail.contentSizeBytes ? formatBytes(detail.contentSizeBytes) : "-"}</span>
-              </div>
-              <div>
-                <span>Last detail sync</span>
-                <span>{detailDate(detail.lastDetailSyncAt)}</span>
-              </div>
-            </div>
-          </section>
-
-          <section class="detail-section">
-            <h3>Credits</h3>
-            <div class="detail-credit-list">
-              {#each productCreditFields(detail) as field (field.key)}
-                <button
-                  type="button"
-                  disabled={field.missing}
-                  title={creditTooltip(field)}
-                  onclick={() => copyCreditField(field)}
-                >
-                  <span>{field.label}</span>
-                  <strong class:missing={field.missing}>{field.value}</strong>
-                </button>
-              {/each}
-            </div>
-          </section>
-
-          <section class="detail-section">
-            <h3>Ownership</h3>
-            <div class="detail-chip-list">
-              {#each detail.owners as owner (owner.accountId)}
-                <span title={owner.purchasedAt ? `${owner.label}: ${shortDate(owner.purchasedAt)}` : owner.label}>
-                  {owner.label}
-                </span>
-              {/each}
-            </div>
-          </section>
-
-          <section class="detail-section">
-            <h3>Download</h3>
-            <div class="detail-grid">
-              <div>
-                <span>Status</span>
-                <span>{downloadStatusLabel(detail.download.status)}</span>
-              </div>
-              <div>
-                <span>Policy</span>
-                <span>{detailValue(detail.download.unpackPolicy)}</span>
-              </div>
-              <div class="wide">
-                <span>Local path</span>
-                <button type="button" onclick={() => copyText("local path", detail.download.localPath)}>
-                  {detailValue(detail.download.localPath)}
-                </button>
-              </div>
-              {#if detail.download.errorMessage}
-                <div class="wide">
-                  <span>Error</span>
-                  <span>{detail.download.errorMessage}</span>
+          <div class="detail-column">
+            <section class="detail-section">
+              <h3>Identity</h3>
+              <div class="detail-grid">
+                <div>
+                  <span>Maker</span>
+                  <button type="button" onclick={() => copyText("maker", detail.makerName)}>
+                    {detailValue(detail.makerName)}
+                  </button>
                 </div>
-              {/if}
-            </div>
-          </section>
+                <div>
+                  <span>Maker ID</span>
+                  <button type="button" onclick={() => copyText("maker ID", detail.makerId)}>
+                    {detailValue(detail.makerId)}
+                  </button>
+                </div>
+                <div>
+                  <span>Type</span>
+                  <span>{detailTypeInfo.label}</span>
+                </div>
+                <div>
+                  <span>Age</span>
+                  <span>{ageLabel(detail.ageCategory) || "-"}</span>
+                </div>
+                <div>
+                  <span>Size</span>
+                  <span>{detail.contentSizeBytes ? formatBytes(detail.contentSizeBytes) : "-"}</span>
+                </div>
+                <div>
+                  <span>Last detail sync</span>
+                  <span>{detailDate(detail.lastDetailSyncAt)}</span>
+                </div>
+              </div>
+            </section>
 
-          <section class="detail-section">
-            <h3>Dates</h3>
-            <div class="detail-grid">
-              <div>
-                <span>Registered</span>
-                <span>{detailDate(detail.registeredAt)}</span>
-              </div>
-              <div>
-                <span>Published</span>
-                <span>{detailDate(detail.publishedAt)}</span>
-              </div>
-              <div>
-                <span>Updated</span>
-                <span>{detailDate(detail.updatedAt)}</span>
-              </div>
-              <div>
-                <span>Latest purchase</span>
-                <span>{detailDate(detail.latestPurchasedAt)}</span>
-              </div>
-            </div>
-          </section>
-
-          <section class="detail-section">
-            <h3>Tags</h3>
-            {#if genericTags.length > 0}
+            <section class="detail-section">
+              <h3>Ownership</h3>
               <div class="detail-chip-list">
-                {#each genericTags as tag (`${tag.class}:${tag.name}`)}
-                  <span title={tag.class}>{tag.name}</span>
+                {#each detail.owners as owner (owner.accountId)}
+                  <span title={owner.purchasedAt ? `${owner.label}: ${shortDate(owner.purchasedAt)}` : owner.label}>
+                    {owner.label}
+                  </span>
                 {/each}
               </div>
-            {:else}
-              <p class="detail-muted">No tags cached</p>
-            {/if}
-          </section>
+            </section>
+
+            <section class="detail-section">
+              <h3>Dates</h3>
+              <div class="detail-grid">
+                <div>
+                  <span>Registered</span>
+                  <span>{detailDate(detail.registeredAt)}</span>
+                </div>
+                <div>
+                  <span>Published</span>
+                  <span>{detailDate(detail.publishedAt)}</span>
+                </div>
+                <div>
+                  <span>Updated</span>
+                  <span>{detailDate(detail.updatedAt)}</span>
+                </div>
+                <div>
+                  <span>Latest purchase</span>
+                  <span>{detailDate(detail.latestPurchasedAt)}</span>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div class="detail-column">
+            <section class="detail-section">
+              <h3>Credits</h3>
+              <div class="detail-credit-list">
+                {#each productCreditFields(detail) as field (field.key)}
+                  <button
+                    type="button"
+                    disabled={field.missing}
+                    title={creditTooltip(field)}
+                    onclick={() => copyCreditField(field)}
+                  >
+                    <span>{field.label}</span>
+                    <strong class:missing={field.missing}>{field.value}</strong>
+                  </button>
+                {/each}
+              </div>
+            </section>
+
+            <section class="detail-section">
+              <h3>Download</h3>
+              <div class="detail-grid">
+                <div>
+                  <span>Status</span>
+                  <span>{downloadStatusLabel(detail.download.status)}</span>
+                </div>
+                <div>
+                  <span>Policy</span>
+                  <span>{detailValue(detail.download.unpackPolicy)}</span>
+                </div>
+                <div class="wide">
+                  <span>Local path</span>
+                  <button type="button" onclick={() => copyText("local path", detail.download.localPath)}>
+                    {detailValue(detail.download.localPath)}
+                  </button>
+                </div>
+                {#if detail.download.errorMessage}
+                  <div class="wide">
+                    <span>Error</span>
+                    <span>{detail.download.errorMessage}</span>
+                  </div>
+                {/if}
+              </div>
+            </section>
+
+            <section class="detail-section">
+              <h3>Tags</h3>
+              {#if genericTags.length > 0}
+                <div class="detail-chip-list">
+                  {#each genericTags as tag (`${tag.class}:${tag.name}`)}
+                    <span title={tag.class}>{tag.name}</span>
+                  {/each}
+                </div>
+              {:else}
+                <p class="detail-muted">No tags cached</p>
+              {/if}
+            </section>
+          </div>
         </div>
       </section>
     </div>
@@ -4235,12 +4239,20 @@
 
   .product-detail-body {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+    align-items: start;
     gap: 12px;
     min-height: 0;
     max-height: calc(90vh - 154px);
     padding: 16px;
     overflow: auto;
+  }
+
+  .detail-column {
+    display: grid;
+    align-content: start;
+    gap: 12px;
+    min-width: 0;
   }
 
   .detail-section {
@@ -4260,11 +4272,17 @@
 
   .detail-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px 14px;
+    grid-template-columns: repeat(2, minmax(132px, 1fr));
+    gap: 12px;
   }
 
-  .detail-grid div,
+  .detail-grid div {
+    display: grid;
+    align-content: start;
+    gap: 4px;
+    min-width: 0;
+  }
+
   .detail-credit-list button {
     display: grid;
     grid-template-columns: 104px minmax(0, 1fr);
@@ -4297,13 +4315,21 @@
 
   .detail-grid button,
   .detail-credit-list button {
-    width: 100%;
     min-height: 0;
     padding: 0;
     border: 0;
     border-radius: 3px;
     background: transparent;
     text-align: left;
+  }
+
+  .detail-grid button {
+    justify-self: start;
+    max-width: 100%;
+  }
+
+  .detail-credit-list button {
+    width: 100%;
   }
 
   .detail-grid button:hover:not(:disabled),
@@ -5686,6 +5712,27 @@
     .product-actions {
       justify-content: flex-start;
     }
+
+    .product-detail-heading {
+      grid-template-columns: 86px minmax(0, 1fr) auto;
+      gap: 12px;
+    }
+
+    .detail-thumb {
+      width: 86px;
+      height: 86px;
+    }
+
+    .detail-work-id {
+      grid-column: 2;
+      grid-row: 2;
+      justify-self: start;
+    }
+
+    .product-detail-body {
+      grid-template-columns: 1fr;
+      max-height: calc(90vh - 124px);
+    }
   }
 
   @media (max-width: 720px) {
@@ -5789,6 +5836,37 @@
       grid-template-columns: 1fr;
     }
 
+    .product-detail {
+      padding: 16px;
+    }
+
+    .product-detail-heading {
+      grid-template-columns: 72px minmax(0, 1fr) auto;
+      padding: 12px;
+    }
+
+    .product-detail-title-block h2 {
+      font-size: 18px;
+    }
+
+    .detail-thumb {
+      width: 72px;
+      height: 72px;
+    }
+
+    .product-detail-body {
+      max-height: calc(90vh - 108px);
+      padding: 12px;
+    }
+
+    .detail-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .detail-credit-list button {
+      grid-template-columns: 82px minmax(0, 1fr);
+    }
+
     button,
     button.secondary {
       width: 100%;
@@ -5801,6 +5879,9 @@
     .account-actions button.secondary,
     .download-queue-row button,
     .download-queue-row button.secondary,
+    .detail-grid button,
+    .detail-credit-list button,
+    .link-button,
     .path-control button,
     .path-control button.secondary,
     .work-id {
