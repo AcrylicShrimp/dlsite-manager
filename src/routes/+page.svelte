@@ -2545,7 +2545,7 @@
     </nav>
   </aside>
 
-  <section class="workspace">
+  <section class="workspace" class:library-workspace={activeView === "library"}>
     <header class="workspace-header">
       <div>
         <p class="eyebrow">{viewEyebrow(activeView)}</p>
@@ -3943,6 +3943,17 @@
     padding: 28px;
   }
 
+  .workspace.library-workspace {
+    overflow: auto;
+    padding-top: 0;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+
+  .workspace.library-workspace .workspace-header {
+    padding-top: 28px;
+  }
+
   .workspace-header,
   .actions,
   .panel-title,
@@ -4764,11 +4775,11 @@
 
   .product-area {
     display: flex;
-    flex: 1 1 auto;
+    flex: 0 0 auto;
     flex-direction: column;
     min-width: 0;
     min-height: 0;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .accounts-panel,
@@ -4869,11 +4880,16 @@
   }
 
   .library-controls {
+    position: sticky;
+    top: 0;
+    z-index: 30;
     display: grid;
     flex: 0 0 auto;
     gap: 1px;
     border-bottom: 1px solid var(--border);
     background: var(--border);
+    border-radius: 7px 7px 0 0;
+    box-shadow: 0 14px 26px rgb(0 0 0 / 22%);
   }
 
   .library-filter-panel,
@@ -4992,12 +5008,11 @@
 
   .product-table {
     display: block;
-    flex: 1 1 0;
+    flex: 0 0 auto;
     min-height: 0;
-    overflow: auto;
+    overflow: visible;
     overflow-anchor: none;
     overscroll-behavior: contain;
-    scrollbar-gutter: stable;
   }
 
   .product-card {
