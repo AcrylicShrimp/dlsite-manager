@@ -1889,7 +1889,7 @@
             onclick={startBulkWorkDownload}
             disabled={bulkDownloadPlanning || productsLoading || jobsLoading || totalProducts === 0}
           >
-            {bulkDownloadPlanning ? "Planning" : "Download results"}
+            {bulkDownloadPlanning ? "Planning" : "Bulk Download"}
           </button>
         </form>
 
