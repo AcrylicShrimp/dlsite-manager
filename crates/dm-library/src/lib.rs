@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, Utc};
 use dm_api::{
     ContentCount, ContentQuery, Credentials, DlsiteClient, DmApiError, DownloadFile, DownloadPlan,
-    Language, LocalizedText, Purchase, Work, WorkId,
+    Language, LocalizedText, Purchase, SerialNumber, Work, WorkId,
 };
 use dm_credentials::{CredentialRef, CredentialStore, CredentialsError};
 use dm_download::{
@@ -26,6 +26,9 @@ pub type Result<T> = std::result::Result<T, LibraryError>;
 const BULK_DOWNLOAD_PAGE_LIMIT: u32 = 500;
 const DOWNLOAD_CANCELLATION_POLL_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(50);
+const SERIAL_INFORMATION_FILE_NAME: &str = "dlsite-manager-serial.txt";
+const SERIAL_INFORMATION_NUMBERED_PREFIX: &str = "dlsite-manager-serial-";
+const SERIAL_INFORMATION_MARKER: &str = "# dlsite-manager serial information";
 
 #[derive(Debug, thiserror::Error)]
 pub enum LibraryError {
@@ -899,6 +902,14 @@ impl Library {
 
         request.check_cancelled()?;
         request.emit(WorkDownloadProgress::Finalizing);
+        write_serial_information_file(
+            staging_dir,
+            work_id.as_ref(),
+            &plan.serial_numbers,
+            &now_string(),
+        )
+        .await?;
+
         if request.replace_existing {
             remove_existing_download_path(final_dir, &[request.library_root]).await?;
         }
@@ -1749,6 +1760,114 @@ fn unpack_policy_storage_value(policy: UnpackPolicy) -> &'static str {
     }
 }
 
+async fn write_serial_information_file(
+    target_dir: &Path,
+    work_id: &str,
+    serial_numbers: &[SerialNumber],
+    generated_at: &str,
+) -> Result<Option<PathBuf>> {
+    if serial_numbers.is_empty() {
+        remove_owned_serial_information_files(target_dir).await?;
+        return Ok(None);
+    }
+
+    let path = serial_information_path(target_dir).await?;
+    let content = serial_information_content(work_id, serial_numbers, generated_at);
+
+    tokio::fs::write(&path, content).await?;
+    Ok(Some(path))
+}
+
+async fn serial_information_path(target_dir: &Path) -> Result<PathBuf> {
+    let base = target_dir.join(SERIAL_INFORMATION_FILE_NAME);
+
+    if serial_information_path_available(&base).await? {
+        return Ok(base);
+    }
+
+    for index in 1..100 {
+        let candidate = target_dir.join(format!("{SERIAL_INFORMATION_NUMBERED_PREFIX}{index}.txt"));
+
+        if serial_information_path_available(&candidate).await? {
+            return Ok(candidate);
+        }
+    }
+
+    Err(LibraryError::Io(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not choose a serial information file name",
+    )))
+}
+
+async fn serial_information_path_available(path: &Path) -> Result<bool> {
+    match tokio::fs::read_to_string(path).await {
+        Ok(content) => Ok(content.starts_with(SERIAL_INFORMATION_MARKER)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error.into()),
+    }
+}
+
+async fn remove_owned_serial_information_files(target_dir: &Path) -> Result<()> {
+    remove_owned_serial_information_file(&target_dir.join(SERIAL_INFORMATION_FILE_NAME)).await?;
+
+    for index in 1..100 {
+        remove_owned_serial_information_file(
+            &target_dir.join(format!("{SERIAL_INFORMATION_NUMBERED_PREFIX}{index}.txt")),
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn remove_owned_serial_information_file(path: &Path) -> Result<()> {
+    match tokio::fs::read_to_string(path).await {
+        Ok(content) if content.starts_with(SERIAL_INFORMATION_MARKER) => {
+            tokio::fs::remove_file(path).await?;
+            Ok(())
+        }
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn serial_information_content(
+    work_id: &str,
+    serial_numbers: &[SerialNumber],
+    generated_at: &str,
+) -> String {
+    let mut content = String::new();
+
+    content.push_str(SERIAL_INFORMATION_MARKER);
+    content.push('\n');
+    content.push_str(&format!("Work ID: {}\n", clean_serial_text(work_id)));
+    content.push_str(&format!("Generated at: {generated_at}\n"));
+    content.push_str("Source: DLsite download plan\n\n");
+    content.push_str("Treat these serial values as sensitive.\n\n");
+    content.push_str("Serial numbers:\n");
+
+    for (index, serial) in serial_numbers.iter().enumerate() {
+        content.push_str(&format!(
+            "{}. {}\n",
+            index + 1,
+            clean_serial_text(&serial.label)
+        ));
+        content.push_str(&format!("   Value: {}\n", clean_serial_text(&serial.value)));
+    }
+
+    content
+}
+
+fn clean_serial_text(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_owned()
+}
+
 async fn remove_download_path_from_state(
     path: Option<&str>,
     allowed_roots: &[&Path],
@@ -2088,6 +2207,48 @@ mod tests {
                 }],
                 archive_extraction: None,
             })
+        }
+    }
+
+    #[derive(Debug, Clone, Default)]
+    struct SerialDownloadSource;
+
+    #[async_trait]
+    impl WorkDownloadSource for SerialDownloadSource {
+        async fn login(&self, credentials: &Credentials) -> Result<()> {
+            FakeDownloadSource.login(credentials).await
+        }
+
+        async fn download_plan(&self, work_id: &WorkId) -> Result<DownloadPlan> {
+            let mut plan = FakeDownloadSource.download_plan(work_id).await?;
+            plan.serial_numbers = vec![SerialNumber {
+                label: "Serial number".to_owned(),
+                value: "ABC-123-SECRET".to_owned(),
+            }];
+
+            Ok(plan)
+        }
+
+        async fn download_file_metadata(
+            &self,
+            file_index: usize,
+            file: &DownloadFile,
+        ) -> Result<DownloadFileMetadata> {
+            FakeDownloadSource
+                .download_file_metadata(file_index, file)
+                .await
+        }
+
+        async fn download_files(
+            &self,
+            job: &DownloadJobRequest,
+            plan: &DownloadPlan,
+            cancellation: &dm_download::CancellationToken,
+            progress_sink: &mut (dyn FnMut(DownloadProgress) + Send),
+        ) -> Result<DownloadedWork> {
+            FakeDownloadSource
+                .download_files(job, plan, cancellation, progress_sink)
+                .await
         }
     }
 
@@ -2544,6 +2705,9 @@ mod tests {
         assert_eq!(report.file_count, 1);
         assert_eq!(report.download_state.status, WorkDownloadStatus::Downloaded);
         assert!(library_root.join("RJ000001/RJ000001.txt").exists());
+        assert!(!library_root
+            .join(format!("RJ000001/{SERIAL_INFORMATION_FILE_NAME}"))
+            .exists());
         assert!(!download_root.join("RJ000001").exists());
         assert_eq!(
             page.products[0].download.status,
@@ -2561,6 +2725,40 @@ mod tests {
             events.last(),
             Some(WorkDownloadProgress::Completed)
         ));
+
+        std::fs::remove_dir_all(root).unwrap();
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn downloads_serial_work_and_writes_serial_information_file() -> Result<()> {
+        let library = migrated_library().await?;
+        let root = test_dir("download-serial-work");
+        let library_root = root.join("library");
+        let download_root = root.join("downloads");
+        let serial_path = library_root
+            .join("RJ000001")
+            .join(SERIAL_INFORMATION_FILE_NAME);
+        library.save_account(save_account_request(true)).await?;
+        library
+            .sync_account_with_source(AccountSyncRequest::new("account-a"), &sync_source())
+            .await?;
+
+        let report = library
+            .download_work_with_source(
+                WorkDownloadRequest::new("RJ000001", &library_root, &download_root),
+                &SerialDownloadSource,
+            )
+            .await?;
+        let serial_content = tokio::fs::read_to_string(&serial_path).await?;
+
+        assert_eq!(report.download_state.status, WorkDownloadStatus::Downloaded);
+        assert!(serial_content.starts_with(SERIAL_INFORMATION_MARKER));
+        assert!(serial_content.contains("Work ID: RJ000001"));
+        assert!(serial_content.contains("Serial number"));
+        assert!(serial_content.contains("ABC-123-SECRET"));
+        assert!(!download_root.join("RJ000001").exists());
 
         std::fs::remove_dir_all(root).unwrap();
 
