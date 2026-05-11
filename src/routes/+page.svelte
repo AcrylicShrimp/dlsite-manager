@@ -15,13 +15,24 @@
     creditFieldDefinitions,
     productTypeCodeDetails,
   } from "$lib/model/constants";
+  import {
+    appInfoValue,
+    bulkDownloadExpectedBytesLabel,
+    detailDate,
+    detailValue,
+    downloadStatusLabel,
+    errorMessage,
+    formatBytes,
+    shortDate,
+    textVariantsLabel,
+    valueOrNull,
+  } from "$lib/utils/format";
   import type {
     Account,
     AccountRemovalReport,
     AppInfo,
     AppSettings,
     AuditEvent,
-    AuditLevel,
     AuditOutcome,
     BulkDownloadDialog,
     BulkFailedWork,
@@ -30,10 +41,7 @@
     ChipTooltip,
     ConfirmationDialog,
     JobEvent,
-    JobFailure,
-    JobProgress,
     JobSnapshot,
-    JobStatus,
     LocalWorkImportReport,
     Product,
     ProductActionMenu,
@@ -44,17 +52,12 @@
     ProductFilterFacets,
     ProductImagePreview,
     ProductListPage,
-    ProductMakerFacet,
-    ProductOwner,
-    ProductTag,
-    ProductTextValue,
     ProductTypeInfo,
     StartJobResponse,
     StartWorkDownloadOptions,
     Toast,
     ToastKind,
     View,
-    WorkDownloadStatus,
   } from "$lib/model/types";
 
   let activeView = $state<View>("library");
@@ -1718,32 +1721,6 @@
     resolve?.(confirmed);
   }
 
-  function bulkDownloadExpectedBytesLabel(preview: BulkWorkDownloadPreview) {
-    if (typeof preview.totalExpectedBytes === "number") {
-      return formatBytes(preview.totalExpectedBytes);
-    }
-
-    if (preview.knownExpectedBytes > 0) {
-      return `${formatBytes(preview.knownExpectedBytes)} known, plus ${preview.unknownSizeCount} unknown file(s)`;
-    }
-
-    return preview.unknownSizeCount > 0 ? `${preview.unknownSizeCount} unknown file(s)` : "Unknown";
-  }
-
-  function formatBytes(value: number) {
-    const units = ["B", "KiB", "MiB", "GiB", "TiB"];
-    let size = value;
-    let unitIndex = 0;
-
-    while (size >= 1024 && unitIndex < units.length - 1) {
-      size /= 1024;
-      unitIndex += 1;
-    }
-
-    const precision = unitIndex === 0 || size >= 100 ? 0 : size >= 10 ? 1 : 2;
-    return `${size.toFixed(precision)} ${units[unitIndex]}`;
-  }
-
   function productDownloadActionLabel(product: Product, job: JobSnapshot | null) {
     if (job) {
       if (job.status === "queued") {
@@ -1995,56 +1972,8 @@
     return field.missing ? `${field.label}: Not available` : `${field.label}: ${field.value}`;
   }
 
-  function textVariantsLabel(values: ProductTextValue[]) {
-    return values.map((item) => `${languageLabel(item.language)}: ${item.value}`).join("\n");
-  }
-
-  function languageLabel(value: string) {
-    switch (value) {
-      case "en_US":
-        return "English";
-      case "ja_JP":
-        return "Japanese";
-      case "ko_KR":
-        return "Korean";
-      case "zh_CN":
-        return "Chinese";
-      case "zh_TW":
-        return "Taiwanese";
-      default:
-        return value;
-    }
-  }
-
   function detailTags(detail: ProductDetail) {
     return detail.tags.filter((tag) => !tag.class.endsWith("_by"));
-  }
-
-  function detailValue(value: string | number | null | undefined) {
-    if (value === null || value === undefined || value === "") {
-      return "-";
-    }
-
-    return String(value);
-  }
-
-  function detailDate(value: string | null) {
-    return value ? shortDate(value) : "-";
-  }
-
-  function downloadStatusLabel(status: WorkDownloadStatus) {
-    switch (status) {
-      case "notDownloaded":
-        return "Not downloaded";
-      case "downloading":
-        return "Downloading";
-      case "downloaded":
-        return "Downloaded";
-      case "failed":
-        return "Failed";
-      case "cancelled":
-        return "Cancelled";
-    }
   }
 
   function notifySuccess(message: string) {
@@ -2120,30 +2049,6 @@
     }
   }
 
-  function valueOrNull(value: string) {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  }
-
-  function shortDate(value: string | null) {
-    if (!value) {
-      return "";
-    }
-
-    return value.replace("T", " ").replace(/\.\d+Z$/, "Z");
-  }
-
-  function errorMessage(err: unknown) {
-    return err instanceof Error ? err.message : String(err);
-  }
-
-  function appInfoValue(value: string | undefined) {
-    if (value) {
-      return value;
-    }
-
-    return appInfoLoading ? "Loading" : "Unavailable";
-  }
 </script>
 
 <svelte:head>
@@ -3001,16 +2906,16 @@
           </div>
           <dl class="about-grid">
             <dt>Application</dt>
-            <dd>{appInfoValue(appInfo?.name)}</dd>
+            <dd>{appInfoValue(appInfo?.name, appInfoLoading)}</dd>
 
             <dt>Version</dt>
-            <dd>{appInfoValue(appInfo?.version)}</dd>
+            <dd>{appInfoValue(appInfo?.version, appInfoLoading)}</dd>
 
             <dt>Identifier</dt>
-            <dd>{appInfoValue(appInfo?.identifier)}</dd>
+            <dd>{appInfoValue(appInfo?.identifier, appInfoLoading)}</dd>
 
             <dt>Tauri</dt>
-            <dd>{appInfoValue(appInfo?.tauriVersion)}</dd>
+            <dd>{appInfoValue(appInfo?.tauriVersion, appInfoLoading)}</dd>
           </dl>
         </section>
       </div>
