@@ -1796,8 +1796,8 @@ struct GetProductDetailRequest {
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 enum ProductSortDto {
-    #[default]
     TitleAsc,
+    #[default]
     LatestPurchaseDesc,
     PublishedAtDesc,
 }

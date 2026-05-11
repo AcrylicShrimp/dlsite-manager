@@ -406,7 +406,7 @@
   let selectedAccountId = $state("");
   let selectedProductType = $state("");
   let selectedAgeCategory = $state("");
-  let productSort = $state("titleAsc");
+  let productSort = $state("latestPurchaseDesc");
 
   let jobs = $state<JobSnapshot[]>([]);
   let jobsLoading = $state(true);
@@ -2485,9 +2485,9 @@
             <option value="r18">R-18</option>
           </select>
           <select bind:value={productSort} onchange={loadProducts}>
-            <option value="titleAsc">Title</option>
             <option value="latestPurchaseDesc">Latest purchase</option>
             <option value="publishedAtDesc">Published</option>
+            <option value="titleAsc">Title</option>
           </select>
           <button type="submit" disabled={productsLoading}>Search</button>
           <button

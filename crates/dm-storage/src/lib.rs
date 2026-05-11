@@ -304,7 +304,7 @@ impl Default for ProductListQuery {
             account_id: None,
             type_group: None,
             age_category: None,
-            sort: ProductSort::TitleAsc,
+            sort: ProductSort::LatestPurchaseDesc,
             limit: 100,
             offset: 0,
         }
@@ -3216,7 +3216,7 @@ mod tests {
                 .iter()
                 .map(|product| product.work_id.as_str())
                 .collect::<Vec<_>>(),
-            ["RJ000004", "RJ000006"]
+            ["RJ000006", "RJ000004"]
         );
         assert_eq!(other_page.products[0].work_id, "RJ000005");
 
