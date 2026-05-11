@@ -222,7 +222,7 @@
     tooltip: string;
   };
 
-  type View = "library" | "accounts" | "activity" | "settings";
+  type View = "library" | "downloads" | "accounts" | "activity" | "settings";
 
   const creditFieldDefinitions = [
     { key: "maker", label: "Maker" },
@@ -1217,6 +1217,26 @@
     return [...jobs].reverse().slice(0, limit);
   }
 
+  function visibleDownloadJobs(limit = 50) {
+    return [...currentDownloadJobs()].reverse().slice(0, limit);
+  }
+
+  function isDownloadQueueJob(job: JobSnapshot) {
+    return job.kind === "workDownload" || job.kind === "bulkWorkDownload";
+  }
+
+  function currentDownloadJobs() {
+    return jobs.filter((job) => isDownloadQueueJob(job) && isActiveJob(job));
+  }
+
+  function queuedDownloadJobCount() {
+    return currentDownloadJobs().filter((job) => job.status === "queued").length;
+  }
+
+  function runningDownloadJobCount() {
+    return currentDownloadJobs().filter((job) => job.status === "running").length;
+  }
+
   function visibleAuditEvents(limit = 30) {
     return auditEvents.slice(0, limit);
   }
@@ -1374,6 +1394,65 @@
     }
 
     return jobMessages[job.id] ?? shortDate(job.finishedAt ?? job.startedAt ?? job.createdAt);
+  }
+
+  function downloadQueueTitle(job: JobSnapshot) {
+    if (job.kind === "bulkWorkDownload") {
+      const requested = jobOutputNumber(job, "requestedCount") ?? metadataNumber(job, "reservedCount");
+      return typeof requested === "number" && requested > 0
+        ? `Bulk download (${requested} works)`
+        : "Bulk download";
+    }
+
+    const workId = jobWorkId(job) ?? jobOutputString(job, "workId");
+    const product = workId ? products.find((item) => item.workId === workId) : null;
+    return product?.title ?? workId ?? job.title;
+  }
+
+  function downloadQueueSubtitle(job: JobSnapshot) {
+    if (job.kind === "workDownload") {
+      const workId = jobWorkId(job) ?? jobOutputString(job, "workId");
+      return workId ? `Single work ${workId}` : "Single work download";
+    }
+
+    const skippedDownloaded =
+      jobOutputNumber(job, "skippedDownloadedCount") ?? metadataNumber(job, "skippedDownloadedCount");
+    const skippedQueued =
+      jobOutputNumber(job, "skippedQueuedCount") ?? metadataNumber(job, "skippedQueuedCount");
+    const parts = [
+      typeof skippedDownloaded === "number" ? `${skippedDownloaded} already downloaded` : null,
+      typeof skippedQueued === "number" ? `${skippedQueued} already queued` : null,
+    ].filter((part): part is string => part !== null);
+
+    return parts.length > 0 ? parts.join(", ") : "Current Library filters";
+  }
+
+  function downloadQueueKindLabel(job: JobSnapshot) {
+    if (job.kind === "bulkWorkDownload") {
+      return "Bulk";
+    }
+
+    return "Work";
+  }
+
+  function downloadQueueTime(job: JobSnapshot) {
+    return shortDate(job.finishedAt ?? job.startedAt ?? job.createdAt);
+  }
+
+  function downloadQueueProgressPercent(job: JobSnapshot) {
+    const current = job.progress?.current;
+    const total = job.progress?.total;
+
+    if (typeof current !== "number" || typeof total !== "number" || total <= 0) {
+      return null;
+    }
+
+    return Math.min(100, Math.max(0, Math.floor((current * 100) / total)));
+  }
+
+  function metadataNumber(job: JobSnapshot, key: string) {
+    const value = job.metadata[key];
+    return typeof value === "number" ? value : null;
   }
 
   function jobOutputString(job: JobSnapshot, key: string) {
@@ -1858,6 +1937,8 @@
     switch (view) {
       case "library":
         return "Collection";
+      case "downloads":
+        return "Queue";
       case "accounts":
         return "Sources";
       case "activity":
@@ -1871,6 +1952,8 @@
     switch (view) {
       case "library":
         return "Library";
+      case "downloads":
+        return "Downloads";
       case "accounts":
         return "Accounts";
       case "activity":
@@ -1914,6 +1997,13 @@
         onclick={() => (activeView = "library")}
       >
         Library
+      </button>
+      <button
+        class:active={activeView === "downloads"}
+        type="button"
+        onclick={() => (activeView = "downloads")}
+      >
+        Downloads
       </button>
       <button
         class:active={activeView === "accounts"}
@@ -2130,6 +2220,85 @@
                     </div>
                   </div>
                 </div>
+              </article>
+            {/each}
+          </div>
+        {/if}
+      </section>
+    {:else if activeView === "downloads"}
+      <section class="downloads-panel" aria-label="Downloads">
+        <div class="panel-title download-panel-title">
+          <div>
+            <h2>Download queue</h2>
+            <p>Currently queued and running downloads</p>
+          </div>
+          <div class="panel-actions">
+            <button class="secondary small" type="button" onclick={loadJobs} disabled={jobsLoading}>
+              Reload
+            </button>
+          </div>
+        </div>
+
+        <div class="download-summary-strip" aria-label="Download queue summary">
+          <div class="download-stat">
+            <span>{visibleDownloadJobs().length}</span>
+            <small>Current</small>
+          </div>
+          <div class="download-stat">
+            <span>{queuedDownloadJobCount()}</span>
+            <small>Queued</small>
+          </div>
+          <div class="download-stat">
+            <span>{runningDownloadJobCount()}</span>
+            <small>Running</small>
+          </div>
+        </div>
+
+        {#if jobsLoading}
+          <div class="empty-state">Loading</div>
+        {:else if visibleDownloadJobs().length === 0}
+          <div class="empty-state">No active downloads</div>
+        {:else}
+          <div class="download-queue-list" aria-label="Download jobs">
+            {#each visibleDownloadJobs() as job (job.id)}
+              {@const progressPercent = downloadQueueProgressPercent(job)}
+              <article
+                class="download-queue-row"
+                class:failed={job.status === "failed"}
+                data-status={job.status}
+              >
+                <div class="download-queue-main">
+                  <span>{downloadQueueKindLabel(job)}</span>
+                  <h2 title={downloadQueueTitle(job)}>{downloadQueueTitle(job)}</h2>
+                  <p title={downloadQueueSubtitle(job)}>{downloadQueueSubtitle(job)}</p>
+                </div>
+
+                <div class="download-queue-state">
+                  <div>
+                    <strong class:active={isActiveJob(job)}>{jobLabel(job)}</strong>
+                    <small>{jobDetail(job)}</small>
+                  </div>
+                  {#if progressPercent !== null}
+                    <div class="download-progress-track" aria-label={`Progress ${progressPercent}%`}>
+                      <span style={`width: ${progressPercent}%`}></span>
+                    </div>
+                  {/if}
+                </div>
+
+                <time datetime={job.finishedAt ?? job.startedAt ?? job.createdAt}>
+                  {downloadQueueTime(job)}
+                </time>
+
+                {#if isActiveJob(job)}
+                  <button
+                    class="secondary small"
+                    type="button"
+                    onclick={() => cancelJob(job)}
+                    disabled={!job.cancellable || job.status === "cancelling"}
+                  >
+                    Cancel
+                  </button>
+                {/if}
               </article>
             {/each}
           </div>
@@ -2902,6 +3071,7 @@
   }
 
   .product-area,
+  .downloads-panel,
   .accounts-panel,
   .activity-panel,
   .settings-panel {
@@ -4066,6 +4236,173 @@
     scrollbar-gutter: stable;
   }
 
+  .downloads-panel {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+    min-height: 0;
+    padding: 18px;
+    overflow: hidden;
+  }
+
+  .download-panel-title {
+    flex: 0 0 auto;
+  }
+
+  .download-panel-title > div {
+    min-width: 0;
+  }
+
+  .download-panel-title p {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .download-summary-strip {
+    display: grid;
+    flex: 0 0 auto;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--border);
+    overflow: hidden;
+  }
+
+  .download-stat {
+    display: grid;
+    gap: 2px;
+    padding: 10px 12px;
+    background: var(--panel-soft);
+  }
+
+  .download-stat span {
+    color: var(--text-strong);
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1.1;
+  }
+
+  .download-stat small {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .download-queue-list {
+    display: grid;
+    flex: 1 1 auto;
+    gap: 0;
+    min-height: 0;
+    padding-right: 4px;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+
+  .download-queue-row {
+    display: grid;
+    grid-template-columns: minmax(220px, 1.2fr) minmax(220px, 0.8fr) minmax(150px, auto) auto;
+    gap: 14px;
+    align-items: center;
+    min-height: 76px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .download-queue-row:last-child {
+    border-bottom: 0;
+  }
+
+  .download-queue-row.failed h2 {
+    color: var(--danger);
+  }
+
+  .download-queue-main,
+  .download-queue-state {
+    min-width: 0;
+  }
+
+  .download-queue-main span {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    color: var(--muted);
+    background: var(--panel-soft);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  .download-queue-main h2 {
+    margin-top: 7px;
+    color: var(--text-strong);
+    font-size: 15px;
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .download-queue-main p,
+  .download-queue-state small,
+  .download-queue-row time {
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .download-queue-main p {
+    margin: 3px 0 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .download-queue-state {
+    display: grid;
+    gap: 8px;
+  }
+
+  .download-queue-state > div:first-child {
+    display: grid;
+    gap: 2px;
+  }
+
+  .download-queue-state strong {
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .download-queue-state strong.active {
+    color: var(--accent);
+  }
+
+  .download-progress-track {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--field);
+    overflow: hidden;
+  }
+
+  .download-progress-track span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--accent);
+  }
+
+  .download-queue-row time {
+    text-align: right;
+    white-space: nowrap;
+  }
+
   .activity-layout {
     display: grid;
     flex: 1 1 auto;
@@ -4310,6 +4647,15 @@
   }
 
   @media (max-width: 1220px) {
+    .download-queue-row {
+      grid-template-columns: minmax(0, 1fr) minmax(180px, 0.7fr) auto;
+    }
+
+    .download-queue-row button {
+      grid-column: 1 / -1;
+      justify-self: start;
+    }
+
     .account-row {
       grid-template-columns: minmax(0, 1fr);
     }
@@ -4421,6 +4767,18 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
+    .download-summary-strip {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .download-queue-row {
+      grid-template-columns: 1fr;
+    }
+
+    .download-queue-row time {
+      text-align: left;
+    }
+
     .account-row,
     .account-meta-grid {
       grid-template-columns: 1fr;
@@ -4474,6 +4832,8 @@
     .account-enabled-pill,
     .account-actions button,
     .account-actions button.secondary,
+    .download-queue-row button,
+    .download-queue-row button.secondary,
     .path-control button,
     .path-control button.secondary,
     .work-id {
