@@ -5,6 +5,7 @@ use dm_api::{
 use dm_archive::{ArchiveExtractOptions, ArchiveExtraction, ArchivePlan};
 use std::{
     collections::BTreeMap,
+    fmt,
     future::Future,
     path::{Component, Path, PathBuf},
     pin::Pin,
@@ -230,6 +231,10 @@ impl CancellationToken {
 pub enum DownloadError {
     #[error("download was cancelled")]
     Cancelled,
+    #[error("invalid download response: {reason}")]
+    InvalidDownloadResponse {
+        reason: InvalidDownloadResponseReason,
+    },
     #[error("download file name is not known yet for file index {file_index}")]
     FileNameUnknown { file_index: usize },
     #[error("invalid download file name: {file_name}")]
@@ -253,6 +258,23 @@ pub enum DownloadError {
     Archive(#[from] dm_archive::ArchiveError),
     #[error("I/O error")]
     Io(#[from] std::io::Error),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InvalidDownloadResponseReason {
+    HtmlContentType { content_type: String },
+    HtmlDocumentBody,
+}
+
+impl fmt::Display for InvalidDownloadResponseReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::HtmlContentType { content_type } => {
+                write!(f, "response content type is HTML ({content_type})")
+            }
+            Self::HtmlDocumentBody => write!(f, "response body looks like an HTML document"),
+        }
+    }
 }
 
 pub async fn download_work_files<F>(
@@ -442,6 +464,7 @@ pub async fn probe_download_file_metadata(
         .open_download_stream(&file.stream_request, Some(DownloadByteRange::first_byte()))
         .await?;
     let headers = stream.headers();
+    validate_download_response_headers(&headers)?;
     let final_url = stream.url().clone();
     let file_name = file_name_from_download_url(&final_url)
         .ok_or(DownloadError::FileNameUnknown { file_index })?;
@@ -550,6 +573,16 @@ where
 
             if chunk.is_empty() {
                 continue;
+            }
+
+            if bytes_written == 0 && looks_like_html_document(&chunk) {
+                file.flush().await.ok();
+                drop(file);
+                fs::remove_file(&staging_path).await.ok();
+                fs::remove_dir(&staging_dir).await.ok();
+                return Err(DownloadError::InvalidDownloadResponse {
+                    reason: InvalidDownloadResponseReason::HtmlDocumentBody,
+                });
             }
 
             let next_bytes_written = bytes_written + chunk.len() as u64;
@@ -693,6 +726,61 @@ fn header_value<'a>(headers: &'a BTreeMap<String, String>, name: &str) -> Option
         .iter()
         .find(|(key, _)| key.eq_ignore_ascii_case(name))
         .map(|(_, value)| value.as_str())
+}
+
+fn validate_download_response_headers(
+    headers: &BTreeMap<String, String>,
+) -> Result<(), DownloadError> {
+    let Some(content_type) = header_value(headers, "content-type") else {
+        return Ok(());
+    };
+
+    if is_html_content_type(content_type) {
+        return Err(DownloadError::InvalidDownloadResponse {
+            reason: InvalidDownloadResponseReason::HtmlContentType {
+                content_type: content_type.to_owned(),
+            },
+        });
+    }
+
+    Ok(())
+}
+
+fn is_html_content_type(content_type: &str) -> bool {
+    let media_type = content_type
+        .split(';')
+        .next()
+        .unwrap_or(content_type)
+        .trim()
+        .to_ascii_lowercase();
+
+    media_type == "text/html"
+        || media_type == "application/xhtml+xml"
+        || media_type.ends_with("+html")
+}
+
+fn looks_like_html_document(bytes: &[u8]) -> bool {
+    let mut bytes = bytes;
+
+    if bytes.starts_with(b"\xEF\xBB\xBF") {
+        bytes = &bytes[3..];
+    }
+
+    while let Some((first, rest)) = bytes.split_first() {
+        if !first.is_ascii_whitespace() {
+            break;
+        }
+
+        bytes = rest;
+    }
+
+    let prefix_len = bytes.len().min(128);
+    let prefix = String::from_utf8_lossy(&bytes[..prefix_len]).to_ascii_lowercase();
+
+    prefix.starts_with("<!doctype html")
+        || prefix.starts_with("<html")
+        || prefix.starts_with("<head")
+        || prefix.starts_with("<body")
 }
 
 #[cfg(test)]
@@ -873,6 +961,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rejects_html_download_content_type() {
+        let headers = BTreeMap::from([(
+            "Content-Type".to_owned(),
+            "text/html; charset=UTF-8".to_owned(),
+        )]);
+
+        let err = validate_download_response_headers(&headers).unwrap_err();
+
+        assert!(matches!(
+            err,
+            DownloadError::InvalidDownloadResponse {
+                reason: InvalidDownloadResponseReason::HtmlContentType { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn detects_html_download_body() {
+        assert!(looks_like_html_document(
+            b"\xef\xbb\xbf  \n<!DOCTYPE html><html><body>not found</body></html>"
+        ));
+        assert!(looks_like_html_document(
+            b"<html><head><title>not found</title></head>"
+        ));
+        assert!(!looks_like_html_document(b"PK\x03\x04<html"));
+    }
+
     fn download_metadata(
         file_index: usize,
         file_kind: DownloadFileKind,
@@ -984,6 +1100,31 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, DownloadError::InvalidFileName { .. }));
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_html_first_chunk_before_staging_it() {
+        let dir = test_dir("html-response");
+        let mut source = ScriptedSource::new(vec![Ok(vec![
+            b"<!DOCTYPE html><html><body>DLsite error</body></html>".to_vec(),
+        ])]);
+        let request = request(&dir, "RJ123456.zip", Some(1024));
+
+        let err = download_file(&mut source, &request, &CancellationToken::new(), |_| {})
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            DownloadError::InvalidDownloadResponse {
+                reason: InvalidDownloadResponseReason::HtmlDocumentBody
+            }
+        ));
+        assert_eq!(source.starts(), vec![0]);
+        assert!(!dir.join("RJ123456.zip").exists());
+        assert!(!staging_dir_for(&dir).join("RJ123456.zip").exists());
 
         std::fs::remove_dir_all(dir).unwrap();
     }
