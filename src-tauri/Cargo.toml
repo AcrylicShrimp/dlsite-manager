@@ -1,51 +1,36 @@
 [package]
 name = "dlsite-manager"
-version = "2.1.1"
-description = "DLsite Manager"
+version = "3.0.0-rc.1"
+description = "Desktop manager for DLsite works and libraries."
 authors = ["AcrylicShrimp"]
-license = "MIT"
-repository = "https://github.com/AcrylicShrimp/dlsite-manager"
 edition = "2021"
-rust-version = "1.57"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "dlsite_manager_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [build-dependencies]
-tauri-build = { version = "2.0.5", features = [] }
+tauri-build = { version = "2", features = [] }
 
 [dependencies]
-anyhow = { version = "1" }
-chrono = { version = "0.4", features = ["serde"] }
-cookie_store = "0.21"
-flexi_logger = "0.28"
-futures = { version = "0.3" }
-lazy_static = { version = "1" }
-log = "0.4"
-parking_lot = { version = "0.12" }
-reqwest = { version = "0.12", features = ["cookies", "json"] }
-reqwest_cookie_store = { version = "0.8" }
-rusqlite = { version = "0.31", features = ["bundled", "chrono", "array"] }
-serde_json = { version = "1.0" }
-serde_rusqlite = { version = "0.35" }
-serde = { version = "1.0", features = ["derive"] }
-scraper = { version = "0.19" }
-tauri = { version = "2.2.5", features = ["tray-icon"] }
-tauri-plugin-dialog = "2.2.0"
-tauri-plugin-opener = "2.2.5"
-thiserror = { version = "1" }
-tokio = { version = "1", features = ["full"] }
-url = "2"
-unrar = { version = "0.5" }
-zip-extract = { git = "https://github.com/AcrylicShrimp/zip-extract", tag="v1.3.0" }
-
-[features]
-# this feature is used for production builds or when `devPath` points to the filesystem
-# DO NOT REMOVE!!
-custom-protocol = ["tauri/custom-protocol"]
-
-[profile.release]
-panic = "abort" # Strip expensive panic clean-up logic
-codegen-units = 1 # Compile crates one after another so the compiler can optimize better
-lto = true # Enables link to optimizations
-opt-level = "s" # Optimize for binary size
-strip = true # Remove debug symbols
+dm-api = { path = "../crates/dm-api" }
+dm-audit = { path = "../crates/dm-audit" }
+dm-credentials = { path = "../crates/dm-credentials" }
+dm-download = { path = "../crates/dm-download" }
+dm-jobs = { path = "../crates/dm-jobs" }
+dm-library = { path = "../crates/dm-library" }
+dm-storage = { path = "../crates/dm-storage" }
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["sync"] }
+tauri-plugin-dialog = "2"
+tracing = "0"
+tracing-appender = "0"
+tracing-subscriber = { version = "0", features = ["env-filter", "fmt", "json"] }

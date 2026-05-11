@@ -1,34 +1,31 @@
 import { defineConfig } from "vite";
 import { sveltekit } from "@sveltejs/kit/vite";
-// import { visualizer } from "rollup-plugin-visualizer";
 
-// https://vitejs.dev/config/
-export default defineConfig({
-  plugins: [
-    sveltekit(),
-    // visualizer({
-    //   emitFile: true,
-    //   filename: "stats.html",
-    // }),
-  ],
+const host = process.env.TAURI_DEV_HOST;
+
+// https://vite.dev/config/
+export default defineConfig(async () => ({
+  plugins: [sveltekit()],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
-  // prevent vite from obscuring rust errors
+  //
+  // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
-  // tauri expects a fixed port, fail if that port is not available
+  // 2. tauri expects a fixed port, fail if that port is not available
   server: {
     port: 1420,
     strictPort: true,
+    host: host || "127.0.0.1",
+    hmr: host
+      ? {
+          protocol: "ws",
+          host,
+          port: 1421,
+        }
+      : undefined,
+    watch: {
+      // 3. tell Vite to ignore watching `src-tauri`
+      ignored: ["**/src-tauri/**"],
+    },
   },
-  // to make use of `TAURI_DEBUG` and other env variables
-  // https://tauri.studio/v1/api/config#buildconfig.beforedevcommand
-  envPrefix: ["VITE_", "TAURI_"],
-  build: {
-    // Tauri supports es2021
-    target: ["es2021", "chrome100", "safari13"],
-    // don't minify for debug builds
-    minify: !process.env.TAURI_DEBUG ? "esbuild" : false,
-    // produce sourcemaps for debug builds
-    sourcemap: !!process.env.TAURI_DEBUG,
-  },
-});
+}));

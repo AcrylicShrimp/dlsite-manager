@@ -1,7 +1,7 @@
 {
   "name": "dlsite-manager",
-  "private": true,
-  "version": "2.1.1",
+  "version": "3.0.0-rc.1",
+  "description": "Desktop manager for DLsite works and libraries.",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
@@ -11,24 +11,21 @@
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "tauri"
   },
+  "license": "MIT",
   "dependencies": {
-    "@tauri-apps/api": "^2.2.0"
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-opener": "^2"
   },
   "devDependencies": {
-    "@sveltejs/adapter-static": "^2.0",
-    "@sveltejs/kit": "^1.27",
-    "@tauri-apps/cli": "^2.2.7",
-    "@types/lodash": "^4.14",
-    "autoprefixer": "^10.4",
-    "lodash": "^4.17.21",
-    "postcss": "^8.4",
-    "rollup-plugin-visualizer": "^5.9",
-    "svelte": "^4.2",
-    "svelte-check": "^3.5",
-    "svelte-preprocess": "^5.0",
-    "tailwindcss": "^3.3",
-    "tslib": "^2.6",
-    "typescript": "^4.8.4",
-    "vite": "^4.5"
+    "@sveltejs/adapter-static": "^3.0.6",
+    "@sveltejs/kit": "^2.9.0",
+    "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^25.6.0",
+    "svelte": "^5.0.0",
+    "svelte-check": "^4.0.0",
+    "typescript": "~5.6.2",
+    "vite": "^6.0.3"
   }
 }

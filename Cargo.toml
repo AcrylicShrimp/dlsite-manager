@@ -1,0 +1,13 @@
+[workspace]
+members = [
+    "crates/dm-archive",
+    "crates/dm-audit",
+    "crates/dm-api",
+    "crates/dm-credentials",
+    "crates/dm-download",
+    "crates/dm-jobs",
+    "crates/dm-library",
+    "crates/dm-storage",
+    "src-tauri",
+]
+resolver = "3"

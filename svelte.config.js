@@ -1,23 +1,17 @@
-import staticAdapter from "@sveltejs/adapter-static";
-import preprocess from "svelte-preprocess";
+// Tauri doesn't have a Node.js server to do proper SSR
+// so we use adapter-static with a fallback to index.html to put the site in SPA mode
+// See: https://svelte.dev/docs/kit/single-page-apps
+// See: https://v2.tauri.app/start/frontend/sveltekit/ for more info
+import adapter from "@sveltejs/adapter-static";
+import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
-  // Consult https://github.com/sveltejs/svelte-preprocess
-  // for more information about preprocessors
-  preprocess: preprocess({
-    postcss: true,
-  }),
-
+  preprocess: vitePreprocess(),
   kit: {
-    adapter: staticAdapter({
-      pages: "build",
-      assets: "build",
-      fallback: "app.html",
+    adapter: adapter({
+      fallback: "index.html",
     }),
-    alias: {
-      "@app/*": "src/*",
-    },
   },
 };
 
