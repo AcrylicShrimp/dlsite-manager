@@ -4315,10 +4315,13 @@
 
   .detail-grid button,
   .detail-credit-list button {
+    height: auto;
     min-height: 0;
+    min-width: 0;
     padding: 0;
     border: 0;
     border-radius: 3px;
+    color: inherit;
     background: transparent;
     text-align: left;
   }
@@ -4339,7 +4342,7 @@
 
   .detail-credit-list {
     display: grid;
-    gap: 7px;
+    gap: 12px;
   }
 
   .detail-credit-list strong.missing {
