@@ -4521,7 +4521,8 @@
   }
 
   .settings-panel {
-    max-width: 760px;
+    width: 100%;
+    min-width: 0;
   }
 
   .accounts-layout {

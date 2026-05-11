@@ -2,6 +2,7 @@
 
 ## 2026-05-11
 
+- Let the Settings panel fill the workspace width by removing its fixed 760px cap and preserving min-width constraints for path fields. Validation: `pnpm check`, `pnpm build`, and `git diff -- src/routes/+page.svelte` passed. Did not restart or stop the already-running dev process per user preference.
 - Raised the toast stack above all modal/dialog layers so copy/status notifications stay visible and dismissible while product detail or other dialogs are open. Validation: `pnpm check`, `pnpm build`, and `git diff --check` passed. Did not restart or stop the already-running dev process per user preference.
 - Removed the separate product-detail `Copy title` button. The detail title itself is now a styled copy target with title-variant hover text, keeping the modal header cleaner while preserving keyboard focus behavior. Validation: `pnpm check`, `pnpm build`, and `git diff --check` passed. Did not restart or stop the already-running dev process per user preference.
 - Tightened product detail label/value spacing by overriding global button height inside detail fields and using a consistent row gap for credit rows. This removes invisible 38px button-height padding that made Identity and Credits spacing inconsistent. Validation: `pnpm check`, `pnpm build`, and `git diff --check` passed. Did not restart or stop the already-running dev process per user preference.
