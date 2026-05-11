@@ -317,6 +317,7 @@ pub struct ProductListItem {
     pub work_type: Option<String>,
     pub age_category: Option<String>,
     pub thumbnail_url: Option<String>,
+    pub content_size_bytes: Option<u64>,
     pub published_at: Option<String>,
     pub updated_at: Option<String>,
     pub earliest_purchased_at: Option<String>,
@@ -682,6 +683,7 @@ impl Storage {
                 work_type: row.try_get("work_type")?,
                 age_category: row.try_get("age_category")?,
                 thumbnail_url: row.try_get("thumbnail_url")?,
+                content_size_bytes: product_content_size_from_raw_json(&raw_json),
                 published_at: row.try_get("published_at")?,
                 updated_at: row.try_get("updated_at")?,
                 earliest_purchased_at: row.try_get("earliest_purchased_at")?,
@@ -1494,6 +1496,19 @@ fn product_credit_groups_from_raw_json(raw_json: &str) -> Vec<ProductCreditGroup
         .collect()
 }
 
+fn product_content_size_from_raw_json(raw_json: &str) -> Option<u64> {
+    let value = serde_json::from_str::<serde_json::Value>(raw_json).ok()?;
+    json_value_as_u64(value.get("content_size")?)
+}
+
+fn json_value_as_u64(value: &serde_json::Value) -> Option<u64> {
+    match value {
+        serde_json::Value::Number(number) => number.as_u64(),
+        serde_json::Value::String(value) => value.parse::<u64>().ok(),
+        _ => None,
+    }
+}
+
 fn credit_group_templates() -> Vec<(&'static str, &'static str, Vec<String>)> {
     vec![
         ("voice", "CV", Vec::new()),
@@ -2125,6 +2140,34 @@ mod tests {
             page.products[0].credit_groups[5].names,
             vec!["Other One".to_owned(), "Unknown Credit".to_owned()]
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn product_list_includes_content_size_from_raw_json() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-1",
+                vec![work_with_raw_json(
+                    "RJ000001",
+                    "Sized Work",
+                    "Maker One",
+                    "2026-01-01T00:00:00Z",
+                    r#"{"workno":"RJ000001","content_size":123456}"#,
+                )],
+                vec![account_work("RJ000001", "2026-02-01T00:00:00Z")],
+            ))
+            .await?;
+
+        let page = storage.list_products(&ProductListQuery::default()).await?;
+
+        assert_eq!(page.products[0].content_size_bytes, Some(123456));
 
         Ok(())
     }

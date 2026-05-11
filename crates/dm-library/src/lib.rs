@@ -247,7 +247,7 @@ impl Library {
             )
             .await?;
 
-        let requested_count = selection.work_ids.len();
+        let requested_count = selection.items.len();
         request.emit(BulkWorkDownloadProgress::Selected {
             total_count: selection.total_count,
             requested_count,
@@ -264,9 +264,10 @@ impl Library {
             failed_works: Vec::new(),
         };
 
-        for (index, work_id) in selection.work_ids.into_iter().enumerate() {
+        for (index, item) in selection.items.into_iter().enumerate() {
             request.check_cancelled()?;
             let current = index + 1;
+            let work_id = item.work_id;
 
             request.emit(BulkWorkDownloadProgress::WorkStarted {
                 work_id: work_id.clone(),
@@ -346,7 +347,7 @@ impl Library {
     pub async fn preview_download_products_with_source<S>(
         &self,
         request: BulkWorkDownloadPreviewRequest<'_>,
-        source: &S,
+        _source: &S,
     ) -> Result<BulkWorkDownloadPreview>
     where
         S: WorkDownloadSource + Sync,
@@ -361,7 +362,7 @@ impl Library {
                 request.cancellation_token,
             )
             .await?;
-        let requested_count = selection.work_ids.len();
+        let requested_count = selection.items.len();
         request.emit(BulkWorkDownloadPreviewProgress::Selected {
             total_count: selection.total_count,
             requested_count,
@@ -379,128 +380,53 @@ impl Library {
             works: Vec::new(),
             failed_works: Vec::new(),
         };
-        let mut logged_in_account_id: Option<String> = None;
-
-        for (index, work_id) in selection.work_ids.into_iter().enumerate() {
+        for (index, item) in selection.items.into_iter().enumerate() {
             request.check_cancelled()?;
             let current = index + 1;
+            let work_id = item.work_id;
             request.emit(BulkWorkDownloadPreviewProgress::WorkStarted {
                 work_id: work_id.clone(),
                 current,
                 total: requested_count,
             });
-            let account = match self
-                .download_account_for_work_selection(&work_id, &request.query)
-                .await
-            {
-                Ok(account) => account,
-                Err(error) => {
-                    let error_code = error.failure_code().to_owned();
-                    let error_message = error.to_string();
 
-                    preview.failed_count += 1;
-                    preview.failed_works.push(BulkWorkDownloadFailure {
-                        work_id: work_id.clone(),
-                        error_code: error_code.clone(),
-                        error_message: error_message.clone(),
-                    });
-                    request.emit(BulkWorkDownloadPreviewProgress::WorkFailed {
-                        work_id,
-                        current,
-                        total: requested_count,
-                        error_code,
-                        error_message,
-                    });
-                    continue;
-                }
-            };
+            if let Some(content_size_bytes) = item.content_size_bytes {
+                let work =
+                    self.preview_work_download_from_cached_size(&work_id, content_size_bytes);
 
-            if logged_in_account_id.as_deref() != Some(account.id.as_str()) {
-                if let Err(error) = self.login_download_account(&account, source).await {
-                    let error_code = error.failure_code().to_owned();
-                    let error_message = error.to_string();
-
-                    preview.failed_count += 1;
-                    preview.failed_works.push(BulkWorkDownloadFailure {
-                        work_id: work_id.clone(),
-                        error_code: error_code.clone(),
-                        error_message: error_message.clone(),
-                    });
-                    request.emit(BulkWorkDownloadPreviewProgress::WorkFailed {
-                        work_id,
-                        current,
-                        total: requested_count,
-                        error_code,
-                        error_message,
-                    });
-                    logged_in_account_id = None;
-                    continue;
-                }
-
-                logged_in_account_id = Some(account.id.clone());
+                preview.planned_count += 1;
+                preview.known_expected_bytes = preview
+                    .known_expected_bytes
+                    .saturating_add(work.known_expected_bytes);
+                preview.total_expected_bytes = match preview.total_expected_bytes {
+                    Some(total) => Some(total.saturating_add(content_size_bytes)),
+                    None => None,
+                };
+                preview.works.push(work);
+                request.emit(BulkWorkDownloadPreviewProgress::WorkPlanned {
+                    work_id,
+                    current,
+                    total: requested_count,
+                    known_expected_bytes: content_size_bytes,
+                    total_expected_bytes: Some(content_size_bytes),
+                    unknown_size_count: 0,
+                });
+                continue;
             }
 
-            match self
-                .preview_work_download_with_source(&work_id, &request, source)
-                .await
-            {
-                Ok(work) => {
-                    preview.planned_count += 1;
-                    let known_expected_bytes = work.known_expected_bytes;
-                    let total_expected_bytes = work.total_expected_bytes;
-                    let unknown_size_count = work.unknown_size_count;
-                    preview.known_expected_bytes = preview
-                        .known_expected_bytes
-                        .saturating_add(known_expected_bytes);
-                    preview.unknown_size_count = preview
-                        .unknown_size_count
-                        .saturating_add(unknown_size_count);
-
-                    preview.total_expected_bytes =
-                        match (preview.total_expected_bytes, total_expected_bytes) {
-                            (Some(total), Some(work_total)) => {
-                                Some(total.saturating_add(work_total))
-                            }
-                            _ => None,
-                        };
-                    preview.works.push(work);
-                    request.emit(BulkWorkDownloadPreviewProgress::WorkPlanned {
-                        work_id,
-                        current,
-                        total: requested_count,
-                        known_expected_bytes,
-                        total_expected_bytes,
-                        unknown_size_count,
-                    });
-                }
-                Err(error)
-                    if matches!(error, LibraryError::Cancelled)
-                        || matches!(
-                            error,
-                            LibraryError::Download(dm_download::DownloadError::Cancelled)
-                        ) =>
-                {
-                    return Err(error);
-                }
-                Err(error) => {
-                    let error_code = error.failure_code().to_owned();
-                    let error_message = error.to_string();
-
-                    preview.failed_count += 1;
-                    preview.failed_works.push(BulkWorkDownloadFailure {
-                        work_id: work_id.clone(),
-                        error_code: error_code.clone(),
-                        error_message: error_message.clone(),
-                    });
-                    request.emit(BulkWorkDownloadPreviewProgress::WorkFailed {
-                        work_id,
-                        current,
-                        total: requested_count,
-                        error_code,
-                        error_message,
-                    });
-                }
-            }
+            let work = self.preview_work_download_from_unknown_cached_size(&work_id);
+            preview.planned_count += 1;
+            preview.unknown_size_count = preview.unknown_size_count.saturating_add(1);
+            preview.total_expected_bytes = None;
+            preview.works.push(work);
+            request.emit(BulkWorkDownloadPreviewProgress::WorkPlanned {
+                work_id,
+                current,
+                total: requested_count,
+                known_expected_bytes: 0,
+                total_expected_bytes: None,
+                unknown_size_count: 1,
+            });
         }
 
         request.emit(BulkWorkDownloadPreviewProgress::Completed {
@@ -618,7 +544,10 @@ impl Library {
                     }
                 }
 
-                work_ids.push(product.work_id);
+                work_ids.push(BulkWorkDownloadSelectionItem {
+                    work_id: product.work_id,
+                    content_size_bytes: product.content_size_bytes,
+                });
             }
 
             if page_len == 0 || page_len < query.limit as usize {
@@ -631,85 +560,41 @@ impl Library {
         Ok(BulkWorkDownloadSelection {
             total_count,
             skipped_downloaded_count,
-            work_ids,
+            items: work_ids,
         })
     }
 
-    async fn preview_work_download_with_source<S>(
+    fn preview_work_download_from_cached_size(
         &self,
         work_id: &str,
-        request: &BulkWorkDownloadPreviewRequest<'_>,
-        source: &S,
-    ) -> Result<BulkWorkDownloadPreviewWork>
-    where
-        S: WorkDownloadSource + Sync,
-    {
-        request.check_cancelled()?;
-        let work_id = WorkId::from(work_id.to_owned());
-        let plan = source.download_plan(&work_id).await?;
-        let mut known_expected_bytes = 0u64;
-        let mut total_expected_bytes = Some(0u64);
-        let mut unknown_size_count = 0usize;
-        let mut files = Vec::with_capacity(plan.files.len());
-
-        for (file_index, file) in plan.files.iter().enumerate() {
-            request.check_cancelled()?;
-            let metadata = source.download_file_metadata(file_index, file).await?;
-
-            if let Some(expected_size) = metadata.expected_size {
-                known_expected_bytes = known_expected_bytes.saturating_add(expected_size);
-                total_expected_bytes =
-                    total_expected_bytes.map(|total| total.saturating_add(expected_size));
-            } else {
-                unknown_size_count += 1;
-                total_expected_bytes = None;
-            }
-
-            files.push(BulkWorkDownloadPreviewFile {
-                file_index: metadata.file_index,
-                file_name: metadata.file_name,
-                expected_size: metadata.expected_size,
-            });
+        content_size_bytes: u64,
+    ) -> BulkWorkDownloadPreviewWork {
+        BulkWorkDownloadPreviewWork {
+            work_id: work_id.to_owned(),
+            file_count: 1,
+            known_expected_bytes: content_size_bytes,
+            total_expected_bytes: Some(content_size_bytes),
+            unknown_size_count: 0,
+            files: vec![BulkWorkDownloadPreviewFile {
+                file_index: 0,
+                file_name: "DLsite content".to_owned(),
+                expected_size: Some(content_size_bytes),
+            }],
         }
-
-        Ok(BulkWorkDownloadPreviewWork {
-            work_id: work_id.as_ref().to_owned(),
-            file_count: files.len(),
-            known_expected_bytes,
-            total_expected_bytes,
-            unknown_size_count,
-            files,
-        })
     }
 
-    async fn download_account_for_work_selection(
+    fn preview_work_download_from_unknown_cached_size(
         &self,
         work_id: &str,
-        query: &ProductListQuery,
-    ) -> Result<Account> {
-        self.storage
-            .download_account_for_work(work_id, query.account_id.as_deref())
-            .await
-            .map_err(|error| match error {
-                StorageError::NotFound { .. } => {
-                    LibraryError::DownloadAccountNotFound(work_id.to_owned())
-                }
-                error => LibraryError::Storage(error),
-            })
-    }
-
-    async fn login_download_account<S>(&self, account: &Account, source: &S) -> Result<()>
-    where
-        S: WorkDownloadSource + Sync,
-    {
-        let login_name = account
-            .login_name
-            .as_deref()
-            .ok_or_else(|| LibraryError::MissingLoginName(account.id.clone()))?;
-        let password = self.password_for_account(account, None)?;
-        let credentials = Credentials::new(login_name, password);
-
-        source.login(&credentials).await
+    ) -> BulkWorkDownloadPreviewWork {
+        BulkWorkDownloadPreviewWork {
+            work_id: work_id.to_owned(),
+            file_count: 0,
+            known_expected_bytes: 0,
+            total_expected_bytes: None,
+            unknown_size_count: 1,
+            files: Vec::new(),
+        }
     }
 
     async fn sync_account_inner<S>(
@@ -1124,7 +1009,12 @@ pub trait WorkDownloadProgressSink: Send + Sync {
 struct BulkWorkDownloadSelection {
     total_count: u64,
     skipped_downloaded_count: usize,
-    work_ids: Vec<String>,
+    items: Vec<BulkWorkDownloadSelectionItem>,
+}
+
+struct BulkWorkDownloadSelectionItem {
+    work_id: String,
+    content_size_bytes: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -1985,6 +1875,8 @@ mod tests {
             published_at: Some(published_at),
             updated_at: Some(published_at),
             tags: Vec::new(),
+            content_size: Some(10),
+            extra: BTreeMap::new(),
         }
     }
 

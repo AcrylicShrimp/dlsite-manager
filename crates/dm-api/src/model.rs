@@ -1,5 +1,6 @@
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
 use std::{collections::BTreeMap, fmt};
 use url::Url;
 
@@ -132,6 +133,10 @@ pub struct Work {
     pub updated_at: Option<DateTime<Utc>>,
     #[serde(default, deserialize_with = "deserialize_vec_or_default")]
     pub tags: Vec<WorkTag>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_size: Option<u64>,
+    #[serde(flatten, default)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 pub type LocalizedText = BTreeMap<Language, String>;
