@@ -4,7 +4,11 @@
   import { listen } from "@tauri-apps/api/event";
   import { downloadDir } from "@tauri-apps/api/path";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import { onDestroy, onMount } from "svelte";
+
+  const GITHUB_URL = "https://github.com/AcrylicShrimp/dlsite-manager";
+  const DLSITE_URL = "https://www.dlsite.com/";
 
   type AppSettings = {
     libraryRoot: string | null;
@@ -1331,6 +1335,14 @@
       await invoke("open_audit_log_dir");
     } catch (err) {
       notifyError(errorMessage(err));
+    }
+  }
+
+  async function openExternalUrl(url: string, label: string) {
+    try {
+      await openUrl(url);
+    } catch (err) {
+      notifyError(`Failed to open ${label}: ${errorMessage(err)}`);
     }
   }
 
@@ -3093,6 +3105,22 @@
         <section class="settings-panel about-panel" aria-label="About">
           <div class="panel-title">
             <h2>About</h2>
+            <div class="panel-actions about-actions">
+              <button
+                class="secondary small"
+                type="button"
+                onclick={() => openExternalUrl(GITHUB_URL, "GitHub")}
+              >
+                GitHub
+              </button>
+              <button
+                class="secondary small"
+                type="button"
+                onclick={() => openExternalUrl(DLSITE_URL, "DLsite")}
+              >
+                DLsite
+              </button>
+            </div>
           </div>
           <dl class="about-grid">
             <dt>Application</dt>
