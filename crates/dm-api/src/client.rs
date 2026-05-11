@@ -581,7 +581,9 @@ fn parse_serial_download_page_from_raw(
 }
 
 fn is_absent_optional_serial_page_status(status: u16) -> bool {
-    status == StatusCode::INTERNAL_SERVER_ERROR.as_u16() || (300..=399).contains(&status)
+    status == StatusCode::NOT_FOUND.as_u16()
+        || status == StatusCode::INTERNAL_SERVER_ERROR.as_u16()
+        || (300..=399).contains(&status)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1112,6 +1114,7 @@ mod tests {
     #[test]
     fn detects_absent_optional_serial_page_statuses() {
         assert!(is_absent_optional_serial_page_status(302));
+        assert!(is_absent_optional_serial_page_status(404));
         assert!(is_absent_optional_serial_page_status(500));
         assert!(!is_absent_optional_serial_page_status(200));
     }
