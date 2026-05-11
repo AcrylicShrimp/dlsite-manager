@@ -1680,6 +1680,91 @@ fn copy_dir_recursively(source: &Path, destination: &Path) -> std::io::Result<()
     Ok(())
 }
 
+pub const DL_SITE_WORK_ID_PREFIXES: &[&str] = &["RJ", "VJ", "BJ"];
+const WORK_ID_MIN_DIGITS: usize = 6;
+const WORK_ID_MAX_DIGITS: usize = 8;
+
+pub fn detect_work_ids_in_text(text: &str) -> Vec<WorkId> {
+    let text = text.to_ascii_uppercase();
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    let mut seen = BTreeSet::new();
+    let mut detected = Vec::new();
+
+    while index + 2 + WORK_ID_MIN_DIGITS <= bytes.len() {
+        let Some(prefix) = work_id_prefix_at(bytes, index) else {
+            index += 1;
+            continue;
+        };
+
+        if !is_work_id_boundary_before(bytes, index) {
+            index += 1;
+            continue;
+        }
+
+        let digit_start = index + prefix.len();
+        let mut digit_end = digit_start;
+
+        while digit_end < bytes.len() && bytes[digit_end].is_ascii_digit() {
+            digit_end += 1;
+        }
+
+        let digit_count = digit_end.saturating_sub(digit_start);
+        let is_valid = (WORK_ID_MIN_DIGITS..=WORK_ID_MAX_DIGITS).contains(&digit_count)
+            && is_work_id_boundary_after(bytes, digit_end);
+
+        if is_valid {
+            let digits =
+                std::str::from_utf8(&bytes[digit_start..digit_end]).expect("digits are ascii");
+            let work_id = format!("{prefix}{digits}");
+
+            if seen.insert(work_id.clone()) {
+                detected.push(WorkId::from(work_id));
+            }
+
+            index = digit_end;
+        } else {
+            index += 1;
+        }
+    }
+
+    detected
+}
+
+pub fn detect_work_ids_in_path(path: impl AsRef<Path>) -> Vec<WorkId> {
+    path.as_ref()
+        .file_name()
+        .and_then(|file_name| file_name.to_str())
+        .map(detect_work_ids_in_text)
+        .unwrap_or_default()
+}
+
+pub fn detect_unique_work_id_in_path(path: impl AsRef<Path>) -> Option<WorkId> {
+    let mut detected = detect_work_ids_in_path(path);
+
+    if detected.len() == 1 {
+        detected.pop()
+    } else {
+        None
+    }
+}
+
+fn work_id_prefix_at(bytes: &[u8], index: usize) -> Option<&'static str> {
+    DL_SITE_WORK_ID_PREFIXES.iter().copied().find(|prefix| {
+        bytes
+            .get(index..index + prefix.len())
+            .is_some_and(|candidate| candidate == prefix.as_bytes())
+    })
+}
+
+fn is_work_id_boundary_before(bytes: &[u8], index: usize) -> bool {
+    index == 0 || !bytes[index - 1].is_ascii_alphanumeric()
+}
+
+fn is_work_id_boundary_after(bytes: &[u8], index: usize) -> bool {
+    index == bytes.len() || !bytes[index].is_ascii_alphanumeric()
+}
+
 fn now_string() -> String {
     datetime_to_string(Utc::now())
 }
@@ -2095,6 +2180,73 @@ mod tests {
 
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn detects_work_ids_in_flexible_folder_names() {
+        assert_eq!(
+            detect_work_ids_in_text("[RJ01005844] Soothing Voice")
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>(),
+            vec!["RJ01005844"]
+        );
+        assert_eq!(
+            detect_work_ids_in_text("title rj123456 extra")
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>(),
+            vec!["RJ123456"]
+        );
+        assert_eq!(
+            detect_work_ids_in_text("commercial VJ01001165 and book BJ123456")
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>(),
+            vec!["VJ01001165", "BJ123456"]
+        );
+    }
+
+    #[test]
+    fn work_id_detection_requires_boundaries_and_known_lengths() {
+        for value in [
+            "XRJ123456",
+            "RJ123456A",
+            "RJ12345",
+            "RJ123456789",
+            "AB123456",
+        ] {
+            assert_eq!(detect_work_ids_in_text(value), Vec::<WorkId>::new());
+        }
+    }
+
+    #[test]
+    fn work_id_detection_deduplicates_in_first_seen_order() {
+        assert_eq!(
+            detect_work_ids_in_text("RJ000001 / rj000001 / VJ000001")
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>(),
+            vec!["RJ000001", "VJ000001"]
+        );
+    }
+
+    #[test]
+    fn detects_unique_work_id_from_path_file_name() {
+        let path = Path::new("/library/[RJ01005844] Soothing Voice");
+
+        assert_eq!(
+            detect_unique_work_id_in_path(path).map(|id| id.to_string()),
+            Some("RJ01005844".to_owned())
+        );
+        assert_eq!(
+            detect_work_ids_in_path("/library/no-id"),
+            Vec::<WorkId>::new()
+        );
+        assert_eq!(
+            detect_unique_work_id_in_path("/library/RJ000001 VJ000001"),
+            None
+        );
     }
 
     #[tokio::test]
