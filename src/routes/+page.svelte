@@ -2556,7 +2556,7 @@
     {#if activeView === "library"}
       <section class="product-area" aria-label="Library">
         <div class="library-controls">
-          <form class="library-filter-panel" onsubmit={searchProducts}>
+          <form class="library-search-panel" onsubmit={searchProducts}>
             <div class="library-search-row">
               <input
                 type="search"
@@ -2579,116 +2579,6 @@
                 {libraryFiltersOpen ? "Hide Filters" : "Show Filters"}
               </button>
             </div>
-
-            {#if libraryFiltersOpen}
-              <div id="library-filter-grid" class="filter-grid">
-                <div class="filter-group sort-filter">
-                  <span>Sort</span>
-                  <div class="toggle-row">
-                    {#each SORT_OPTIONS as [value, label] (value)}
-                      <button
-                        class:active={productSort === value}
-                        type="button"
-                        onclick={() => setProductSort(value)}
-                      >
-                        {label}
-                      </button>
-                    {/each}
-                  </div>
-                </div>
-
-                <div class="filter-group">
-                  <span>Accounts</span>
-                  <div class="toggle-row">
-                    <button
-                      class:active={selectedAccountIds.length === 0}
-                      type="button"
-                      onclick={clearAccountFilters}
-                    >
-                      All
-                    </button>
-                    {#each accounts as account (account.id)}
-                      <button
-                        class:active={selectedAccountIds.includes(account.id)}
-                        type="button"
-                        title={account.loginName ?? account.label}
-                        onclick={() => toggleAccountFilter(account.id)}
-                      >
-                        {account.label}
-                      </button>
-                    {/each}
-                  </div>
-                </div>
-
-                <div class="filter-group">
-                  <span>Age</span>
-                  <div class="toggle-row">
-                    <button
-                      class:active={selectedAgeCategories.length === 0}
-                      type="button"
-                      onclick={clearAgeFilters}
-                    >
-                      Any
-                    </button>
-                    {#each AGE_FILTERS as [value, label] (value)}
-                      <button
-                        class:active={selectedAgeCategories.includes(value)}
-                        type="button"
-                        onclick={() => toggleAgeFilter(value)}
-                      >
-                        {label}
-                      </button>
-                    {/each}
-                  </div>
-                </div>
-
-                <div class="filter-group">
-                  <span>Type</span>
-                  <div class="toggle-row">
-                    <button
-                      class:active={selectedProductTypes.length === 0}
-                      type="button"
-                      onclick={clearTypeFilters}
-                    >
-                      Any
-                    </button>
-                    {#each TYPE_FILTERS as [value, label] (value)}
-                      <button
-                        class:active={selectedProductTypes.includes(value)}
-                        type="button"
-                        onclick={() => toggleProductTypeFilter(value)}
-                      >
-                        {label}
-                      </button>
-                    {/each}
-                  </div>
-                </div>
-
-                <div class="filter-group maker-filter">
-                  <span>Makers</span>
-                  <div class="toggle-row">
-                    <button
-                      class:active={selectedMakerNames.length === 0}
-                      type="button"
-                      onclick={clearMakerFilters}
-                    >
-                      Any
-                    </button>
-                    {#each productFilterFacets.makers as maker (maker.name)}
-                      <button
-                        class:active={selectedMakerNames.includes(maker.name)}
-                        type="button"
-                        title={`${maker.name} (${maker.count})`}
-                        onclick={() => toggleMakerFilter(maker.name)}
-                      >
-                        {maker.name}
-                        <small>{maker.count}</small>
-                      </button>
-                    {/each}
-                  </div>
-                </div>
-              </div>
-            {/if}
           </form>
 
           <div class="library-actions-panel" aria-label="Library actions">
@@ -2729,6 +2619,116 @@
             </div>
           </div>
         </div>
+
+        {#if libraryFiltersOpen}
+          <div id="library-filter-grid" class="library-filter-panel filter-grid">
+            <div class="filter-group sort-filter">
+              <span>Sort</span>
+              <div class="toggle-row">
+                {#each SORT_OPTIONS as [value, label] (value)}
+                  <button
+                    class:active={productSort === value}
+                    type="button"
+                    onclick={() => setProductSort(value)}
+                  >
+                    {label}
+                  </button>
+                {/each}
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <span>Accounts</span>
+              <div class="toggle-row">
+                <button
+                  class:active={selectedAccountIds.length === 0}
+                  type="button"
+                  onclick={clearAccountFilters}
+                >
+                  All
+                </button>
+                {#each accounts as account (account.id)}
+                  <button
+                    class:active={selectedAccountIds.includes(account.id)}
+                    type="button"
+                    title={account.loginName ?? account.label}
+                    onclick={() => toggleAccountFilter(account.id)}
+                  >
+                    {account.label}
+                  </button>
+                {/each}
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <span>Age</span>
+              <div class="toggle-row">
+                <button
+                  class:active={selectedAgeCategories.length === 0}
+                  type="button"
+                  onclick={clearAgeFilters}
+                >
+                  Any
+                </button>
+                {#each AGE_FILTERS as [value, label] (value)}
+                  <button
+                    class:active={selectedAgeCategories.includes(value)}
+                    type="button"
+                    onclick={() => toggleAgeFilter(value)}
+                  >
+                    {label}
+                  </button>
+                {/each}
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <span>Type</span>
+              <div class="toggle-row">
+                <button
+                  class:active={selectedProductTypes.length === 0}
+                  type="button"
+                  onclick={clearTypeFilters}
+                >
+                  Any
+                </button>
+                {#each TYPE_FILTERS as [value, label] (value)}
+                  <button
+                    class:active={selectedProductTypes.includes(value)}
+                    type="button"
+                    onclick={() => toggleProductTypeFilter(value)}
+                  >
+                    {label}
+                  </button>
+                {/each}
+              </div>
+            </div>
+
+            <div class="filter-group maker-filter">
+              <span>Makers</span>
+              <div class="toggle-row">
+                <button
+                  class:active={selectedMakerNames.length === 0}
+                  type="button"
+                  onclick={clearMakerFilters}
+                >
+                  Any
+                </button>
+                {#each productFilterFacets.makers as maker (maker.name)}
+                  <button
+                    class:active={selectedMakerNames.includes(maker.name)}
+                    type="button"
+                    title={`${maker.name} (${maker.count})`}
+                    onclick={() => toggleMakerFilter(maker.name)}
+                  >
+                    {maker.name}
+                    <small>{maker.count}</small>
+                  </button>
+                {/each}
+              </div>
+            </div>
+          </div>
+        {/if}
 
         <div class="list-header">
           <span>{totalProducts} products</span>
@@ -4892,6 +4892,7 @@
     box-shadow: 0 14px 26px rgb(0 0 0 / 22%);
   }
 
+  .library-search-panel,
   .library-filter-panel,
   .library-actions-panel {
     min-width: 0;
@@ -4899,9 +4900,15 @@
     background: var(--panel-soft);
   }
 
+  .library-search-panel,
   .library-filter-panel {
     display: grid;
-    gap: 12px;
+    gap: 10px;
+  }
+
+  .library-filter-panel {
+    flex: 0 0 auto;
+    border-bottom: 1px solid var(--border);
   }
 
   .library-search-row {
