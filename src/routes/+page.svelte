@@ -3738,7 +3738,7 @@
     position: fixed;
     right: 18px;
     bottom: 18px;
-    z-index: 40;
+    z-index: 120;
     display: grid;
     gap: 8px;
     width: min(380px, calc(100vw - 36px));
