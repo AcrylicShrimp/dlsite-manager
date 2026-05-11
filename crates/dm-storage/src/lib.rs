@@ -4,12 +4,16 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteQueryResult},
     QueryBuilder, Row, Sqlite, SqlitePool, Transaction,
 };
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 const LIBRARY_ROOT_KEY: &str = "library_root";
 const DOWNLOAD_ROOT_KEY: &str = "download_root";
 const MISSING_WORK_DETAIL_STATUS: &str = "missing_from_content_works";
+const CUSTOM_TAG_MAX_CHARS: usize = 64;
 pub const LOCAL_PRODUCT_OWNER_ID: &str = "__local__";
 pub const LOCAL_PRODUCT_OWNER_LABEL: &str = "Local";
 
@@ -27,6 +31,8 @@ pub enum StorageError {
     NotFound { entity: &'static str, id: String },
     #[error("invalid stored value for {field}: {value}")]
     InvalidStoredValue { field: &'static str, value: String },
+    #[error("invalid custom tag {tag:?}: {reason}")]
+    InvalidCustomTag { tag: String, reason: &'static str },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -296,6 +302,8 @@ pub struct ProductListQuery {
     pub age_category: Option<ProductAgeCategory>,
     pub age_categories: Vec<ProductAgeCategory>,
     pub maker_names: Vec<String>,
+    pub custom_tag_names: Vec<String>,
+    pub excluded_custom_tag_names: Vec<String>,
     pub sort: ProductSort,
     pub limit: u32,
     pub offset: u32,
@@ -312,6 +320,8 @@ impl Default for ProductListQuery {
             age_category: None,
             age_categories: Vec::new(),
             maker_names: Vec::new(),
+            custom_tag_names: Vec::new(),
+            excluded_custom_tag_names: Vec::new(),
             sort: ProductSort::LatestPurchaseDesc,
             limit: 100,
             offset: 0,
@@ -328,10 +338,17 @@ pub struct ProductListPage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductFilterFacets {
     pub makers: Vec<ProductMakerFacet>,
+    pub custom_tags: Vec<ProductCustomTagFacet>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductMakerFacet {
+    pub name: String,
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductCustomTagFacet {
     pub name: String,
     pub count: u64,
 }
@@ -350,6 +367,7 @@ pub struct ProductListItem {
     pub earliest_purchased_at: Option<String>,
     pub latest_purchased_at: Option<String>,
     pub credit_groups: Vec<ProductCreditGroup>,
+    pub custom_tags: Vec<ProductCustomTag>,
     pub download: WorkDownloadState,
     pub owners: Vec<ProductOwner>,
 }
@@ -374,6 +392,7 @@ pub struct ProductDetail {
     pub latest_purchased_at: Option<String>,
     pub credit_groups: Vec<ProductCreditGroup>,
     pub tags: Vec<ProductTag>,
+    pub custom_tags: Vec<ProductCustomTag>,
     pub download: WorkDownloadState,
     pub owners: Vec<ProductOwner>,
 }
@@ -394,6 +413,11 @@ pub struct ProductCreditGroup {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductTag {
     pub class: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductCustomTag {
     pub name: String,
 }
 
@@ -653,6 +677,31 @@ impl Storage {
         transaction.commit().await
     }
 
+    pub async fn set_work_custom_tags(
+        &self,
+        work_id: &str,
+        tags: &[String],
+    ) -> Result<Vec<ProductCustomTag>> {
+        let tags = normalize_custom_tags(tags)?;
+        let mut transaction = self.begin_write().await?;
+
+        transaction.set_work_custom_tags(work_id, &tags).await?;
+        transaction.commit().await?;
+
+        Ok(tags
+            .into_iter()
+            .map(|name| ProductCustomTag { name })
+            .collect())
+    }
+
+    pub async fn work_custom_tags(&self, work_id: &str) -> Result<Vec<ProductCustomTag>> {
+        let mut tags_by_work_id = self
+            .work_custom_tags_for_work_ids(&[work_id.to_owned()])
+            .await?;
+
+        Ok(tags_by_work_id.remove(work_id).unwrap_or_default())
+    }
+
     pub async fn list_products(&self, query: &ProductListQuery) -> Result<ProductListPage> {
         let total_count = self.count_products(query).await?;
         let products = self.fetch_product_page(query).await?;
@@ -676,7 +725,7 @@ impl Storage {
         );
 
         push_product_visibility_filter(&mut builder, query);
-        push_product_filters_internal(&mut builder, query, false);
+        push_product_filters_internal(&mut builder, query, false, true);
         builder.push(
             " AND w.maker_name IS NOT NULL
               AND trim(w.maker_name) <> ''
@@ -696,7 +745,38 @@ impl Storage {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        Ok(ProductFilterFacets { makers })
+        let mut builder = QueryBuilder::<Sqlite>::new(
+            "SELECT
+                MIN(wct.name) AS tag_name,
+                COUNT(DISTINCT w.work_id) AS work_count
+             FROM works w
+             JOIN work_custom_tags wct ON wct.work_id = w.work_id
+             WHERE 1 = 1",
+        );
+
+        push_product_visibility_filter(&mut builder, query);
+        push_product_filters_internal(&mut builder, query, true, false);
+        builder.push(
+            " GROUP BY wct.normalized_name
+             ORDER BY work_count DESC, lower(tag_name) ASC, tag_name ASC",
+        );
+
+        let rows = builder.build().fetch_all(&self.pool).await?;
+        let custom_tags = rows
+            .into_iter()
+            .map(|row| {
+                let count: i64 = row.try_get("work_count")?;
+                Ok(ProductCustomTagFacet {
+                    name: row.try_get("tag_name")?,
+                    count: count.max(0) as u64,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(ProductFilterFacets {
+            makers,
+            custom_tags,
+        })
     }
 
     pub async fn product_detail(&self, work_id: &str) -> Result<ProductDetail> {
@@ -765,6 +845,7 @@ impl Storage {
         let raw_json: String = row.try_get("raw_json")?;
         let download = work_download_state_from_product_row(&row)?;
         let mut owners = self.product_owners(work_id).await?;
+        let custom_tags = self.work_custom_tags(work_id).await?;
 
         if owners.is_empty() {
             owners.push(local_product_owner());
@@ -793,6 +874,7 @@ impl Storage {
             latest_purchased_at: row.try_get("latest_purchased_at")?,
             credit_groups: product_credit_groups_from_raw_json(&raw_json),
             tags: product_tags_from_raw_json(&raw_json),
+            custom_tags,
             download,
             owners,
         })
@@ -962,6 +1044,7 @@ impl Storage {
                 earliest_purchased_at: row.try_get("earliest_purchased_at")?,
                 latest_purchased_at: row.try_get("latest_purchased_at")?,
                 credit_groups: product_credit_groups_from_raw_json(&raw_json),
+                custom_tags: Vec::new(),
                 download: work_download_state_from_product_row(&row)?,
                 owners: owner
                     .map(|owner| vec![owner])
@@ -969,7 +1052,56 @@ impl Storage {
             });
         }
 
+        let work_ids = products
+            .iter()
+            .map(|product| product.work_id.clone())
+            .collect::<Vec<_>>();
+        let mut tags_by_work_id = self.work_custom_tags_for_work_ids(&work_ids).await?;
+
+        for product in &mut products {
+            product.custom_tags = tags_by_work_id.remove(&product.work_id).unwrap_or_default();
+        }
+
         Ok(products)
+    }
+
+    async fn work_custom_tags_for_work_ids(
+        &self,
+        work_ids: &[String],
+    ) -> Result<BTreeMap<String, Vec<ProductCustomTag>>> {
+        if work_ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+
+        let mut builder = QueryBuilder::<Sqlite>::new(
+            "SELECT work_id, name
+             FROM work_custom_tags
+             WHERE work_id IN (",
+        );
+
+        for (index, work_id) in work_ids.iter().enumerate() {
+            if index > 0 {
+                builder.push(", ");
+            }
+            builder.push_bind(work_id);
+        }
+
+        builder.push(") ORDER BY work_id ASC, lower(name) ASC, name ASC");
+
+        let rows = builder.build().fetch_all(&self.pool).await?;
+        let mut tags_by_work_id = BTreeMap::<String, Vec<ProductCustomTag>>::new();
+
+        for row in rows {
+            let work_id: String = row.try_get("work_id")?;
+            let name: String = row.try_get("name")?;
+
+            tags_by_work_id
+                .entry(work_id)
+                .or_default()
+                .push(ProductCustomTag { name });
+        }
+
+        Ok(tags_by_work_id)
     }
 }
 
@@ -1257,6 +1389,39 @@ impl WriteTransaction<'_> {
             .bind(work_id)
             .execute(&mut **transaction)
             .await?;
+
+        Ok(())
+    }
+
+    pub async fn set_work_custom_tags(&mut self, work_id: &str, tags: &[String]) -> Result<()> {
+        self.ensure_work_exists(work_id).await?;
+        let transaction = self
+            .transaction
+            .as_mut()
+            .ok_or(StorageError::TransactionFinished)?;
+
+        sqlx::query("DELETE FROM work_custom_tags WHERE work_id = ?1")
+            .bind(work_id)
+            .execute(&mut **transaction)
+            .await?;
+
+        for tag in tags {
+            sqlx::query(
+                "INSERT INTO work_custom_tags (
+                    work_id, name, normalized_name, created_at, updated_at
+                 )
+                 VALUES (
+                    ?1, ?2, ?3,
+                    strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                    strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                 )",
+            )
+            .bind(work_id)
+            .bind(tag)
+            .bind(normalize_custom_tag_key(tag))
+            .execute(&mut **transaction)
+            .await?;
+        }
 
         Ok(())
     }
@@ -1678,13 +1843,14 @@ fn push_product_visibility_filter(builder: &mut QueryBuilder<Sqlite>, query: &Pr
 }
 
 fn push_product_filters(builder: &mut QueryBuilder<Sqlite>, query: &ProductListQuery) {
-    push_product_filters_internal(builder, query, true);
+    push_product_filters_internal(builder, query, true, true);
 }
 
 fn push_product_filters_internal(
     builder: &mut QueryBuilder<Sqlite>,
     query: &ProductListQuery,
     include_maker_filter: bool,
+    include_custom_tag_filters: bool,
 ) {
     builder.push(
         " AND COALESCE(
@@ -1734,6 +1900,44 @@ fn push_product_filters_internal(
         builder.push(")");
     }
 
+    if include_custom_tag_filters {
+        let custom_tag_names = product_custom_tag_names(query);
+        if !custom_tag_names.is_empty() {
+            builder.push(
+                " AND EXISTS (
+                    SELECT 1
+                    FROM work_custom_tags include_wct
+                    WHERE include_wct.work_id = w.work_id
+                        AND include_wct.normalized_name IN (",
+            );
+            for (index, custom_tag_name) in custom_tag_names.iter().enumerate() {
+                if index > 0 {
+                    builder.push(", ");
+                }
+                builder.push_bind(custom_tag_name);
+            }
+            builder.push("))");
+        }
+
+        let excluded_custom_tag_names = product_excluded_custom_tag_names(query);
+        if !excluded_custom_tag_names.is_empty() {
+            builder.push(
+                " AND NOT EXISTS (
+                    SELECT 1
+                    FROM work_custom_tags exclude_wct
+                    WHERE exclude_wct.work_id = w.work_id
+                        AND exclude_wct.normalized_name IN (",
+            );
+            for (index, custom_tag_name) in excluded_custom_tag_names.iter().enumerate() {
+                if index > 0 {
+                    builder.push(", ");
+                }
+                builder.push_bind(custom_tag_name);
+            }
+            builder.push("))");
+        }
+    }
+
     if let Some(search) = query
         .search
         .as_deref()
@@ -1768,6 +1972,15 @@ fn push_product_filters_internal(
                         '$.tags'
                     ) AS tag
                     WHERE json_extract(tag.value, '$.name') LIKE ",
+        );
+        builder.push_bind(pattern.clone());
+        builder.push(
+            " ESCAPE '\\')
+                OR EXISTS (
+                    SELECT 1
+                    FROM work_custom_tags search_wct
+                    WHERE search_wct.work_id = w.work_id
+                        AND search_wct.name LIKE ",
         );
         builder.push_bind(pattern);
         builder.push(" ESCAPE '\\'))");
@@ -1827,6 +2040,75 @@ fn product_maker_names(query: &ProductListQuery) -> Vec<&str> {
     }
 
     names
+}
+
+fn product_custom_tag_names(query: &ProductListQuery) -> Vec<String> {
+    normalize_custom_tags_for_filter(&query.custom_tag_names)
+}
+
+fn product_excluded_custom_tag_names(query: &ProductListQuery) -> Vec<String> {
+    normalize_custom_tags_for_filter(&query.excluded_custom_tag_names)
+}
+
+fn normalize_custom_tags_for_filter(tags: &[String]) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for tag in tags {
+        let normalized = normalize_custom_tag_display(tag);
+
+        if normalized.is_empty() {
+            continue;
+        }
+
+        let key = normalize_custom_tag_key(&normalized);
+        if seen.insert(key.clone()) {
+            names.push(key);
+        }
+    }
+
+    names
+}
+
+fn normalize_custom_tags(tags: &[String]) -> Result<Vec<String>> {
+    let mut normalized_tags = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for tag in tags {
+        let normalized = normalize_custom_tag_display(tag);
+
+        if normalized.is_empty() {
+            continue;
+        }
+
+        if normalized.chars().count() > CUSTOM_TAG_MAX_CHARS {
+            return Err(StorageError::InvalidCustomTag {
+                tag: normalized,
+                reason: "maximum length is 64 characters",
+            });
+        }
+
+        let key = normalize_custom_tag_key(&normalized);
+        if seen.insert(key) {
+            normalized_tags.push(normalized);
+        }
+    }
+
+    normalized_tags.sort_by(|left, right| {
+        left.to_lowercase()
+            .cmp(&right.to_lowercase())
+            .then_with(|| left.cmp(right))
+    });
+
+    Ok(normalized_tags)
+}
+
+fn normalize_custom_tag_display(tag: &str) -> String {
+    tag.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn normalize_custom_tag_key(tag: &str) -> String {
+    normalize_custom_tag_display(tag).to_lowercase()
 }
 
 fn push_unique_str<'a>(values: &mut Vec<&'a str>, value: &'a str) {
@@ -2287,7 +2569,7 @@ mod tests {
             .fetch_one(&storage.pool)
             .await?;
 
-        assert_eq!(migration_count, 4);
+        assert_eq!(migration_count, 5);
 
         Ok(())
     }
@@ -3204,6 +3486,118 @@ mod tests {
         assert_eq!(genre_page.products[0].work_id, "RJ000001");
         assert_eq!(credit_page.total_count, 1);
         assert_eq!(credit_page.products[0].work_id, "RJ000001");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn product_custom_tags_are_searchable_filterable_and_excludable() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .save_account(&account("account-a", "Account A"))
+            .await?;
+        storage
+            .commit_account_sync(&sync_commit(
+                "account-a",
+                "sync-a-1",
+                vec![
+                    work(
+                        "RJ000001",
+                        "First Work",
+                        "Circle One",
+                        "2026-01-01T00:00:00Z",
+                    ),
+                    work(
+                        "RJ000002",
+                        "Second Work",
+                        "Circle Two",
+                        "2026-01-02T00:00:00Z",
+                    ),
+                ],
+                vec![
+                    account_work("RJ000001", "2026-02-01T00:00:00Z"),
+                    account_work("RJ000002", "2026-02-02T00:00:00Z"),
+                ],
+            ))
+            .await?;
+
+        let first_tags = storage
+            .set_work_custom_tags(
+                "RJ000001",
+                &[
+                    " Favorite ".to_owned(),
+                    "Sleep   Aid".to_owned(),
+                    "favorite".to_owned(),
+                    "".to_owned(),
+                ],
+            )
+            .await?;
+        storage
+            .set_work_custom_tags("RJ000002", &["Queued".to_owned()])
+            .await?;
+
+        let search_page = storage
+            .list_products(&ProductListQuery {
+                search: Some("sleep aid".to_owned()),
+                sort: ProductSort::TitleAsc,
+                ..ProductListQuery::default()
+            })
+            .await?;
+        let include_page = storage
+            .list_products(&ProductListQuery {
+                custom_tag_names: vec!["favorite".to_owned()],
+                sort: ProductSort::TitleAsc,
+                ..ProductListQuery::default()
+            })
+            .await?;
+        let excluded_page = storage
+            .list_products(&ProductListQuery {
+                excluded_custom_tag_names: vec!["Favorite".to_owned()],
+                sort: ProductSort::TitleAsc,
+                ..ProductListQuery::default()
+            })
+            .await?;
+        let facets = storage
+            .product_filter_facets(&ProductListQuery::default())
+            .await?;
+        let detail = storage.product_detail("RJ000001").await?;
+
+        assert_eq!(
+            first_tags,
+            vec![
+                ProductCustomTag {
+                    name: "Favorite".to_owned()
+                },
+                ProductCustomTag {
+                    name: "Sleep Aid".to_owned()
+                }
+            ]
+        );
+        assert_eq!(search_page.total_count, 1);
+        assert_eq!(search_page.products[0].work_id, "RJ000001");
+        assert_eq!(include_page.total_count, 1);
+        assert_eq!(include_page.products[0].work_id, "RJ000001");
+        assert_eq!(excluded_page.total_count, 1);
+        assert_eq!(excluded_page.products[0].work_id, "RJ000002");
+        assert_eq!(
+            detail.custom_tags,
+            vec![
+                ProductCustomTag {
+                    name: "Favorite".to_owned()
+                },
+                ProductCustomTag {
+                    name: "Sleep Aid".to_owned()
+                }
+            ]
+        );
+        assert_eq!(
+            facets
+                .custom_tags
+                .iter()
+                .map(|tag| (tag.name.as_str(), tag.count))
+                .collect::<Vec<_>>(),
+            [("Favorite", 1), ("Queued", 1), ("Sleep Aid", 1)]
+        );
 
         Ok(())
     }

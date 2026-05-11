@@ -14,10 +14,10 @@ use dm_library::{
     WorkDownloadRemovalRequest, WorkDownloadRequest,
 };
 use dm_storage::{
-    Account, AppSettings, ProductAgeCategory, ProductCreditGroup, ProductDetail,
-    ProductFilterFacets, ProductListItem, ProductListPage, ProductListQuery, ProductMakerFacet,
-    ProductOwner, ProductSort, ProductTag, ProductTextValue, ProductTypeGroup, Storage,
-    WorkDownloadState, WorkDownloadStatus,
+    Account, AppSettings, ProductAgeCategory, ProductCreditGroup, ProductCustomTag,
+    ProductCustomTagFacet, ProductDetail, ProductFilterFacets, ProductListItem, ProductListPage,
+    ProductListQuery, ProductMakerFacet, ProductOwner, ProductSort, ProductTag, ProductTextValue,
+    ProductTypeGroup, Storage, WorkDownloadState, WorkDownloadStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -432,6 +432,71 @@ async fn get_product_detail(
         .await
         .map(ProductDetailDto::from)
         .map_err(command_error)
+}
+
+#[tauri::command]
+async fn set_product_custom_tags(
+    state: State<'_, AppState>,
+    request: SetProductCustomTagsRequest,
+) -> Result<Vec<ProductCustomTagDto>, String> {
+    let work_id = match normalize_required_id(request.work_id) {
+        Ok(work_id) => work_id,
+        Err(error) => {
+            record_audit(
+                &state.audit,
+                AuditEvent::failed("product.tags.update", "Failed to validate custom tags")
+                    .with_error(Some("validation"), error.clone()),
+            )
+            .await;
+            return Err(error);
+        }
+    };
+    let tags = match normalize_optional_strings(Some(request.tags)) {
+        Ok(tags) => tags,
+        Err(error) => {
+            record_audit(
+                &state.audit,
+                AuditEvent::failed("product.tags.update", "Failed to validate custom tags")
+                    .with_error(Some("validation"), error.clone())
+                    .with_details(json!({ "workId": work_id })),
+            )
+            .await;
+            return Err(error);
+        }
+    };
+    let result = state.library.set_product_custom_tags(&work_id, &tags).await;
+
+    match result {
+        Ok(tags) => {
+            record_audit(
+                &state.audit,
+                AuditEvent::succeeded("product.tags.update", "Updated product custom tags")
+                    .with_details(json!({
+                        "workId": work_id,
+                        "tagCount": tags.len(),
+                    })),
+            )
+            .await;
+            Ok(tags.into_iter().map(ProductCustomTagDto::from).collect())
+        }
+        Err(error) => {
+            let message = command_error(error);
+            record_audit(
+                &state.audit,
+                AuditEvent::failed(
+                    "product.tags.update",
+                    "Failed to update product custom tags",
+                )
+                .with_error(Some("library"), message.clone())
+                .with_details(json!({
+                    "workId": work_id,
+                    "tagCount": tags.len(),
+                })),
+            )
+            .await;
+            Err(message)
+        }
+    }
 }
 
 #[tauri::command]
@@ -1786,6 +1851,8 @@ struct ListProductsRequest {
     age_category: Option<ProductAgeCategoryDto>,
     age_categories: Option<Vec<ProductAgeCategoryDto>>,
     maker_names: Option<Vec<String>>,
+    custom_tag_names: Option<Vec<String>>,
+    excluded_custom_tag_names: Option<Vec<String>>,
     sort: Option<ProductSortDto>,
     limit: Option<u32>,
     offset: Option<u32>,
@@ -1812,6 +1879,8 @@ impl ListProductsRequest {
                 .map(Into::into)
                 .collect(),
             maker_names: normalize_optional_strings(self.maker_names)?,
+            custom_tag_names: normalize_optional_strings(self.custom_tag_names)?,
+            excluded_custom_tag_names: normalize_optional_strings(self.excluded_custom_tag_names)?,
             sort: self.sort.unwrap_or_default().into(),
             limit: self.limit.unwrap_or(100).clamp(1, 500),
             offset: self.offset.unwrap_or(0),
@@ -1823,6 +1892,13 @@ impl ListProductsRequest {
 #[serde(rename_all = "camelCase")]
 struct GetProductDetailRequest {
     work_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetProductCustomTagsRequest {
+    work_id: String,
+    tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -1938,6 +2014,7 @@ impl BulkWorkDownloadPreviewDto {
 #[serde(rename_all = "camelCase")]
 struct ProductFilterFacetsDto {
     makers: Vec<ProductMakerFacetDto>,
+    custom_tags: Vec<ProductCustomTagFacetDto>,
 }
 
 impl From<ProductFilterFacets> for ProductFilterFacetsDto {
@@ -1947,6 +2024,11 @@ impl From<ProductFilterFacets> for ProductFilterFacetsDto {
                 .makers
                 .into_iter()
                 .map(ProductMakerFacetDto::from)
+                .collect(),
+            custom_tags: facets
+                .custom_tags
+                .into_iter()
+                .map(ProductCustomTagFacetDto::from)
                 .collect(),
         }
     }
@@ -1970,6 +2052,22 @@ impl From<ProductMakerFacet> for ProductMakerFacetDto {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ProductCustomTagFacetDto {
+    name: String,
+    count: u64,
+}
+
+impl From<ProductCustomTagFacet> for ProductCustomTagFacetDto {
+    fn from(facet: ProductCustomTagFacet) -> Self {
+        Self {
+            name: facet.name,
+            count: facet.count,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ProductListItemDto {
     work_id: String,
     title: String,
@@ -1982,6 +2080,7 @@ struct ProductListItemDto {
     earliest_purchased_at: Option<String>,
     latest_purchased_at: Option<String>,
     credit_groups: Vec<ProductCreditGroupDto>,
+    custom_tags: Vec<ProductCustomTagDto>,
     download: WorkDownloadStateDto,
     owners: Vec<ProductOwnerDto>,
 }
@@ -2003,6 +2102,11 @@ impl From<ProductListItem> for ProductListItemDto {
                 .credit_groups
                 .into_iter()
                 .map(ProductCreditGroupDto::from)
+                .collect(),
+            custom_tags: product
+                .custom_tags
+                .into_iter()
+                .map(ProductCustomTagDto::from)
                 .collect(),
             download: WorkDownloadStateDto::from(product.download),
             owners: product
@@ -2035,6 +2139,7 @@ struct ProductDetailDto {
     latest_purchased_at: Option<String>,
     credit_groups: Vec<ProductCreditGroupDto>,
     tags: Vec<ProductTagDto>,
+    custom_tags: Vec<ProductCustomTagDto>,
     download: WorkDownloadStateDto,
     owners: Vec<ProductOwnerDto>,
 }
@@ -2072,6 +2177,11 @@ impl From<ProductDetail> for ProductDetailDto {
                 .map(ProductCreditGroupDto::from)
                 .collect(),
             tags: detail.tags.into_iter().map(ProductTagDto::from).collect(),
+            custom_tags: detail
+                .custom_tags
+                .into_iter()
+                .map(ProductCustomTagDto::from)
+                .collect(),
             download: WorkDownloadStateDto::from(detail.download),
             owners: detail
                 .owners
@@ -2236,6 +2346,18 @@ impl From<ProductTag> for ProductTagDto {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ProductCustomTagDto {
+    name: String,
+}
+
+impl From<ProductCustomTag> for ProductCustomTagDto {
+    fn from(tag: ProductCustomTag) -> Self {
+        Self { name: tag.name }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ProductOwnerDto {
     account_id: String,
     label: String,
@@ -2280,6 +2402,8 @@ struct BulkWorkDownloadCommandRequest {
     age_category: Option<ProductAgeCategoryDto>,
     age_categories: Option<Vec<ProductAgeCategoryDto>>,
     maker_names: Option<Vec<String>>,
+    custom_tag_names: Option<Vec<String>>,
+    excluded_custom_tag_names: Option<Vec<String>>,
     sort: Option<ProductSortDto>,
     unpack_policy: Option<UnpackPolicyDto>,
     skip_downloaded: Option<bool>,
@@ -2308,6 +2432,10 @@ impl BulkWorkDownloadCommandRequest {
                 .map(Into::into)
                 .collect(),
             maker_names: normalize_optional_strings(self.maker_names.clone())?,
+            custom_tag_names: normalize_optional_strings(self.custom_tag_names.clone())?,
+            excluded_custom_tag_names: normalize_optional_strings(
+                self.excluded_custom_tag_names.clone(),
+            )?,
             sort: self.sort.unwrap_or_default().into(),
             limit: BULK_DOWNLOAD_PAGE_LIMIT,
             offset: 0,
@@ -3445,6 +3573,7 @@ pub fn run() {
             list_products,
             list_product_filter_facets,
             get_product_detail,
+            set_product_custom_tags,
             start_account_sync,
             start_work_download,
             start_bulk_work_download,

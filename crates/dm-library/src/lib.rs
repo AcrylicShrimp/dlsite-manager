@@ -11,8 +11,9 @@ use dm_download::{
 pub use dm_jobs::CancellationToken;
 use dm_storage::{
     Account, AccountSyncCommit, AccountUpsert, AccountWork, CachedWork, LocalWorkDownloadImport,
-    ProductDetail, ProductFilterFacets, ProductListPage, ProductListQuery, Storage, StorageError,
-    SyncCancellation, SyncFailure, WorkDownloadState, WorkDownloadStatus, WorkDownloadUpdate,
+    ProductCustomTag, ProductDetail, ProductFilterFacets, ProductListPage, ProductListQuery,
+    Storage, StorageError, SyncCancellation, SyncFailure, WorkDownloadState, WorkDownloadStatus,
+    WorkDownloadUpdate,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -190,6 +191,14 @@ impl Library {
 
     pub async fn product_detail(&self, work_id: &str) -> Result<ProductDetail> {
         Ok(self.storage.product_detail(work_id).await?)
+    }
+
+    pub async fn set_product_custom_tags(
+        &self,
+        work_id: &str,
+        tags: &[String],
+    ) -> Result<Vec<ProductCustomTag>> {
+        Ok(self.storage.set_work_custom_tags(work_id, tags).await?)
     }
 
     pub fn account_has_saved_password(&self, account: &Account) -> Result<bool> {

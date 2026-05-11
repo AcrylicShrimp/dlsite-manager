@@ -71,6 +71,10 @@ export type ProductTag = {
   name: string;
 };
 
+export type ProductCustomTag = {
+  name: string;
+};
+
 export type Product = {
   workId: string;
   title: string;
@@ -83,6 +87,7 @@ export type Product = {
   earliestPurchasedAt: string | null;
   latestPurchasedAt: string | null;
   creditGroups: ProductCreditGroup[];
+  customTags: ProductCustomTag[];
   download: ProductDownload;
   owners: ProductOwner[];
 };
@@ -94,9 +99,15 @@ export type ProductListPage = {
 
 export type ProductFilterFacets = {
   makers: ProductMakerFacet[];
+  customTags: ProductCustomTagFacet[];
 };
 
 export type ProductMakerFacet = {
+  name: string;
+  count: number;
+};
+
+export type ProductCustomTagFacet = {
   name: string;
   count: number;
 };
@@ -120,6 +131,7 @@ export type ProductDetail = {
   latestPurchasedAt: string | null;
   creditGroups: ProductCreditGroup[];
   tags: ProductTag[];
+  customTags: ProductCustomTag[];
   download: ProductDownload;
   owners: ProductOwner[];
 };

@@ -86,6 +86,7 @@
     Product,
     ProductActionMenu,
     ProductCreditField,
+    ProductCustomTag,
     ProductDetail,
     ProductDownload,
     ProductFilterFacets,
@@ -125,7 +126,9 @@
   let selectedProductTypes = $state<string[]>([]);
   let selectedAgeCategories = $state<string[]>([]);
   let selectedMakerNames = $state<string[]>([]);
-  let productFilterFacets = $state<ProductFilterFacets>({ makers: [] });
+  let selectedCustomTagNames = $state<string[]>([]);
+  let excludedCustomTagNames = $state<string[]>([]);
+  let productFilterFacets = $state<ProductFilterFacets>({ makers: [], customTags: [] });
   let productSort = $state("latestPurchaseDesc");
   let libraryFiltersOpen = $state(false);
 
@@ -140,6 +143,7 @@
   let productActionMenu = $state<ProductActionMenu | null>(null);
   let productDetail = $state<ProductDetail | null>(null);
   let productDetailLoadingWorkId = $state<string | null>(null);
+  let customTagInput = $state("");
   let chipTooltip = $state<ChipTooltip | null>(null);
   let bulkDownloadDialog = $state<BulkDownloadDialog | null>(null);
   let confirmationDialog = $state<ConfirmationDialog | null>(null);
@@ -415,17 +419,20 @@
       const page = await invoke<ProductListPage>("list_products", {
         request,
       });
-      const facets = await invoke<ProductFilterFacets>("list_product_filter_facets", {
-        request,
-      });
       products = page.products;
       totalProducts = page.totalCount;
-      productFilterFacets = facets;
+      await loadProductFilterFacets(request);
     } catch (err) {
       notifyError(errorMessage(err));
     } finally {
       productsLoading = false;
     }
+  }
+
+  async function loadProductFilterFacets(request = productListRequest()) {
+    productFilterFacets = await invoke<ProductFilterFacets>("list_product_filter_facets", {
+      request,
+    });
   }
 
   function productListRequest() {
@@ -435,6 +442,8 @@
       typeGroups: selectedProductTypes,
       ageCategories: selectedAgeCategories,
       makerNames: selectedMakerNames,
+      customTagNames: selectedCustomTagNames,
+      excludedCustomTagNames,
       sort: productSort,
       limit: 100,
       offset: 0,
@@ -448,6 +457,8 @@
       typeGroups: selectedProductTypes,
       ageCategories: selectedAgeCategories,
       makerNames: selectedMakerNames,
+      customTagNames: selectedCustomTagNames,
+      excludedCustomTagNames,
       sort: productSort,
       unpackPolicy: "unpackWhenRecognized",
       skipDownloaded: true,
@@ -484,6 +495,34 @@
     await loadProducts();
   }
 
+  function customTagFilterState(tagName: string) {
+    if (selectedCustomTagNames.includes(tagName)) {
+      return "include";
+    }
+
+    if (excludedCustomTagNames.includes(tagName)) {
+      return "exclude";
+    }
+
+    return "none";
+  }
+
+  async function cycleCustomTagFilter(tagName: string) {
+    const state = customTagFilterState(tagName);
+
+    if (state === "none") {
+      selectedCustomTagNames = [...selectedCustomTagNames, tagName];
+      excludedCustomTagNames = excludedCustomTagNames.filter((name) => name !== tagName);
+    } else if (state === "include") {
+      selectedCustomTagNames = selectedCustomTagNames.filter((name) => name !== tagName);
+      excludedCustomTagNames = [...excludedCustomTagNames, tagName];
+    } else {
+      excludedCustomTagNames = excludedCustomTagNames.filter((name) => name !== tagName);
+    }
+
+    await loadProducts();
+  }
+
   async function clearAccountFilters() {
     selectedAccountIds = [];
     await loadProducts();
@@ -504,6 +543,12 @@
     await loadProducts();
   }
 
+  async function clearCustomTagFilters() {
+    selectedCustomTagNames = [];
+    excludedCustomTagNames = [];
+    await loadProducts();
+  }
+
   async function setProductSort(sort: string) {
     productSort = sort;
     await loadProducts();
@@ -515,6 +560,8 @@
     selectedProductTypes = [];
     selectedAgeCategories = [];
     selectedMakerNames = [];
+    selectedCustomTagNames = [];
+    excludedCustomTagNames = [];
     productSort = "latestPurchaseDesc";
     await loadProducts();
   }
@@ -664,6 +711,100 @@
     }
   }
 
+  function patchProductCustomTags(workId: string, customTags: ProductCustomTag[]) {
+    products = products.map((product) =>
+      product.workId === workId
+        ? {
+            ...product,
+            customTags,
+          }
+        : product,
+    );
+
+    if (productDetail?.workId === workId) {
+      productDetail = {
+        ...productDetail,
+        customTags,
+      };
+    }
+  }
+
+  function parseCustomTagInput(value: string) {
+    const tags: string[] = [];
+    const seen = new Set<string>();
+
+    for (const part of value.split(/[,\n]/)) {
+      const normalized = part.trim().replace(/\s+/g, " ");
+
+      if (!normalized) {
+        continue;
+      }
+
+      const key = normalized.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        tags.push(normalized);
+      }
+    }
+
+    return tags;
+  }
+
+  async function saveProductCustomTags(workId: string, names: string[]) {
+    const customTags = await invoke<ProductCustomTag[]>("set_product_custom_tags", {
+      request: {
+        workId,
+        tags: names,
+      },
+    });
+
+    patchProductCustomTags(workId, customTags);
+    await loadProductFilterFacets();
+
+    return customTags;
+  }
+
+  async function addProductDetailCustomTags(event: Event) {
+    event.preventDefault();
+
+    if (!productDetail) {
+      return;
+    }
+
+    const additions = parseCustomTagInput(customTagInput);
+
+    if (additions.length === 0) {
+      return;
+    }
+
+    const nextNames = [...productDetail.customTags.map((tag) => tag.name), ...additions];
+
+    try {
+      const customTags = await saveProductCustomTags(productDetail.workId, nextNames);
+      customTagInput = "";
+      notifySuccess(`Saved ${customTags.length} custom tag${customTags.length === 1 ? "" : "s"}`);
+    } catch (err) {
+      notifyError(errorMessage(err));
+    }
+  }
+
+  async function removeProductDetailCustomTag(tagName: string) {
+    if (!productDetail) {
+      return;
+    }
+
+    const nextNames = productDetail.customTags
+      .map((tag) => tag.name)
+      .filter((name) => name !== tagName);
+
+    try {
+      await saveProductCustomTags(productDetail.workId, nextNames);
+      notifySuccess(`Removed ${tagName}`);
+    } catch (err) {
+      notifyError(errorMessage(err));
+    }
+  }
+
   async function searchProducts(event: Event) {
     event.preventDefault();
     await loadProducts();
@@ -725,6 +866,7 @@
 
   function closeProductDetail() {
     productDetail = null;
+    customTagInput = "";
   }
 
   function openProductImage(product: Product) {
@@ -752,6 +894,7 @@
       earliestPurchasedAt: detail.earliestPurchasedAt,
       latestPurchasedAt: detail.latestPurchasedAt,
       creditGroups: detail.creditGroups,
+      customTags: detail.customTags,
       download: detail.download,
       owners: detail.owners,
     });
@@ -1570,7 +1713,7 @@
                 type="search"
                 autocomplete="off"
                 spellcheck="false"
-                placeholder="Search title, maker, credit, tag, work ID"
+                placeholder="Search title, maker, credit, custom tag, work ID"
                 bind:value={productSearch}
               />
               <button type="submit" disabled={productsLoading}>Search</button>
@@ -1735,6 +1878,40 @@
                 {/each}
               </div>
             </div>
+
+            <div class="filter-group custom-tag-filter">
+              <span>Custom Tags</span>
+              <div class="toggle-row">
+                <button
+                  class:active={selectedCustomTagNames.length === 0 && excludedCustomTagNames.length === 0}
+                  type="button"
+                  onclick={clearCustomTagFilters}
+                >
+                  <span class="filter-chip-label">Any</span>
+                </button>
+                {#each productFilterFacets.customTags as tag (tag.name)}
+                  {@const state = customTagFilterState(tag.name)}
+                  <button
+                    class:active={state === "include"}
+                    class:excluded={state === "exclude"}
+                    type="button"
+                    title={
+                      state === "include"
+                        ? `Including ${tag.name}. Click to exclude.`
+                        : state === "exclude"
+                          ? `Excluding ${tag.name}. Click to clear.`
+                          : `Click to include ${tag.name}; click again to exclude.`
+                    }
+                    onclick={() => cycleCustomTagFilter(tag.name)}
+                  >
+                    <span class="filter-chip-label">
+                      {state === "exclude" ? `Not ${tag.name}` : tag.name}
+                    </span>
+                    <small>{tag.count}</small>
+                  </button>
+                {/each}
+              </div>
+            </div>
           </div>
         {/if}
 
@@ -1839,9 +2016,18 @@
                         >
                           {ageLabel(product.ageCategory)}
                         </span>
-                      {/if}
-                    </div>
-                  </div>
+	                      {/if}
+	                      {#each product.customTags as tag (tag.name)}
+	                        <span
+	                          class="chip custom-tag-chip"
+	                          role="note"
+	                          title={`Custom tag: ${tag.name}`}
+	                        >
+	                          {tag.name}
+	                        </span>
+	                      {/each}
+	                    </div>
+	                  </div>
                   <div class="product-footer">
                     <div class="labeled-row owner-row" aria-label="Owners">
                       <span class="credit-label">Owned by</span>
@@ -2643,6 +2829,47 @@
             </section>
 
             <section class="detail-section">
+              <h3>Custom Tags</h3>
+              {#if detail.customTags.length > 0}
+                <div class="detail-chip-list custom-tag-list">
+                  {#each detail.customTags as tag (tag.name)}
+                    <span class="chip custom-tag-chip detail-custom-tag" title={`Custom tag: ${tag.name}`}>
+                      <button type="button" onclick={() => copyText("custom tag", tag.name)}>
+                        {tag.name}
+                      </button>
+                      <button
+                        class="custom-tag-remove"
+                        type="button"
+                        aria-label={`Remove custom tag ${tag.name}`}
+                        title={`Remove ${tag.name}`}
+                        onclick={() => removeProductDetailCustomTag(tag.name)}
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="M18 6 6 18M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </span>
+                  {/each}
+                </div>
+              {:else}
+                <p class="detail-muted">No custom tags</p>
+              {/if}
+
+              <form class="custom-tag-form" onsubmit={addProductDetailCustomTags}>
+                <input
+                  type="text"
+                  autocomplete="off"
+                  placeholder="Add custom tags"
+                  aria-label="Add custom tags"
+                  bind:value={customTagInput}
+                />
+                <button type="submit" disabled={!customTagInput.trim()}>
+                  Add Tag
+                </button>
+              </form>
+            </section>
+
+            <section class="detail-section">
               <h3>Tags</h3>
               {#if genericTags.length > 0}
                 <div class="detail-chip-list">
@@ -3405,6 +3632,77 @@
     white-space: nowrap;
   }
 
+  .detail-chip-list .detail-custom-tag {
+    gap: 5px;
+    max-width: 100%;
+    min-height: 24px;
+    padding: 2px 6px 2px 8px;
+  }
+
+  .detail-custom-tag button {
+    width: auto;
+    height: 18px;
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    color: inherit;
+    background: transparent;
+    font-size: 12px;
+    font-weight: 650;
+    line-height: 1;
+  }
+
+  .detail-custom-tag button:first-child {
+    display: block;
+    max-width: 220px;
+    height: auto;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .detail-custom-tag button:hover:not(:disabled) {
+    color: var(--text-strong);
+    background: transparent;
+  }
+
+  .custom-tag-remove {
+    display: grid;
+    place-items: center;
+    width: 18px;
+    min-width: 18px;
+    color: var(--muted);
+  }
+
+  .custom-tag-remove svg {
+    width: 13px;
+    height: 13px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 2.35;
+  }
+
+  .custom-tag-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .custom-tag-form input,
+  .custom-tag-form button {
+    height: 32px;
+    font-size: 13px;
+  }
+
+  .custom-tag-form button {
+    min-width: 72px;
+  }
+
   .detail-muted {
     margin: 0;
     color: var(--muted);
@@ -3715,6 +4013,12 @@
     border-color: var(--accent);
     color: var(--text-strong);
     background: var(--accent-muted);
+  }
+
+  .toggle-row button.excluded {
+    border-color: rgb(248 113 113 / 52%);
+    color: #fca5a5;
+    background: rgb(248 113 113 / 12%);
   }
 
   .filter-chip-label {
@@ -4069,6 +4373,12 @@
     border-color: rgb(185 64 64 / 62%);
     color: #d77b7b;
     background: rgb(185 64 64 / 16%);
+  }
+
+  .custom-tag-chip {
+    border-color: rgb(96 165 250 / 54%);
+    color: #9fc8ff;
+    background: rgb(96 165 250 / 13%);
   }
 
   .product-footer {
@@ -5027,6 +5337,10 @@
       grid-template-columns: 82px minmax(0, 1fr);
     }
 
+    .custom-tag-form {
+      grid-template-columns: 1fr;
+    }
+
     button,
     button.secondary {
       width: 100%;
@@ -5041,6 +5355,8 @@
     .download-queue-row button.secondary,
     .detail-grid button,
     .detail-credit-list button,
+    .detail-custom-tag button,
+    .custom-tag-form button,
     .link-button,
     .work-id {
       width: auto;
