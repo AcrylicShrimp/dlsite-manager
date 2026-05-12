@@ -47,6 +47,38 @@ impl LiveEnv {
 }
 
 #[tokio::test]
+async fn live_public_product_metadata() -> TestResult {
+    load_dotenv();
+
+    if env::var("DMSITE_API_PUBLIC_PRODUCT_TEST_LIVE")
+        .ok()
+        .as_deref()
+        != Some("1")
+    {
+        return Ok(());
+    }
+
+    let work_id = env::var("DMSITE_API_TEST_PUBLIC_WORK_ID")
+        .ok()
+        .map(WorkId::from)
+        .unwrap_or_else(|| WorkId::from("RJ01553954"));
+    let client = DlsiteClient::new(DlsiteClientConfig::default())?;
+    let product = client
+        .public_work(&work_id)
+        .await?
+        .unwrap_or_else(|| panic!("public product metadata not found for {work_id}"));
+
+    assert_eq!(product.id.as_ref(), work_id.as_ref());
+    assert!(product.name.as_deref().is_some_and(|name| !name.is_empty()));
+    assert!(product
+        .maker_name
+        .as_deref()
+        .is_some_and(|name| !name.is_empty()));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn live_login_count_and_session_reuse() -> TestResult {
     let Some(env) = LiveEnv::load() else {
         return Ok(());

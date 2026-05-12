@@ -1,9 +1,9 @@
 use crate::{
     raw::RawResponse, ContentCount, ContentQuery, Credentials, DmApiError, DownloadByteRange,
     DownloadFile, DownloadFileKind, DownloadPlan, DownloadResolution, DownloadStreamRequest,
-    DownloadUnavailableReason, Purchase, Result, SerialDownloadPage, SerialNumber, SessionSnapshot,
-    SessionStatus, SplitDownloadPage, SplitDownloadPart, Work, WorkId, WorksResponse,
-    DEFAULT_WORKS_BATCH_LIMIT,
+    DownloadUnavailableReason, PublicWork, Purchase, Result, SerialDownloadPage, SerialNumber,
+    SessionSnapshot, SessionStatus, SplitDownloadPage, SplitDownloadPart, Work, WorkId,
+    WorksResponse, DEFAULT_WORKS_BATCH_LIMIT,
 };
 use bytes::Bytes;
 use cookie_store::CookieStore;
@@ -27,6 +27,7 @@ const CONTENT_COUNT_URL: &str = "https://play.dlsite.com/api/v3/content/count";
 const CONTENT_SALES_URL: &str = "https://play.dlsite.com/api/v3/content/sales";
 const CONTENT_WORKS_URL: &str = "https://play.dlsite.com/api/v3/content/works";
 const DOWNLOAD_URL: &str = "https://play.dlsite.com/api/v3/download";
+const PUBLIC_PRODUCT_URL: &str = "https://www.dlsite.com/home/api/=/product.json";
 const HOME_SERIAL_URL: &str = "https://www.dlsite.com/home/serial/=/product_id/";
 const MAX_DOWNLOAD_REDIRECTS: usize = 8;
 const DOWNLOAD_PAGE_BODY_LIMIT: usize = 512 * 1024;
@@ -295,6 +296,34 @@ impl DlsiteClient {
 
     pub async fn raw_works_batch(&self, ids: &[WorkId]) -> Result<RawResponse> {
         self.raw_works_batch_with_body_limit(ids, 2048).await
+    }
+
+    pub async fn public_work(&self, id: &WorkId) -> Result<Option<PublicWork>> {
+        let endpoint = Url::parse(PUBLIC_PRODUCT_URL)?;
+        let products = parse_json_response::<Vec<PublicWork>>(
+            self.http
+                .get(endpoint)
+                .query(&[("workno", id.as_ref())])
+                .send()
+                .await?,
+        )
+        .await?;
+
+        Ok(products
+            .into_iter()
+            .find(|product| product.id.as_ref() == id.as_ref()))
+    }
+
+    pub async fn public_works(&self, ids: &[WorkId]) -> Result<Vec<PublicWork>> {
+        let mut works = Vec::new();
+
+        for id in ids {
+            if let Some(work) = self.public_work(id).await? {
+                works.push(work);
+            }
+        }
+
+        Ok(works)
     }
 
     pub async fn raw_works_batch_with_body_limit(
@@ -1117,6 +1146,49 @@ mod tests {
         assert!(is_absent_optional_serial_page_status(404));
         assert!(is_absent_optional_serial_page_status(500));
         assert!(!is_absent_optional_serial_page_status(200));
+    }
+
+    #[test]
+    fn parses_public_product_response_shape() {
+        let endpoint = Url::parse(PUBLIC_PRODUCT_URL).unwrap();
+        let body = r#"[
+            {
+                "workno": "RJ01553954",
+                "work_name": "Public Work",
+                "maker_id": "RG01042231",
+                "maker_name": "MELLOW VOICE",
+                "work_type": "SOU",
+                "work_type_string": "ボイス・ASMR",
+                "age_category": 1,
+                "age_category_string": "general",
+                "image_main": {
+                    "url": "//img.dlsite.jp/modpub/images2/work/RJ01553954_img_main.jpg"
+                },
+                "image_thumb": "//img.dlsite.jp/resize/images2/work/RJ01553954_img_main_240x240.jpg",
+                "regist_date": "2026-04-24 00:00:00",
+                "update_date": "2026-04-25 09:09:14",
+                "contents_file_size": 1705634548,
+                "genres": [
+                    { "name": "ASMR", "id": 497 }
+                ]
+            }
+        ]"#;
+
+        let products = parse_json_body::<Vec<PublicWork>>(endpoint, body).unwrap();
+
+        assert_eq!(products.len(), 1);
+        assert_eq!(products[0].id.as_ref(), "RJ01553954");
+        assert_eq!(products[0].name.as_deref(), Some("Public Work"));
+        assert_eq!(products[0].maker_name.as_deref(), Some("MELLOW VOICE"));
+        assert_eq!(products[0].work_kind.as_deref(), Some("SOU"));
+        assert_eq!(
+            products[0].image_main_url(),
+            Some("//img.dlsite.jp/modpub/images2/work/RJ01553954_img_main.jpg")
+        );
+        assert_eq!(
+            products[0].content_size.as_ref().and_then(Value::as_u64),
+            Some(1_705_634_548)
+        );
     }
 
     #[test]

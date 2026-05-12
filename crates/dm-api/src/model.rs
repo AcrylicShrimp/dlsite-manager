@@ -256,6 +256,70 @@ pub struct WorkTag {
     pub value: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicWork {
+    #[serde(rename = "workno")]
+    pub id: WorkId,
+    #[serde(rename = "work_name", default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub maker_id: Option<String>,
+    #[serde(default)]
+    pub maker_name: Option<String>,
+    #[serde(rename = "work_type", default)]
+    pub work_kind: Option<String>,
+    #[serde(rename = "work_type_string", default)]
+    pub work_kind_label: Option<String>,
+    #[serde(default)]
+    pub age_category: Option<Value>,
+    #[serde(rename = "age_category_string", default)]
+    pub age_category_label: Option<String>,
+    #[serde(default)]
+    pub image_main: Option<PublicWorkImage>,
+    #[serde(default)]
+    pub image_thumb: Option<String>,
+    #[serde(rename = "regist_date", default)]
+    pub registered_at: Option<String>,
+    #[serde(rename = "sales_date", default)]
+    pub published_at: Option<String>,
+    #[serde(rename = "update_date", default)]
+    pub updated_at: Option<String>,
+    #[serde(rename = "contents_file_size", default)]
+    pub content_size: Option<Value>,
+    #[serde(flatten, default)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl PublicWork {
+    pub fn image_main_url(&self) -> Option<&str> {
+        self.image_main.as_ref().and_then(PublicWorkImage::url)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PublicWorkImage {
+    Url(String),
+    Object(PublicWorkImageObject),
+}
+
+impl PublicWorkImage {
+    pub fn url(&self) -> Option<&str> {
+        match self {
+            Self::Url(value) => Some(value),
+            Self::Object(image) => image.url.as_deref().or(image.relative_url.as_deref()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicWorkImageObject {
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub relative_url: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DownloadResolution {
     Direct {

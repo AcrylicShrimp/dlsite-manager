@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, Utc};
 use dm_api::{
     ContentCount, ContentQuery, Credentials, DlsiteClient, DmApiError, DownloadFile, DownloadPlan,
-    Language, LocalizedText, Purchase, SerialNumber, Work, WorkId,
+    Language, LocalizedText, PublicWork, Purchase, SerialNumber, Work, WorkId,
 };
 use dm_credentials::{CredentialRef, CredentialStore, CredentialsError};
 use dm_download::{
@@ -1035,11 +1035,36 @@ impl Library {
         &self,
         request: LocalWorkImportRequest<'_>,
     ) -> Result<LocalWorkImportReport> {
+        self.import_local_work_downloads_internal(request, None)
+            .await
+    }
+
+    pub async fn import_local_work_downloads_with_metadata_source<S>(
+        &self,
+        request: LocalWorkImportRequest<'_>,
+        metadata_source: &S,
+    ) -> Result<LocalWorkImportReport>
+    where
+        S: LocalWorkMetadataSource,
+    {
+        self.import_local_work_downloads_internal(
+            request,
+            Some(metadata_source as &dyn LocalWorkMetadataSource),
+        )
+        .await
+    }
+
+    async fn import_local_work_downloads_internal(
+        &self,
+        request: LocalWorkImportRequest<'_>,
+        metadata_source: Option<&dyn LocalWorkMetadataSource>,
+    ) -> Result<LocalWorkImportReport> {
         let library_root = canonicalize_existing_directory(request.library_root)?;
         let mut entries = tokio::fs::read_dir(&library_root).await?;
         let scanned_at = now_string();
         let mut imports = Vec::new();
         let mut imported_works = Vec::new();
+        let mut metadata_candidate_ids = BTreeSet::<WorkId>::new();
         let mut scanned_directories = 0;
         let mut skipped_no_id = 0;
         let mut skipped_ambiguous = 0;
@@ -1074,18 +1099,30 @@ impl Library {
                 continue;
             }
 
-            let work_id = detected[0].to_string();
-            if self.storage.work_download_state(&work_id).await?.status
+            let work_id = detected[0].clone();
+            let work_id_string = work_id.as_ref().to_owned();
+            if self
+                .storage
+                .work_download_state(&work_id_string)
+                .await?
+                .status
                 != WorkDownloadStatus::NotDownloaded
             {
                 skipped_existing += 1;
+                if self
+                    .storage
+                    .work_needs_local_metadata_hydration(&work_id_string)
+                    .await?
+                {
+                    metadata_candidate_ids.insert(work_id);
+                }
                 continue;
             }
 
             let local_path = entry.path().canonicalize()?;
-            let work = cached_work_from_local_folder(&work_id, &folder_name, &scanned_at)?;
+            let work = cached_work_from_local_folder(&work_id_string, &folder_name, &scanned_at)?;
             let download = WorkDownloadUpdate {
-                work_id: work_id.clone(),
+                work_id: work_id_string.clone(),
                 status: WorkDownloadStatus::Downloaded,
                 local_path: Some(local_path.to_string_lossy().into_owned()),
                 staging_path: None,
@@ -1099,14 +1136,47 @@ impl Library {
                 updated_at: scanned_at.clone(),
             };
 
+            metadata_candidate_ids.insert(work_id);
             imports.push(LocalWorkDownloadImport { work, download });
             imported_works.push(LocalWorkImportItem {
-                work_id,
+                work_id: work_id_string,
                 local_path,
             });
         }
 
-        self.storage.import_local_work_downloads(&imports).await?;
+        let metadata_candidate_count = if metadata_source.is_some() {
+            metadata_candidate_ids.len()
+        } else {
+            0
+        };
+        let mut metadata_by_id = BTreeMap::<String, CachedWork>::new();
+        let mut metadata_error = None;
+
+        if let Some(source) = metadata_source.filter(|_| !metadata_candidate_ids.is_empty()) {
+            let ids = metadata_candidate_ids.iter().cloned().collect::<Vec<_>>();
+
+            match source.works(&ids).await {
+                Ok(works) => {
+                    for work in works {
+                        if !metadata_candidate_ids.contains(&work.id) {
+                            continue;
+                        }
+
+                        let cached = cached_work_from_public_api(work, &scanned_at)?;
+                        metadata_by_id.insert(cached.work_id.clone(), cached);
+                    }
+                }
+                Err(error) => {
+                    metadata_error = Some(error.support_message());
+                }
+            }
+        }
+
+        let metadata_works = metadata_by_id.values().cloned().collect::<Vec<_>>();
+
+        self.storage
+            .import_local_work_downloads_with_metadata(&imports, &metadata_works)
+            .await?;
 
         Ok(LocalWorkImportReport {
             scanned_directories,
@@ -1115,6 +1185,10 @@ impl Library {
             skipped_ambiguous,
             skipped_non_utf8,
             skipped_existing,
+            metadata_candidate_count,
+            metadata_updated_count: metadata_by_id.len(),
+            metadata_missing_count: metadata_candidate_count.saturating_sub(metadata_by_id.len()),
+            metadata_error,
             imported_works,
         })
     }
@@ -1725,6 +1799,10 @@ pub struct LocalWorkImportReport {
     pub skipped_ambiguous: usize,
     pub skipped_non_utf8: usize,
     pub skipped_existing: usize,
+    pub metadata_candidate_count: usize,
+    pub metadata_updated_count: usize,
+    pub metadata_missing_count: usize,
+    pub metadata_error: Option<String>,
     pub imported_works: Vec<LocalWorkImportItem>,
 }
 
@@ -2049,6 +2127,29 @@ impl WorkDownloadSource for DlsiteWorkDownloadSource {
     }
 }
 
+#[async_trait]
+pub trait LocalWorkMetadataSource: Send + Sync {
+    async fn works(&self, ids: &[WorkId]) -> Result<Vec<PublicWork>>;
+}
+
+#[derive(Clone)]
+pub struct DlsitePublicMetadataSource {
+    client: DlsiteClient,
+}
+
+impl DlsitePublicMetadataSource {
+    pub fn new(client: DlsiteClient) -> Self {
+        Self { client }
+    }
+}
+
+#[async_trait]
+impl LocalWorkMetadataSource for DlsitePublicMetadataSource {
+    async fn works(&self, ids: &[WorkId]) -> Result<Vec<PublicWork>> {
+        Ok(self.client.public_works(ids).await?)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncProgress {
     LoggingIn,
@@ -2193,6 +2294,62 @@ fn cached_work_from_api(work: Work, synced_at: &str) -> Result<CachedWork> {
     })
 }
 
+fn cached_work_from_public_api(work: PublicWork, synced_at: &str) -> Result<CachedWork> {
+    let work_id = work.id.as_ref().to_owned();
+    let title = work
+        .name
+        .as_deref()
+        .and_then(non_empty_trimmed)
+        .unwrap_or(work_id.as_str())
+        .to_owned();
+    let title_json = localized_japanese_json(&title)?;
+    let maker_name = work
+        .maker_name
+        .as_deref()
+        .and_then(non_empty_trimmed)
+        .map(str::to_owned);
+    let maker_json = maker_name
+        .as_deref()
+        .map(localized_japanese_json)
+        .transpose()?;
+    let content_size = public_work_content_size(&work);
+
+    Ok(CachedWork {
+        work_id,
+        title,
+        title_json,
+        maker_id: work
+            .maker_id
+            .as_deref()
+            .and_then(non_empty_trimmed)
+            .map(str::to_owned),
+        maker_name,
+        maker_json,
+        work_type: work
+            .work_kind
+            .as_deref()
+            .and_then(non_empty_trimmed)
+            .map(str::to_owned),
+        age_category: public_work_age_category(&work),
+        thumbnail_url: public_work_thumbnail_url(&work),
+        registered_at: work
+            .registered_at
+            .as_deref()
+            .and_then(normalize_public_datetime),
+        published_at: work
+            .published_at
+            .as_deref()
+            .or(work.registered_at.as_deref())
+            .and_then(normalize_public_datetime),
+        updated_at: work
+            .updated_at
+            .as_deref()
+            .and_then(normalize_public_datetime),
+        raw_json: public_work_raw_json(&work, content_size)?,
+        last_detail_sync_at: synced_at.to_owned(),
+    })
+}
+
 fn cached_work_from_purchase_placeholder(
     purchase: &Purchase,
     synced_at: &str,
@@ -2262,6 +2419,228 @@ fn preferred_localized_text(text: &LocalizedText) -> Option<&String> {
         .or_else(|| text.get(&Language::Taiwanese))
         .or_else(|| text.get(&Language::Chinese))
         .or_else(|| text.values().next())
+}
+
+fn localized_japanese_json(value: &str) -> Result<String> {
+    let text = BTreeMap::from([(Language::Japanese, value.to_owned())]);
+
+    Ok(serde_json::to_string(&text)?)
+}
+
+fn non_empty_trimmed(value: &str) -> Option<&str> {
+    let value = value.trim();
+
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn public_work_age_category(work: &PublicWork) -> Option<String> {
+    public_age_category_value(work.age_category.as_ref())
+        .or_else(|| public_age_category_label(work.age_category_label.as_deref()))
+}
+
+fn public_age_category_value(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::Number(number) => match number.as_u64()? {
+            1 => Some("all".to_owned()),
+            2 => Some("r15".to_owned()),
+            3 => Some("r18".to_owned()),
+            _ => None,
+        },
+        Value::String(value) => public_age_category_label(Some(value)),
+        _ => None,
+    }
+}
+
+fn public_age_category_label(value: Option<&str>) -> Option<String> {
+    let normalized = value?
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['-', '_', ' '], "");
+
+    if normalized.is_empty() {
+        None
+    } else if normalized.contains("adult") || normalized.contains("r18") || normalized == "18" {
+        Some("r18".to_owned())
+    } else if normalized.contains("r15") || normalized == "15" {
+        Some("r15".to_owned())
+    } else if normalized.contains("general") || normalized.contains("all") {
+        Some("all".to_owned())
+    } else {
+        None
+    }
+}
+
+fn public_work_content_size(work: &PublicWork) -> Option<u64> {
+    work.content_size.as_ref().and_then(json_value_as_u64)
+}
+
+fn public_work_thumbnail_url(work: &PublicWork) -> Option<String> {
+    work.image_main_url()
+        .or(work.image_thumb.as_deref())
+        .and_then(normalize_public_url)
+}
+
+fn normalize_public_url(value: &str) -> Option<String> {
+    let value = value.trim();
+
+    if value.is_empty() {
+        None
+    } else if value.starts_with("//") {
+        Some(format!("https:{value}"))
+    } else if value.starts_with("http://") || value.starts_with("https://") {
+        Some(value.to_owned())
+    } else if value.starts_with('/') {
+        Some(format!("https://www.dlsite.com{value}"))
+    } else {
+        Some(format!("https://img.dlsite.jp/{value}"))
+    }
+}
+
+fn normalize_public_datetime(value: &str) -> Option<String> {
+    let value = value.trim();
+
+    if value.is_empty() {
+        return None;
+    }
+
+    if let Ok(value) = DateTime::parse_from_rfc3339(value) {
+        return Some(datetime_to_string(value.with_timezone(&Utc)));
+    }
+
+    if let Ok(value) = chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S") {
+        return Some(datetime_to_string(
+            DateTime::<Utc>::from_naive_utc_and_offset(value, Utc),
+        ));
+    }
+
+    if let Ok(value) = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+        let value = value.and_hms_opt(0, 0, 0)?;
+        return Some(datetime_to_string(
+            DateTime::<Utc>::from_naive_utc_and_offset(value, Utc),
+        ));
+    }
+
+    Some(value.to_owned())
+}
+
+fn public_work_raw_json(work: &PublicWork, content_size: Option<u64>) -> Result<String> {
+    let mut value = serde_json::to_value(work)?;
+    let tags = public_work_tags(&value);
+
+    if let Value::Object(map) = &mut value {
+        map.insert("source".to_owned(), json!("public_product"));
+
+        if let Some(content_size) = content_size {
+            map.insert("content_size".to_owned(), json!(content_size));
+        }
+
+        if !tags.is_empty() {
+            map.insert("tags".to_owned(), Value::Array(tags));
+        }
+    }
+
+    Ok(serde_json::to_string(&value)?)
+}
+
+fn public_work_tags(value: &Value) -> Vec<Value> {
+    let mut tags = BTreeSet::<(String, String)>::new();
+
+    if let Some(existing_tags) = value.get("tags").and_then(Value::as_array) {
+        for tag in existing_tags {
+            if let (Some(class), Some(name)) = (
+                tag.get("class").and_then(Value::as_str),
+                tag.get("name").and_then(Value::as_str),
+            ) {
+                push_public_tag(&mut tags, class, name);
+            }
+        }
+    }
+
+    if let Some(genres) = value.get("genres").and_then(Value::as_array) {
+        for genre in genres {
+            let name = genre
+                .get("name")
+                .or_else(|| genre.get("name_base"))
+                .and_then(Value::as_str);
+
+            if let Some(name) = name {
+                push_public_tag(&mut tags, "genre", name);
+            }
+        }
+    }
+
+    if let Some(creators) = value.get("creaters").and_then(Value::as_object) {
+        for (class, values) in creators {
+            push_public_credit_values(&mut tags, class, values);
+        }
+    }
+
+    for class in [
+        "voice_by",
+        "illust_by",
+        "scenario_by",
+        "created_by",
+        "music_by",
+        "other_by",
+    ] {
+        if let Some(values) = value.get(class) {
+            push_public_credit_values(&mut tags, class, values);
+        }
+    }
+
+    tags.into_iter()
+        .map(|(class, name)| json!({ "class": class, "name": name }))
+        .collect()
+}
+
+fn push_public_credit_values(
+    tags: &mut BTreeSet<(String, String)>,
+    fallback_class: &str,
+    value: &Value,
+) {
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                push_public_credit_values(tags, fallback_class, value);
+            }
+        }
+        Value::Object(map) => {
+            if let Some(name) = map.get("name").and_then(Value::as_str) {
+                let class = map
+                    .get("classification")
+                    .and_then(Value::as_str)
+                    .unwrap_or(fallback_class);
+                push_public_tag(tags, class, name);
+            } else {
+                for value in map.values() {
+                    push_public_credit_values(tags, fallback_class, value);
+                }
+            }
+        }
+        Value::String(name) => push_public_tag(tags, fallback_class, name),
+        _ => {}
+    }
+}
+
+fn push_public_tag(tags: &mut BTreeSet<(String, String)>, class: &str, name: &str) {
+    let class = class.trim();
+    let name = name.trim();
+
+    if !class.is_empty() && !name.is_empty() {
+        tags.insert((class.to_owned(), name.to_owned()));
+    }
+}
+
+fn json_value_as_u64(value: &Value) -> Option<u64> {
+    match value {
+        Value::Number(number) => number.as_u64(),
+        Value::String(value) => value.parse::<u64>().ok(),
+        _ => None,
+    }
 }
 
 fn datetime_to_string(value: DateTime<Utc>) -> String {
@@ -2585,7 +2964,7 @@ mod tests {
     use super::*;
     use dm_api::{
         AgeCategory, DownloadFile, DownloadFileKind, DownloadPlan, DownloadStreamRequest, Maker,
-        WorkKind, WorkThumbnail,
+        PublicWorkImage, PublicWorkImageObject, WorkKind, WorkThumbnail,
     };
     use dm_credentials::InMemoryCredentialStore;
     use dm_download::{DownloadPhase, DownloadedFile};
@@ -2707,6 +3086,31 @@ mod tests {
                 .collect();
 
             Ok(works)
+        }
+    }
+
+    #[derive(Debug, Clone, Default)]
+    struct FakeLocalWorkMetadataSource {
+        works: Vec<PublicWork>,
+        fail: bool,
+    }
+
+    #[async_trait]
+    impl LocalWorkMetadataSource for FakeLocalWorkMetadataSource {
+        async fn works(&self, ids: &[WorkId]) -> Result<Vec<PublicWork>> {
+            if self.fail {
+                return Err(LibraryError::SyncSource(
+                    "local metadata lookup failed".to_owned(),
+                ));
+            }
+
+            let requested = ids.iter().map(|id| id.as_ref()).collect::<Vec<_>>();
+            Ok(self
+                .works
+                .iter()
+                .filter(|work| requested.contains(&work.id.as_ref()))
+                .cloned()
+                .collect())
         }
     }
 
@@ -3049,6 +3453,50 @@ mod tests {
             tags: Vec::new(),
             content_size: Some(10),
             extra: BTreeMap::new(),
+        }
+    }
+
+    fn public_work(work_id: &str, title: &str, maker: &str) -> PublicWork {
+        PublicWork {
+            id: WorkId::new(work_id),
+            name: Some(title.to_owned()),
+            maker_id: Some(format!("maker-{maker}")),
+            maker_name: Some(maker.to_owned()),
+            work_kind: Some("SOU".to_owned()),
+            work_kind_label: Some("ボイス・ASMR".to_owned()),
+            age_category: Some(json!(3)),
+            age_category_label: Some("adult".to_owned()),
+            image_main: Some(PublicWorkImage::Object(PublicWorkImageObject {
+                url: Some(format!("//img.example.test/{work_id}/main.jpg")),
+                relative_url: None,
+            })),
+            image_thumb: Some(format!("//img.example.test/{work_id}/main_240x240.jpg")),
+            registered_at: Some("2026-04-24 00:00:00".to_owned()),
+            published_at: None,
+            updated_at: Some("2026-04-25 09:09:14".to_owned()),
+            content_size: Some(json!(2048)),
+            extra: BTreeMap::from([
+                (
+                    "creaters".to_owned(),
+                    json!({
+                        "voice_by": [
+                            {
+                                "name": "Voice One",
+                                "classification": "voice_by"
+                            }
+                        ]
+                    }),
+                ),
+                (
+                    "genres".to_owned(),
+                    json!([
+                        {
+                            "name": "ASMR",
+                            "id": 497
+                        }
+                    ]),
+                ),
+            ]),
         }
     }
 
@@ -3543,6 +3991,102 @@ mod tests {
                     .into_owned()
             )
         );
+
+        std::fs::remove_dir_all(root).unwrap();
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn imports_local_work_folders_with_public_metadata() -> Result<()> {
+        let library = migrated_library().await?;
+        let root = test_dir("import-local-work-folders-metadata");
+        let library_root = root.join("library");
+        let local_path = library_root.join("[RJ123456] Local Work");
+        let source = FakeLocalWorkMetadataSource {
+            works: vec![public_work(
+                "RJ123456",
+                "Public Metadata Work",
+                "Public Maker",
+            )],
+            fail: false,
+        };
+        std::fs::create_dir_all(&local_path).unwrap();
+
+        let report = library
+            .import_local_work_downloads_with_metadata_source(
+                LocalWorkImportRequest::new(&library_root),
+                &source,
+            )
+            .await?;
+        let page = library.list_products(&ProductListQuery::default()).await?;
+
+        assert_eq!(report.imported_count, 1);
+        assert_eq!(report.metadata_candidate_count, 1);
+        assert_eq!(report.metadata_updated_count, 1);
+        assert_eq!(report.metadata_missing_count, 0);
+        assert_eq!(report.metadata_error, None);
+        assert_eq!(page.products[0].work_id, "RJ123456");
+        assert_eq!(page.products[0].title, "Public Metadata Work");
+        assert_eq!(page.products[0].maker_name.as_deref(), Some("Public Maker"));
+        assert_eq!(page.products[0].work_type.as_deref(), Some("SOU"));
+        assert_eq!(page.products[0].age_category.as_deref(), Some("r18"));
+        assert_eq!(
+            page.products[0].thumbnail_url.as_deref(),
+            Some("https://img.example.test/RJ123456/main.jpg")
+        );
+        assert_eq!(page.products[0].content_size_bytes, Some(2048));
+        assert_eq!(page.products[0].credit_groups[0].names, vec!["Voice One"]);
+        assert_eq!(
+            page.products[0].download.local_path,
+            Some(
+                local_path
+                    .canonicalize()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            )
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn local_work_import_hydrates_existing_placeholder_metadata() -> Result<()> {
+        let library = migrated_library().await?;
+        let root = test_dir("import-local-work-existing-metadata");
+        let library_root = root.join("library");
+        let local_path = library_root.join("[RJ123456] Local Work");
+        std::fs::create_dir_all(&local_path).unwrap();
+
+        library
+            .import_local_work_downloads(LocalWorkImportRequest::new(&library_root))
+            .await?;
+
+        let source = FakeLocalWorkMetadataSource {
+            works: vec![public_work(
+                "RJ123456",
+                "Public Metadata Work",
+                "Public Maker",
+            )],
+            fail: false,
+        };
+        let report = library
+            .import_local_work_downloads_with_metadata_source(
+                LocalWorkImportRequest::new(&library_root),
+                &source,
+            )
+            .await?;
+        let page = library.list_products(&ProductListQuery::default()).await?;
+
+        assert_eq!(report.imported_count, 0);
+        assert_eq!(report.skipped_existing, 1);
+        assert_eq!(report.metadata_candidate_count, 1);
+        assert_eq!(report.metadata_updated_count, 1);
+        assert_eq!(page.products[0].title, "Public Metadata Work");
+        assert_eq!(page.products[0].maker_name.as_deref(), Some("Public Maker"));
 
         std::fs::remove_dir_all(root).unwrap();
 

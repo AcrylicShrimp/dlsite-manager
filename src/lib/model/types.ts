@@ -155,6 +155,10 @@ export type LocalWorkImportReport = {
   skippedAmbiguous: number;
   skippedNonUtf8: number;
   skippedExisting: number;
+  metadataCandidateCount: number;
+  metadataUpdatedCount: number;
+  metadataMissingCount: number;
+  metadataError: string | null;
   importedWorks: { workId: string; localPath: string }[];
 };
 

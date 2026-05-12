@@ -673,6 +673,15 @@ impl Storage {
         &self,
         imports: &[LocalWorkDownloadImport],
     ) -> Result<()> {
+        self.import_local_work_downloads_with_metadata(imports, &[])
+            .await
+    }
+
+    pub async fn import_local_work_downloads_with_metadata(
+        &self,
+        imports: &[LocalWorkDownloadImport],
+        metadata_works: &[CachedWork],
+    ) -> Result<()> {
         let mut transaction = self.begin_write().await?;
 
         for import in imports {
@@ -682,7 +691,37 @@ impl Storage {
                 .await?;
         }
 
+        for work in metadata_works {
+            transaction.upsert_work(work).await?;
+        }
+
         transaction.commit().await
+    }
+
+    pub async fn work_needs_local_metadata_hydration(&self, work_id: &str) -> Result<bool> {
+        let row = sqlx::query(
+            "SELECT title, maker_name, raw_json
+             FROM works
+             WHERE work_id = ?1",
+        )
+        .bind(work_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(true);
+        };
+
+        let title: String = row.try_get("title")?;
+        let maker_name: Option<String> = row.try_get("maker_name")?;
+        let raw_json: String = row.try_get("raw_json")?;
+
+        Ok(cached_work_needs_local_metadata_hydration(
+            work_id,
+            &title,
+            maker_name.as_deref(),
+            &raw_json,
+        ))
     }
 
     pub async fn set_work_custom_tags(
@@ -2201,6 +2240,29 @@ fn local_product_owner() -> ProductOwner {
     }
 }
 
+fn cached_work_needs_local_metadata_hydration(
+    work_id: &str,
+    title: &str,
+    maker_name: Option<&str>,
+    raw_json: &str,
+) -> bool {
+    let parsed = serde_json::from_str::<serde_json::Value>(raw_json).ok();
+    let detail_status = parsed
+        .as_ref()
+        .and_then(|value| value.get("detail_status"))
+        .and_then(serde_json::Value::as_str);
+    let source = parsed
+        .as_ref()
+        .and_then(|value| value.get("source"))
+        .and_then(serde_json::Value::as_str);
+
+    matches!(
+        detail_status,
+        Some("local_only") | Some(MISSING_WORK_DETAIL_STATUS)
+    ) || source == Some("local_scan")
+        || (maker_name.is_none() && title.trim().eq_ignore_ascii_case(work_id))
+}
+
 fn product_type_group_case_sql() -> &'static str {
     "CASE
         WHEN lower(replace(replace(replace(coalesce(w.work_type, ''), '_', ''), '-', ''), ' ', '')) LIKE '%vcm%'
@@ -2366,7 +2428,10 @@ fn product_credit_groups_from_raw_json(raw_json: &str) -> Vec<ProductCreditGroup
 
 fn product_content_size_from_raw_json(raw_json: &str) -> Option<u64> {
     let value = serde_json::from_str::<serde_json::Value>(raw_json).ok()?;
-    json_value_as_u64(value.get("content_size")?)
+    value
+        .get("content_size")
+        .or_else(|| value.get("contents_file_size"))
+        .and_then(json_value_as_u64)
 }
 
 fn product_text_values_from_json(raw_json: &str) -> Vec<ProductTextValue> {
@@ -4018,6 +4083,76 @@ mod tests {
         );
         assert_eq!(account_page.total_count, 0);
         assert_eq!(account_page.products.len(), 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn local_download_import_can_hydrate_placeholder_metadata() -> Result<()> {
+        let storage = migrated_storage().await?;
+        storage
+            .import_local_work_downloads(&[LocalWorkDownloadImport {
+                work: CachedWork {
+                    work_id: "RJ123456".to_owned(),
+                    title: "RJ123456".to_owned(),
+                    title_json: r#"{"en_US":"RJ123456"}"#.to_owned(),
+                    maker_id: None,
+                    maker_name: None,
+                    maker_json: None,
+                    work_type: None,
+                    age_category: None,
+                    thumbnail_url: None,
+                    registered_at: None,
+                    published_at: None,
+                    updated_at: None,
+                    raw_json: r#"{"workno":"RJ123456","source":"local_scan","detail_status":"local_only"}"#
+                        .to_owned(),
+                    last_detail_sync_at: "2026-05-11T00:00:00.000Z".to_owned(),
+                },
+                download: WorkDownloadUpdate {
+                    work_id: "RJ123456".to_owned(),
+                    status: WorkDownloadStatus::Downloaded,
+                    local_path: Some("/library/RJ123456".to_owned()),
+                    staging_path: None,
+                    unpack_policy: "manual".to_owned(),
+                    bytes_received: 0,
+                    bytes_total: None,
+                    error_code: None,
+                    error_message: None,
+                    started_at: Some("2026-05-11T00:00:00.000Z".to_owned()),
+                    completed_at: Some("2026-05-11T00:00:00.000Z".to_owned()),
+                    updated_at: "2026-05-11T00:00:00.000Z".to_owned(),
+                },
+            }])
+            .await?;
+
+        assert!(
+            storage
+                .work_needs_local_metadata_hydration("RJ123456")
+                .await?
+        );
+
+        storage
+            .import_local_work_downloads_with_metadata(
+                &[],
+                &[CachedWork {
+                    raw_json: r#"{"workno":"RJ123456","source":"public_product","contents_file_size":2048}"#
+                        .to_owned(),
+                    ..work("RJ123456", "Hydrated Work", "Public Maker", "2026-01-01T00:00:00Z")
+                }],
+            )
+            .await?;
+
+        let page = storage.list_products(&ProductListQuery::default()).await?;
+
+        assert_eq!(page.products[0].title, "Hydrated Work");
+        assert_eq!(page.products[0].maker_name.as_deref(), Some("Public Maker"));
+        assert_eq!(page.products[0].content_size_bytes, Some(2048));
+        assert!(
+            !storage
+                .work_needs_local_metadata_hydration("RJ123456")
+                .await?
+        );
 
         Ok(())
     }

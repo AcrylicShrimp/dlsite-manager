@@ -8,10 +8,11 @@ use dm_library::{
     AccountRemovalReport, AccountSyncRequest, BulkWorkDownloadPreview,
     BulkWorkDownloadPreviewProgress, BulkWorkDownloadPreviewProgressSink,
     BulkWorkDownloadPreviewRequest, BulkWorkDownloadProgress, BulkWorkDownloadProgressSink,
-    BulkWorkDownloadReport, BulkWorkDownloadRequest, DlsiteSyncSource, DlsiteWorkDownloadSource,
-    Library, LocalWorkImportReport, LocalWorkImportRequest, SaveAccountRequest, SyncProgress,
-    SyncProgressSink, WorkDownloadMarkRequest, WorkDownloadProgress, WorkDownloadProgressSink,
-    WorkDownloadRemovalRequest, WorkDownloadRequest,
+    BulkWorkDownloadReport, BulkWorkDownloadRequest, DlsitePublicMetadataSource, DlsiteSyncSource,
+    DlsiteWorkDownloadSource, Library, LocalWorkImportReport, LocalWorkImportRequest,
+    SaveAccountRequest, SyncProgress, SyncProgressSink, WorkDownloadMarkRequest,
+    WorkDownloadProgress, WorkDownloadProgressSink, WorkDownloadRemovalRequest,
+    WorkDownloadRequest,
 };
 use dm_storage::{
     Account, AppSettings, ProductAgeCategory, ProductCreditGroup, ProductCustomTag,
@@ -1592,10 +1593,29 @@ async fn scan_local_work_downloads(
             return Err(error);
         }
     };
+    let metadata_source = match dm_api::DlsiteClient::new(dm_api::DlsiteClientConfig::default()) {
+        Ok(client) => DlsitePublicMetadataSource::new(client),
+        Err(error) => {
+            let message = command_error(error);
+            record_audit(
+                &state.audit,
+                AuditEvent::failed(
+                    "work.local.scan",
+                    "Failed to prepare DLsite product metadata lookup",
+                )
+                .with_error(Some("api_client"), message.clone()),
+            )
+            .await;
+            return Err(message);
+        }
+    };
 
     match state
         .library
-        .import_local_work_downloads(LocalWorkImportRequest::new(&library_root))
+        .import_local_work_downloads_with_metadata_source(
+            LocalWorkImportRequest::new(&library_root),
+            &metadata_source,
+        )
         .await
     {
         Ok(report) => {
@@ -1609,6 +1629,10 @@ async fn scan_local_work_downloads(
                         "skippedAmbiguous": report.skipped_ambiguous,
                         "skippedNonUtf8": report.skipped_non_utf8,
                         "skippedExisting": report.skipped_existing,
+                        "metadataCandidateCount": report.metadata_candidate_count,
+                        "metadataUpdatedCount": report.metadata_updated_count,
+                        "metadataMissingCount": report.metadata_missing_count,
+                        "metadataError": report.metadata_error.as_deref(),
                     })),
             )
             .await;
@@ -2296,6 +2320,10 @@ struct LocalWorkImportReportDto {
     skipped_ambiguous: usize,
     skipped_non_utf8: usize,
     skipped_existing: usize,
+    metadata_candidate_count: usize,
+    metadata_updated_count: usize,
+    metadata_missing_count: usize,
+    metadata_error: Option<String>,
     imported_works: Vec<LocalWorkImportItemDto>,
 }
 
@@ -2308,6 +2336,10 @@ impl From<LocalWorkImportReport> for LocalWorkImportReportDto {
             skipped_ambiguous: report.skipped_ambiguous,
             skipped_non_utf8: report.skipped_non_utf8,
             skipped_existing: report.skipped_existing,
+            metadata_candidate_count: report.metadata_candidate_count,
+            metadata_updated_count: report.metadata_updated_count,
+            metadata_missing_count: report.metadata_missing_count,
+            metadata_error: report.metadata_error,
             imported_works: report
                 .imported_works
                 .into_iter()

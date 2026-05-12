@@ -1074,8 +1074,19 @@
         report.skippedAmbiguous +
         report.skippedNonUtf8 +
         report.skippedExisting;
-      const suffix = skipped > 0 ? `, skipped ${skipped}` : "";
-      notifySuccess(`Imported ${report.importedCount} local folders${suffix}`);
+      const summary = [`Imported ${report.importedCount} local folder${report.importedCount === 1 ? "" : "s"}`];
+      if (report.metadataUpdatedCount > 0) {
+        summary.push(`updated details for ${report.metadataUpdatedCount}`);
+      }
+      if (skipped > 0) {
+        summary.push(`skipped ${skipped}`);
+      }
+      notifySuccess(summary.join(", "));
+      if (report.metadataError) {
+        notifyInfo(`Local metadata lookup failed: ${report.metadataError}`);
+      } else if (report.metadataMissingCount > 0) {
+        notifyInfo(`No DLsite metadata found for ${report.metadataMissingCount} local product${report.metadataMissingCount === 1 ? "" : "s"}`);
+      }
       await loadProducts();
     } catch (err) {
       notifyError(errorMessage(err));
