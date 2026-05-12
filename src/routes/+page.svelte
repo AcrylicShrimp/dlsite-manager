@@ -82,7 +82,6 @@
     ConfirmationDialog,
     JobEvent,
     JobSnapshot,
-    LocalWorkImportReport,
     Product,
     ProductActionMenu,
     ProductCreditField,
@@ -120,7 +119,6 @@
   let totalProducts = $state(0);
   let productsLoading = $state(true);
   let bulkDownloadPlanning = $state(false);
-  let localScanRunning = $state(false);
   let productSearch = $state("");
   let selectedAccountIds = $state<string[]>([]);
   let selectedProductTypes = $state<string[]>([]);
@@ -1060,41 +1058,6 @@
     }
   }
 
-  async function scanLocalWorkDownloads() {
-    if (localScanRunning) {
-      return;
-    }
-
-    localScanRunning = true;
-
-    try {
-      const report = await invoke<LocalWorkImportReport>("scan_local_work_downloads");
-      const skipped =
-        report.skippedNoId +
-        report.skippedAmbiguous +
-        report.skippedNonUtf8 +
-        report.skippedExisting;
-      const summary = [`Imported ${report.importedCount} local folder${report.importedCount === 1 ? "" : "s"}`];
-      if (report.metadataUpdatedCount > 0) {
-        summary.push(`updated details for ${report.metadataUpdatedCount}`);
-      }
-      if (skipped > 0) {
-        summary.push(`skipped ${skipped}`);
-      }
-      notifySuccess(summary.join(", "));
-      if (report.metadataError) {
-        notifyInfo(`Local metadata lookup failed: ${report.metadataError}`);
-      } else if (report.metadataMissingCount > 0) {
-        notifyInfo(`No DLsite metadata found for ${report.metadataMissingCount} local product${report.metadataMissingCount === 1 ? "" : "s"}`);
-      }
-      await loadProducts();
-    } catch (err) {
-      notifyError(errorMessage(err));
-    } finally {
-      localScanRunning = false;
-    }
-  }
-
   async function openDownloadedProduct(product: Product) {
     if (!product.download.localPath) {
       return;
@@ -1790,14 +1753,6 @@
               </button>
             </div>
             <div class="library-action-group">
-              <button
-                class="secondary"
-                type="button"
-                onclick={scanLocalWorkDownloads}
-                disabled={localScanRunning || productsLoading}
-              >
-                {localScanRunning ? "Scanning" : "Scan Local"}
-              </button>
               <button
                 class="secondary download-results-button"
                 type="button"
