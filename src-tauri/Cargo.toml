@@ -1,6 +1,6 @@
 [package]
 name = "dlsite-manager"
-version = "3.1.0"
+version = "3.2.0"
 description = "Desktop manager for DLsite works and libraries."
 authors = ["AcrylicShrimp"]
 edition = "2021"
@@ -27,6 +27,8 @@ dm-library = { path = "../crates/dm-library" }
 dm-storage = { path = "../crates/dm-storage" }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+tauri-plugin-process = "2"
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["sync"] }

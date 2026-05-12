@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "dlsite-manager",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "identifier": "dev.ashrimp.dlsite-manager",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -23,6 +23,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -31,5 +32,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVEREVBRjgxQzc4OUREQTAKUldTZzNZbkhnYS9lWFQrVHk0V1l2NGs5SnkwSXJVbk9VaHlDRUttaEZWb3BSZHlSOUFVWW8rcEwK",
+      "endpoints": [
+        "https://github.com/AcrylicShrimp/dlsite-manager/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

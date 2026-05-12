@@ -5,6 +5,9 @@
   import { downloadDir } from "@tauri-apps/api/path";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { openUrl } from "@tauri-apps/plugin-opener";
+  import { relaunch } from "@tauri-apps/plugin-process";
+  import { check } from "@tauri-apps/plugin-updater";
+  import type { DownloadEvent } from "@tauri-apps/plugin-updater";
   import { onDestroy, onMount } from "svelte";
   import ConfirmationDialogView from "$lib/components/ConfirmationDialog.svelte";
   import ToastStack from "$lib/components/ToastStack.svelte";
@@ -106,6 +109,9 @@
   let settingsSaving = $state(false);
   let appInfo = $state<AppInfo | null>(null);
   let appInfoLoading = $state(true);
+  let updateChecking = $state(false);
+  let updateInstalling = $state(false);
+  let updateProgressMessage = $state("");
 
   let accounts = $state<Account[]>([]);
   let accountsLoading = $state(true);
@@ -226,6 +232,90 @@
     } finally {
       appInfoLoading = false;
     }
+  }
+
+  async function checkForUpdates() {
+    if (updateChecking || updateInstalling) {
+      return;
+    }
+
+    updateChecking = true;
+    updateProgressMessage = "Checking for updates";
+
+    try {
+      const update = await check();
+
+      if (!update) {
+        updateProgressMessage = "";
+        notifyInfo("dlsite-manager is up to date");
+        return;
+      }
+
+      updateChecking = false;
+      updateInstalling = true;
+      updateProgressMessage = `Downloading ${update.version}`;
+      notifyInfo(`Installing update ${update.version}`);
+
+      let downloadedBytes = 0;
+      let contentLength: number | undefined;
+
+      await update.downloadAndInstall((event) => {
+        updateProgressMessage = updateDownloadProgressMessage(update.version, event, downloadedBytes, contentLength);
+
+        if (event.event === "Started") {
+          downloadedBytes = 0;
+          contentLength = event.data.contentLength;
+        } else if (event.event === "Progress") {
+          downloadedBytes += event.data.chunkLength;
+        }
+      });
+
+      updateProgressMessage = `Installed ${update.version}. Relaunching`;
+      notifySuccess(`Installed update ${update.version}. Relaunching`);
+      await relaunch();
+    } catch (err) {
+      updateProgressMessage = "";
+      notifyError(`Update failed: ${errorMessage(err)}`);
+    } finally {
+      updateChecking = false;
+      updateInstalling = false;
+    }
+  }
+
+  function updateDownloadProgressMessage(
+    version: string,
+    event: DownloadEvent,
+    downloadedBytes: number,
+    contentLength: number | undefined,
+  ) {
+    if (event.event === "Started") {
+      return `Downloading ${version}`;
+    }
+
+    if (event.event === "Progress") {
+      const nextDownloadedBytes = downloadedBytes + event.data.chunkLength;
+
+      if (contentLength && contentLength > 0) {
+        const percent = Math.min(100, Math.floor((nextDownloadedBytes / contentLength) * 100));
+        return `Downloading ${version} ${percent}%`;
+      }
+
+      return `Downloading ${version} ${formatBytes(nextDownloadedBytes)}`;
+    }
+
+    return `Installing ${version}`;
+  }
+
+  function updateButtonLabel() {
+    if (updateInstalling) {
+      return "Installing";
+    }
+
+    if (updateChecking) {
+      return "Checking";
+    }
+
+    return "Check for Updates";
   }
 
   async function loadSettings() {
@@ -2577,6 +2667,23 @@
             <dt>Tauri</dt>
             <dd>{appInfoValue(appInfo?.tauriVersion, appInfoLoading)}</dd>
           </dl>
+
+          <div class="update-check">
+            <div>
+              <h3>Updates</h3>
+              <p>Updates are checked only when you press this button.</p>
+              {#if updateProgressMessage}
+                <p class="update-status">{updateProgressMessage}</p>
+              {/if}
+            </div>
+            <UiButton
+              size="small"
+              onclick={checkForUpdates}
+              disabled={updateChecking || updateInstalling}
+            >
+              {updateButtonLabel()}
+            </UiButton>
+          </div>
         </section>
       </div>
     {/if}
@@ -5135,6 +5242,39 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .update-check {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: start;
+    margin-top: 4px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .update-check h3,
+  .update-check p {
+    margin: 0;
+  }
+
+  .update-check h3 {
+    color: var(--text-strong);
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .update-check p {
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .update-check .update-status {
+    color: var(--accent);
+    font-weight: 650;
   }
 
   .path-control {

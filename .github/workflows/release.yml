@@ -92,12 +92,19 @@ jobs:
             DRAFT="true"
           fi
 
+          if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY secret is required for updater artifact signing"
+            exit 1
+          fi
+
           {
             echo "tag=${TAG}"
             echo "version=${TAG_VERSION}"
             echo "prerelease=${PRERELEASE}"
             echo "draft=${DRAFT}"
           } >> "${GITHUB_OUTPUT}"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
   build:
     name: Build ${{ matrix.label }}
@@ -144,6 +151,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build Tauri bundles
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build
 
       - name: Collect release artifacts
@@ -160,7 +170,7 @@ jobs:
 
           const bundleRoot = path.join("target", "release", "bundle");
           const outputDir = path.join("dist", "release");
-          const allowedExtensions = new Set([".dmg", ".msi", ".exe"]);
+          const allowedExtensions = new Set([".dmg", ".msi", ".exe", ".sig"]);
           const allowedSuffixes = [".app.tar.gz"];
 
           function walk(directory) {
@@ -245,6 +255,66 @@ jobs:
             echo "::error::No release files were downloaded"
             exit 1
           fi
+
+          node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+
+          const releaseDir = path.join("dist", "release");
+          const repo = process.env.GH_REPO;
+          const tag = process.env.TAG;
+          const version = process.env.VERSION;
+          const files = fs.readdirSync(releaseDir).filter((entry) => {
+            return fs.statSync(path.join(releaseDir, entry)).isFile();
+          });
+
+          function assetUrl(fileName) {
+            return `https://github.com/${repo}/releases/download/${tag}/${encodeURIComponent(fileName)}`;
+          }
+
+          function signatureFor(fileName) {
+            const signatureName = `${fileName}.sig`;
+            const signaturePath = path.join(releaseDir, signatureName);
+
+            if (!fs.existsSync(signaturePath)) {
+              throw new Error(`Missing updater signature ${signatureName}`);
+            }
+
+            return fs.readFileSync(signaturePath, "utf8").trim();
+          }
+
+          function findOne(description, predicate) {
+            const matches = files.filter(predicate).sort();
+
+            if (matches.length !== 1) {
+              throw new Error(`Expected exactly one ${description}, found ${matches.length}: ${matches.join(", ")}`);
+            }
+
+            return matches[0];
+          }
+
+          const macUpdater = findOne("macOS updater artifact", (file) => file.endsWith(".app.tar.gz"));
+          const windowsUpdater = findOne("Windows NSIS updater artifact", (file) => file.endsWith("-setup.exe"));
+          const latest = {
+            version,
+            notes: `dlsite-manager ${version}`,
+            pub_date: new Date().toISOString(),
+            platforms: {
+              "darwin-aarch64": {
+                signature: signatureFor(macUpdater),
+                url: assetUrl(macUpdater),
+              },
+              "windows-x86_64": {
+                signature: signatureFor(windowsUpdater),
+                url: assetUrl(windowsUpdater),
+              },
+            },
+          };
+
+          fs.writeFileSync(path.join(releaseDir, "latest.json"), `${JSON.stringify(latest, null, 2)}\n`);
+          NODE
+
+          mapfile -d "" files < <(find dist/release -type f -print0 | sort -z)
 
           flags=()
           if [[ "${PRERELEASE}" == "true" ]]; then
