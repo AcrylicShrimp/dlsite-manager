@@ -534,9 +534,24 @@ async fn start_account_sync(
         }
     };
     let library = state.library.clone();
+    let (local_scan_library_root, local_scan_skip_reason) = match state.storage.app_settings().await
+    {
+        Ok(settings) => match required_library_root(&settings) {
+            Ok(root) => (Some(root), None),
+            Err(error) => (None, Some(error)),
+        },
+        Err(error) => (None, Some(command_error(error))),
+    };
     let mut metadata = JobMetadata::new();
 
     metadata.insert("accountId".to_owned(), json!(account_id.clone()));
+    metadata.insert(
+        "localScanPlanned".to_owned(),
+        json!(local_scan_library_root.is_some()),
+    );
+    if let Some(reason) = &local_scan_skip_reason {
+        metadata.insert("localScanSkipReason".to_owned(), json!(reason));
+    }
 
     let job_account_id = account_id.clone();
     let job_id = state.jobs.spawn(
@@ -547,7 +562,8 @@ async fn start_account_sync(
             context.info("Preparing account sync");
             let client = dm_api::DlsiteClient::new(dm_api::DlsiteClientConfig::default())
                 .map_err(|error| JobFailure::with_code("api_client", error.to_string()))?;
-            let source = DlsiteSyncSource::new(client);
+            let source = DlsiteSyncSource::new(client.clone());
+            let metadata_source = DlsitePublicMetadataSource::new(client);
             let progress_sink = JobSyncProgressSink {
                 context: context.clone(),
             };
@@ -563,6 +579,67 @@ async fn start_account_sync(
                 )
                 .await
                 .map_err(account_sync_failure)?;
+            let local_scan_output = match &local_scan_library_root {
+                Some(library_root) => {
+                    context.set_phase("scanningLocalDownloads");
+                    context.clear_progress();
+                    context.info("Scanning local downloads");
+
+                    match library
+                        .import_local_work_downloads_with_metadata_source(
+                            LocalWorkImportRequest::new(library_root),
+                            &metadata_source,
+                        )
+                        .await
+                    {
+                        Ok(report) => {
+                            context.info(format!(
+                                "Local scan imported {} folders and updated metadata for {} works",
+                                report.imported_count, report.metadata_updated_count
+                            ));
+                            if report.metadata_missing_count > 0 {
+                                context.warn(format!(
+                                    "Local scan could not find public metadata for {} works",
+                                    report.metadata_missing_count
+                                ));
+                            }
+                            if let Some(error) = &report.metadata_error {
+                                context.warn(format!(
+                                    "Local scan metadata lookup had a non-fatal error: {error}"
+                                ));
+                            }
+
+                            let mut details = local_work_import_report_details(&report);
+                            if let Value::Object(ref mut object) = details {
+                                object.insert("status".to_owned(), json!("succeeded"));
+                            }
+                            details
+                        }
+                        Err(error) => {
+                            let message = error.support_message();
+
+                            context.warn(format!("Local scan failed after sync: {message}"));
+                            json!({
+                                "status": "failed",
+                                "errorCode": error.failure_code(),
+                                "errorMessage": message,
+                                "errorDetails": error.support_details(),
+                            })
+                        }
+                    }
+                }
+                None => {
+                    let reason = local_scan_skip_reason
+                        .clone()
+                        .unwrap_or_else(|| "Library folder is required".to_owned());
+
+                    context.info(format!("Skipping local scan: {reason}"));
+                    json!({
+                        "status": "skipped",
+                        "reason": reason,
+                    })
+                }
+            };
             let mut output = JobMetadata::new();
 
             output.insert("accountId".to_owned(), json!(report.account_id));
@@ -578,12 +655,18 @@ async fn start_account_sync(
             );
             output.insert("pageLimit".to_owned(), json!(report.page_limit));
             output.insert("concurrency".to_owned(), json!(report.concurrency));
+            output.insert("localScan".to_owned(), local_scan_output);
             if report.missing_detail_count > 0 {
                 context.warn(format!(
                     "{} purchased works were missing details from content/works",
                     report.missing_detail_count
                 ));
             }
+            context.set_phase("completed");
+            context.set_progress(JobProgress::items(
+                Some(report.cached_work_count as u64),
+                Some(report.cached_work_count as u64),
+            ));
             context.info(format!("Synced {} works", report.cached_work_count));
 
             Ok(output)
@@ -1622,18 +1705,7 @@ async fn scan_local_work_downloads(
             record_audit(
                 &state.audit,
                 AuditEvent::succeeded("work.local.scan", "Scanned local work folders")
-                    .with_details(json!({
-                        "scannedDirectories": report.scanned_directories,
-                        "importedCount": report.imported_count,
-                        "skippedNoId": report.skipped_no_id,
-                        "skippedAmbiguous": report.skipped_ambiguous,
-                        "skippedNonUtf8": report.skipped_non_utf8,
-                        "skippedExisting": report.skipped_existing,
-                        "metadataCandidateCount": report.metadata_candidate_count,
-                        "metadataUpdatedCount": report.metadata_updated_count,
-                        "metadataMissingCount": report.metadata_missing_count,
-                        "metadataError": report.metadata_error.as_deref(),
-                    })),
+                    .with_details(local_work_import_report_details(&report)),
             )
             .await;
             Ok(LocalWorkImportReportDto::from(report))
@@ -3142,6 +3214,21 @@ fn job_failure_with_details(
 
 fn command_error(error: impl ToString) -> String {
     error.to_string()
+}
+
+fn local_work_import_report_details(report: &LocalWorkImportReport) -> Value {
+    json!({
+        "scannedDirectories": report.scanned_directories,
+        "importedCount": report.imported_count,
+        "skippedNoId": report.skipped_no_id,
+        "skippedAmbiguous": report.skipped_ambiguous,
+        "skippedNonUtf8": report.skipped_non_utf8,
+        "skippedExisting": report.skipped_existing,
+        "metadataCandidateCount": report.metadata_candidate_count,
+        "metadataUpdatedCount": report.metadata_updated_count,
+        "metadataMissingCount": report.metadata_missing_count,
+        "metadataError": report.metadata_error.as_deref(),
+    })
 }
 
 async fn record_audit(logger: &AuditLogger, event: AuditEvent) {
