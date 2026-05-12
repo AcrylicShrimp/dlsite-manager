@@ -1,0 +1,263 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag, such as v3.0.1 or v3.0.1-rc.1"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  PNPM_VERSION: "10.17.1"
+
+jobs:
+  prepare:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+      draft: ${{ steps.release.outputs.draft }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag, branch, and versions
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+            echo "::error::Release tag must look like v3.0.1 or v3.0.1-rc.1; got ${TAG}"
+            exit 1
+          fi
+
+          git fetch --force origin \
+            "refs/heads/release:refs/remotes/origin/release" \
+            "refs/tags/${TAG}:refs/tags/${TAG}"
+
+          TAG_COMMIT="$(git rev-parse "${TAG}^{commit}")"
+          if ! git merge-base --is-ancestor "${TAG_COMMIT}" origin/release; then
+            echo "::error::${TAG} must point to a commit reachable from origin/release"
+            exit 1
+          fi
+
+          git checkout --detach "${TAG_COMMIT}"
+
+          TAG_VERSION="${TAG#v}"
+          APP_VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          CARGO_VERSION="$(node -e "const fs = require('fs'); const text = fs.readFileSync('src-tauri/Cargo.toml', 'utf8'); const match = text.match(/^version\\s*=\\s*\"([^\"]+)\"/m); if (!match) process.exit(1); console.log(match[1]);")"
+
+          if [[ "${TAG_VERSION}" != "${APP_VERSION}" ]]; then
+            echo "::error::Tag version ${TAG_VERSION} does not match src-tauri/tauri.conf.json version ${APP_VERSION}"
+            exit 1
+          fi
+          if [[ "${APP_VERSION}" != "${PACKAGE_VERSION}" ]]; then
+            echo "::error::src-tauri/tauri.conf.json version ${APP_VERSION} does not match package.json version ${PACKAGE_VERSION}"
+            exit 1
+          fi
+          if [[ "${APP_VERSION}" != "${CARGO_VERSION}" ]]; then
+            echo "::error::src-tauri/tauri.conf.json version ${APP_VERSION} does not match src-tauri/Cargo.toml version ${CARGO_VERSION}"
+            exit 1
+          fi
+
+          if [[ "${TAG_VERSION}" == *"-rc."* ]]; then
+            PRERELEASE="true"
+            DRAFT="false"
+          else
+            PRERELEASE="false"
+            DRAFT="true"
+          fi
+
+          {
+            echo "tag=${TAG}"
+            echo "version=${TAG_VERSION}"
+            echo "prerelease=${PRERELEASE}"
+            echo "draft=${DRAFT}"
+          } >> "${GITHUB_OUTPUT}"
+
+  build:
+    name: Build ${{ matrix.label }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS
+            os: macos-14
+            artifact-name: dlsite-manager-macos
+          - label: Windows
+            os: windows-latest
+            artifact-name: dlsite-manager-windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build outputs
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Tauri bundles
+        run: pnpm tauri build
+
+      - name: Collect release artifacts
+        shell: bash
+        env:
+          ARTIFACT_NAME: ${{ matrix.artifact-name }}
+        run: |
+          set -euo pipefail
+
+          node <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          const path = require("path");
+
+          const bundleRoot = path.join("target", "release", "bundle");
+          const outputDir = path.join("dist", "release");
+          const allowedExtensions = new Set([".dmg", ".msi", ".exe"]);
+          const allowedSuffixes = [".app.tar.gz"];
+
+          function walk(directory) {
+            if (!fs.existsSync(directory)) {
+              return [];
+            }
+
+            const found = [];
+            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+              const fullPath = path.join(directory, entry.name);
+              if (entry.isDirectory()) {
+                found.push(...walk(fullPath));
+              } else if (
+                allowedExtensions.has(path.extname(entry.name).toLowerCase()) ||
+                allowedSuffixes.some((suffix) => entry.name.endsWith(suffix))
+              ) {
+                found.push(fullPath);
+              }
+            }
+            return found;
+          }
+
+          fs.rmSync(outputDir, { recursive: true, force: true });
+          fs.mkdirSync(outputDir, { recursive: true });
+
+          const artifacts = walk(bundleRoot);
+          if (artifacts.length === 0) {
+            console.error(`No release artifacts found below ${bundleRoot}`);
+            process.exit(1);
+          }
+
+          const checksumLines = [];
+          for (const artifact of artifacts) {
+            const destination = path.join(outputDir, path.basename(artifact));
+            fs.copyFileSync(artifact, destination);
+
+            const hash = crypto.createHash("sha256").update(fs.readFileSync(destination)).digest("hex");
+            checksumLines.push(`${hash}  ${path.basename(destination)}`);
+          }
+
+          checksumLines.sort();
+          fs.writeFileSync(
+            path.join(outputDir, `${process.env.ARTIFACT_NAME}-SHA256SUMS.txt`),
+            `${checksumLines.join("\n")}\n`,
+          );
+          NODE
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: dist/release/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/release
+          merge-multiple: true
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          DRAFT: ${{ needs.prepare.outputs.draft }}
+        run: |
+          set -euo pipefail
+
+          mapfile -d "" files < <(find dist/release -type f -print0 | sort -z)
+          if [[ "${#files[@]}" -eq 0 ]]; then
+            echo "::error::No release files were downloaded"
+            exit 1
+          fi
+
+          flags=()
+          if [[ "${PRERELEASE}" == "true" ]]; then
+            flags+=(--prerelease)
+          fi
+          if [[ "${DRAFT}" == "true" ]]; then
+            flags+=(--draft)
+          fi
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "${files[@]}" --clobber
+          else
+            gh release create "${TAG}" "${files[@]}" \
+              --title "dlsite-manager ${VERSION}" \
+              --notes "Automated unsigned build artifacts for dlsite-manager ${VERSION}." \
+              "${flags[@]}"
+          fi
