@@ -98,6 +98,13 @@
     View,
   } from "$lib/model/types";
 
+  const PRODUCT_PAGE_SIZE = 100;
+
+  type ProductLoadOptions = {
+    resetPage?: boolean;
+    clampInvalidPage?: boolean;
+  };
+
   let activeView = $state<View>("library");
 
   let libraryRoot = $state("");
@@ -118,6 +125,7 @@
   let products = $state<Product[]>([]);
   let totalProducts = $state(0);
   let productsLoading = $state(true);
+  let productPageIndex = $state(0);
   let bulkDownloadPlanning = $state(false);
   let productSearch = $state("");
   let selectedAccountIds = $state<string[]>([]);
@@ -355,7 +363,7 @@
         },
       });
       await loadAccounts();
-      await loadProducts();
+      await loadProducts({ clampInvalidPage: true });
     } catch (err) {
       notifyError(errorMessage(err));
     }
@@ -390,7 +398,7 @@
 
       selectedAccountIds = selectedAccountIds.filter((accountId) => accountId !== account.id);
 
-      await Promise.all([loadAccounts(), loadProducts()]);
+      await Promise.all([loadAccounts(), loadProducts({ resetPage: true })]);
     } catch (err) {
       notifyError(errorMessage(err));
     }
@@ -410,14 +418,34 @@
     accountPassword = "";
   }
 
-  async function loadProducts() {
+  async function loadProducts(options: ProductLoadOptions = {}) {
+    if (options.resetPage) {
+      productPageIndex = 0;
+    }
+
     productsLoading = true;
 
     try {
-      const request = productListRequest();
-      const page = await invoke<ProductListPage>("list_products", {
+      let request = productListRequest();
+      let page = await invoke<ProductListPage>("list_products", {
         request,
       });
+
+      if (options.clampInvalidPage) {
+        const pageIndex = clampedProductPageIndex(page.totalCount);
+
+        if (pageIndex !== productPageIndex) {
+          productPageIndex = pageIndex;
+
+          if (page.totalCount > 0) {
+            request = productListRequest();
+            page = await invoke<ProductListPage>("list_products", {
+              request,
+            });
+          }
+        }
+      }
+
       products = page.products;
       totalProducts = page.totalCount;
       await loadProductFilterFacets(request);
@@ -445,9 +473,77 @@
       customTagNames: selectedCustomTagNames,
       excludedCustomTagNames,
       sort: productSort,
-      limit: 100,
-      offset: 0,
+      limit: PRODUCT_PAGE_SIZE,
+      offset: productPageOffset(),
     };
+  }
+
+  function productPageOffset() {
+    return productPageIndex * PRODUCT_PAGE_SIZE;
+  }
+
+  function productPageCount() {
+    return Math.max(1, Math.ceil(totalProducts / PRODUCT_PAGE_SIZE));
+  }
+
+  function clampedProductPageIndex(totalCount: number) {
+    return Math.min(
+      productPageIndex,
+      Math.max(1, Math.ceil(totalCount / PRODUCT_PAGE_SIZE)) - 1,
+    );
+  }
+
+  function productTotalLabel() {
+    return `${totalProducts} ${totalProducts === 1 ? "product" : "products"}`;
+  }
+
+  function productRangeLabel() {
+    if (productsLoading) {
+      return totalProducts > 0 ? `Loading ${productTotalLabel()}` : "Loading products";
+    }
+
+    if (totalProducts === 0 || products.length === 0) {
+      return productTotalLabel();
+    }
+
+    const start = Math.min(productPageOffset() + 1, totalProducts);
+    const end = Math.min(productPageOffset() + products.length, totalProducts);
+
+    return `${start}-${end} of ${productTotalLabel()}`;
+  }
+
+  function productPageLabel() {
+    return `Page ${Math.min(productPageIndex + 1, productPageCount())} of ${productPageCount()}`;
+  }
+
+  function hasPreviousProductPage() {
+    return productPageIndex > 0;
+  }
+
+  function hasNextProductPage() {
+    return productPageIndex < productPageCount() - 1;
+  }
+
+  async function reloadProducts() {
+    await loadProducts({ clampInvalidPage: true });
+  }
+
+  async function goToPreviousProductPage() {
+    if (productsLoading || !hasPreviousProductPage()) {
+      return;
+    }
+
+    productPageIndex = Math.max(0, productPageIndex - 1);
+    await loadProducts({ clampInvalidPage: true });
+  }
+
+  async function goToNextProductPage() {
+    if (productsLoading || !hasNextProductPage()) {
+      return;
+    }
+
+    productPageIndex = Math.min(productPageCount() - 1, productPageIndex + 1);
+    await loadProducts({ clampInvalidPage: true });
   }
 
   function productBulkRequest() {
@@ -478,27 +574,27 @@
 
   async function toggleAccountFilter(accountId: string) {
     selectedAccountIds = toggleFilterValue(selectedAccountIds, accountId);
-    await loadProducts();
+    await loadProducts({ resetPage: true });
   }
 
   async function toggleProductTypeFilter(typeGroup: string) {
     selectedProductTypes = toggleFilterValue(selectedProductTypes, typeGroup);
-    await loadProducts();
+    await loadProducts({ resetPage: true });
   }
 
   async function toggleAgeFilter(ageCategory: string) {
     selectedAgeCategories = toggleFilterValue(selectedAgeCategories, ageCategory);
-    await loadProducts();
+    await loadProducts({ resetPage: true });
   }
 
   async function toggleProductSourceFilter(sourceGroup: string) {
     selectedProductSources = toggleFilterValue(selectedProductSources, sourceGroup);
-    await loadProducts();
+    await loadProducts({ resetPage: true });
   }
 
   async function toggleMakerFilter(makerName: string) {
     selectedMakerNames = toggleFilterValue(selectedMakerNames, makerName);
-    await loadProducts();
+    await loadProducts({ resetPage: true });
   }
 
   function customTagFilterState(tagName: string) {
@@ -526,43 +622,43 @@
       excludedCustomTagNames = excludedCustomTagNames.filter((name) => name !== tagName);
     }
 
-    await loadProducts();
+    await loadProducts({ resetPage: true });
   }
 
   async function clearAccountFilters() {
     selectedAccountIds = [];
-    await loadProducts();
+    await loadProducts({ resetPage: true });
   }
 
   async function clearTypeFilters() {
     selectedProductTypes = [];
-    await loadProducts();
+    await loadProducts({ resetPage: true });
   }
 
   async function clearAgeFilters() {
     selectedAgeCategories = [];
-    await loadProducts();
+    await loadProducts({ resetPage: true });
   }
 
   async function clearSourceFilters() {
     selectedProductSources = [];
-    await loadProducts();
+    await loadProducts({ resetPage: true });
   }
 
   async function clearMakerFilters() {
     selectedMakerNames = [];
-    await loadProducts();
+    await loadProducts({ resetPage: true });
   }
 
   async function clearCustomTagFilters() {
     selectedCustomTagNames = [];
     excludedCustomTagNames = [];
-    await loadProducts();
+    await loadProducts({ resetPage: true });
   }
 
   async function setProductSort(sort: string) {
     productSort = sort;
-    await loadProducts();
+    await loadProducts({ resetPage: true });
   }
 
   async function resetLibraryFilters() {
@@ -575,7 +671,7 @@
     selectedCustomTagNames = [];
     excludedCustomTagNames = [];
     productSort = "latestPurchaseDesc";
-    await loadProducts();
+    await loadProducts({ resetPage: true });
   }
 
   async function loadJobs() {
@@ -601,7 +697,11 @@
     }
 
     if (event.kind === "accountSync" && isTerminalJob(event.snapshot)) {
-      await Promise.all([loadAccounts(), loadProducts(), loadAuditEvents()]);
+      await Promise.all([
+        loadAccounts(),
+        loadProducts({ clampInvalidPage: true }),
+        loadAuditEvents(),
+      ]);
     }
 
     if (
@@ -821,7 +921,7 @@
 
   async function searchProducts(event: Event) {
     event.preventDefault();
-    await loadProducts();
+    await loadProducts({ resetPage: true });
   }
 
   async function copyWorkId(workId: string) {
@@ -1739,7 +1839,7 @@
               <button
                 class="secondary"
                 type="button"
-                onclick={loadProducts}
+                onclick={reloadProducts}
                 disabled={productsLoading}
               >
                 Reload
@@ -1935,7 +2035,26 @@
         {/if}
 
         <div class="list-header">
-          <span>{totalProducts} products</span>
+          <span>{productRangeLabel()}</span>
+          <div class="pagination-controls" role="navigation" aria-label="Library pages">
+            <button
+              class="secondary small"
+              type="button"
+              onclick={goToPreviousProductPage}
+              disabled={productsLoading || !hasPreviousProductPage()}
+            >
+              Previous
+            </button>
+            <span>{productPageLabel()}</span>
+            <button
+              class="secondary small"
+              type="button"
+              onclick={goToNextProductPage}
+              disabled={productsLoading || !hasNextProductPage()}
+            >
+              Next
+            </button>
+          </div>
         </div>
 
         {#if productsLoading}
@@ -4169,11 +4288,27 @@
   .list-header {
     display: flex;
     flex: 0 0 auto;
-    justify-content: flex-end;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
     padding: 9px 14px;
     border-bottom: 1px solid var(--border);
     color: var(--muted);
     font-size: 13px;
+  }
+
+  .pagination-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .pagination-controls span {
+    color: var(--text-subtle);
+    font-size: 12px;
+    font-weight: 650;
+    white-space: nowrap;
   }
 
   .product-table {
@@ -5354,6 +5489,15 @@
     .library-search-row,
     .filter-group {
       grid-template-columns: 1fr;
+    }
+
+    .list-header {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .pagination-controls {
+      flex-wrap: wrap;
     }
 
     .toggle-row button,
