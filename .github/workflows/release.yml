@@ -112,6 +112,10 @@ jobs:
           - label: Windows
             os: windows-latest
             artifact-name: dlsite-manager-windows
+          - label: Linux
+            os: ubuntu-22.04
+            artifact-name: dlsite-manager-linux
+            bundles: appimage
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout release tag
@@ -120,6 +124,21 @@ jobs:
           ref: ${{ needs.prepare.outputs.tag }}
           fetch-depth: 0
           submodules: recursive
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            wget
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -144,7 +163,17 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build Tauri bundles
-        run: pnpm tauri build
+        shell: bash
+        env:
+          BUNDLES: ${{ matrix.bundles }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${BUNDLES}" ]]; then
+            pnpm tauri build --bundles "${BUNDLES}"
+          else
+            pnpm tauri build
+          fi
 
       - name: Collect release artifacts
         shell: bash
@@ -160,7 +189,7 @@ jobs:
 
           const bundleRoot = path.join("target", "release", "bundle");
           const outputDir = path.join("dist", "release");
-          const allowedExtensions = new Set([".dmg", ".msi", ".exe"]);
+          const allowedExtensions = new Set([".dmg", ".msi", ".exe", ".appimage"]);
           const allowedSuffixes = [".app.tar.gz"];
 
           function walk(directory) {
