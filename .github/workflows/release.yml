@@ -175,6 +175,44 @@ jobs:
             pnpm tauri build
           fi
 
+      - name: Repack AppImage without the bundled Wayland client library
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          APPIMAGE_PLUGIN_URL: https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
+        run: |
+          set -euo pipefail
+
+          # linuxdeploy bundles libwayland-client.so.0 even though the AppImage excludelist
+          # rejects it. The host mesa EGL driver is then linked against the older bundled copy,
+          # fails to resolve symbols such as wl_fixes_interface, and WebKitGTK aborts with
+          # "Could not create default EGL display: EGL_BAD_PARAMETER" on every distribution
+          # whose libwayland is newer than the build image.
+          cd target/release/bundle/appimage
+
+          APPDIR="$(find . -maxdepth 1 -type d -name '*.AppDir' -printf '%f\n' | head -1)"
+          APPIMAGE="$(find . -maxdepth 1 -type f -name '*.AppImage' -printf '%f\n' | head -1)"
+          if [[ -z "${APPDIR}" || -z "${APPIMAGE}" ]]; then
+            echo "::error::Expected an AppDir and an AppImage in $(pwd)"
+            exit 1
+          fi
+
+          if ! compgen -G "${APPDIR}/usr/lib/libwayland-client.so.*" >/dev/null; then
+            echo "::notice::No bundled libwayland-client found; keeping the AppImage as built"
+            exit 0
+          fi
+          rm -f "${APPDIR}"/usr/lib/libwayland-client.so.*
+
+          curl --fail --location --silent --show-error \
+            --output linuxdeploy-plugin-appimage.AppImage "${APPIMAGE_PLUGIN_URL}"
+          chmod +x linuxdeploy-plugin-appimage.AppImage
+
+          rm -f "${APPIMAGE}"
+          ARCH=x86_64 OUTPUT="${APPIMAGE}" APPIMAGE_EXTRACT_AND_RUN=1 \
+            ./linuxdeploy-plugin-appimage.AppImage --appdir "${APPDIR}"
+          rm -f linuxdeploy-plugin-appimage.AppImage
+          test -f "${APPIMAGE}"
+
       - name: Collect release artifacts
         shell: bash
         env:
