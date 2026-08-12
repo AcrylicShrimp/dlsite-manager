@@ -9,10 +9,8 @@
   import AppShell from "$lib/components/AppShell.svelte";
   import BulkDownloadDialogView from "$lib/components/BulkDownloadDialog.svelte";
   import ConfirmationDialogView from "$lib/components/ConfirmationDialog.svelte";
-  import LibraryControls from "$lib/features/library/LibraryControls.svelte";
-  import LibraryFilters from "$lib/features/library/LibraryFilters.svelte";
+  import LibraryView from "$lib/features/library/LibraryView.svelte";
   import ProductActionMenuView from "$lib/features/library/ProductActionMenu.svelte";
-  import ProductCard from "$lib/features/library/ProductCard.svelte";
   import ProductDetailDialog from "$lib/features/library/ProductDetailDialog.svelte";
   import ProductImagePreviewView from "$lib/features/library/ProductImagePreview.svelte";
   import ToastStack from "$lib/components/ToastStack.svelte";
@@ -1698,104 +1696,65 @@
 <AppShell {activeView} onNavigate={(view) => (activeView = view)}>
 
     {#if activeView === "library"}
-      <section class="product-area" aria-label="Library">
-        <LibraryControls
-          bind:search={productSearch}
-          filtersOpen={libraryFiltersOpen}
-          searchDisabled={productsLoading}
-          reloadDisabled={productsLoading}
-          syncDisabled={accountsLoading || jobsLoading || !hasSyncableEnabledAccount()}
-          bulkDisabled={bulkDownloadPlanning || productsLoading || jobsLoading || totalProducts === 0}
-          bulkLabel={bulkDownloadButtonLabel()}
-          onSearch={searchProducts}
-          onReset={resetLibraryFilters}
-          onToggleFilters={() => (libraryFiltersOpen = !libraryFiltersOpen)}
-          onReload={reloadProducts}
-          onSync={syncEnabledAccounts}
-          onBulkDownload={startBulkWorkDownload}
-        />
-
-        {#if libraryFiltersOpen}
-          <LibraryFilters
-            {accounts}
-            facets={productFilterFacets}
-            sort={productSort}
-            {selectedAccountIds}
-            selectedSources={selectedProductSources}
-            selectedAges={selectedAgeCategories}
-            selectedTypes={selectedProductTypes}
-            selectedMakers={selectedMakerNames}
-            selectedCustomTags={selectedCustomTagNames}
-            excludedCustomTags={excludedCustomTagNames}
-            onSetSort={setProductSort}
-            onClearAccounts={clearAccountFilters}
-            onToggleAccount={toggleAccountFilter}
-            onClearSources={clearSourceFilters}
-            onToggleSource={toggleProductSourceFilter}
-            onClearAges={clearAgeFilters}
-            onToggleAge={toggleAgeFilter}
-            onClearTypes={clearTypeFilters}
-            onToggleType={toggleProductTypeFilter}
-            onClearMakers={clearMakerFilters}
-            onToggleMaker={toggleMakerFilter}
-            onClearCustomTags={clearCustomTagFilters}
-            onCycleCustomTag={cycleCustomTagFilter}
-          />
-        {/if}
-
-        <div class="list-header">
-          <span>{productRangeLabel()}</span>
-          <div class="pagination-controls" role="navigation" aria-label="Library pages">
-            <button
-              class="secondary small"
-              type="button"
-              onclick={goToPreviousProductPage}
-              disabled={productsLoading || !hasPreviousProductPage()}
-            >
-              Previous
-            </button>
-            <span>{productPageLabel()}</span>
-            <button
-              class="secondary small"
-              type="button"
-              onclick={goToNextProductPage}
-              disabled={productsLoading || !hasNextProductPage()}
-            >
-              Next
-            </button>
-          </div>
-        </div>
-
-        {#if productsLoading}
-          <div class="empty-state">Loading</div>
-        {:else if products.length === 0}
-          <div class="empty-state">No products</div>
-        {:else}
-          <div class="product-table" aria-label="Cached products">
-            {#each products as product (product.workId)}
-              {@const downloadJob = activeWorkDownloadJob(product.workId)}
-              <ProductCard
-                {product}
-                detailLoading={productDetailLoadingWorkId === product.workId}
-                downloadLabel={productDownloadActionLabel(product, downloadJob)}
-                downloadTitle={productDownloadActionTitle(product, downloadJob)}
-                downloadDisabled={productDownloadActionDisabled(product, downloadJob)}
-                menuOpen={productActionMenu?.workId === product.workId}
-                onPreview={openProductImage}
-                onOpenDetails={openProductDetail}
-                onCopyWorkId={copyWorkId}
-                onCopyCredit={copyCreditField}
-                onShowTooltip={showChipTooltip}
-                onMoveTooltip={moveChipTooltip}
-                onHideTooltip={hideChipTooltip}
-                onOpenDlsite={openDlsiteProductPage}
-                onDownload={runProductDownloadAction}
-                onToggleMenu={toggleProductActionMenu}
-              />
-            {/each}
-          </div>
-        {/if}
-      </section>
+      <LibraryView
+        {products}
+        loading={productsLoading}
+        bind:search={productSearch}
+        filtersOpen={libraryFiltersOpen}
+        {accounts}
+        facets={productFilterFacets}
+        sort={productSort}
+        {selectedAccountIds}
+        selectedSources={selectedProductSources}
+        selectedAges={selectedAgeCategories}
+        selectedTypes={selectedProductTypes}
+        selectedMakers={selectedMakerNames}
+        selectedCustomTags={selectedCustomTagNames}
+        excludedCustomTags={excludedCustomTagNames}
+        rangeLabel={productRangeLabel()}
+        pageLabel={productPageLabel()}
+        previousDisabled={productsLoading || !hasPreviousProductPage()}
+        nextDisabled={productsLoading || !hasNextProductPage()}
+        syncDisabled={accountsLoading || jobsLoading || !hasSyncableEnabledAccount()}
+        bulkDisabled={bulkDownloadPlanning || productsLoading || jobsLoading || totalProducts === 0}
+        bulkLabel={bulkDownloadButtonLabel()}
+        detailLoadingWorkId={productDetailLoadingWorkId}
+        openMenuWorkId={productActionMenu?.workId ?? null}
+        getDownloadLabel={(product) => productDownloadActionLabel(product, activeWorkDownloadJob(product.workId))}
+        getDownloadTitle={(product) => productDownloadActionTitle(product, activeWorkDownloadJob(product.workId))}
+        getDownloadDisabled={(product) => productDownloadActionDisabled(product, activeWorkDownloadJob(product.workId))}
+        onSearch={searchProducts}
+        onReset={resetLibraryFilters}
+        onToggleFilters={() => (libraryFiltersOpen = !libraryFiltersOpen)}
+        onReload={reloadProducts}
+        onSync={syncEnabledAccounts}
+        onBulkDownload={startBulkWorkDownload}
+        onSetSort={setProductSort}
+        onClearAccounts={clearAccountFilters}
+        onToggleAccount={toggleAccountFilter}
+        onClearSources={clearSourceFilters}
+        onToggleSource={toggleProductSourceFilter}
+        onClearAges={clearAgeFilters}
+        onToggleAge={toggleAgeFilter}
+        onClearTypes={clearTypeFilters}
+        onToggleType={toggleProductTypeFilter}
+        onClearMakers={clearMakerFilters}
+        onToggleMaker={toggleMakerFilter}
+        onClearCustomTags={clearCustomTagFilters}
+        onCycleCustomTag={cycleCustomTagFilter}
+        onPreviousPage={goToPreviousProductPage}
+        onNextPage={goToNextProductPage}
+        onPreview={openProductImage}
+        onOpenDetails={openProductDetail}
+        onCopyWorkId={copyWorkId}
+        onCopyCredit={copyCreditField}
+        onShowTooltip={showChipTooltip}
+        onMoveTooltip={moveChipTooltip}
+        onHideTooltip={hideChipTooltip}
+        onOpenDlsite={openDlsiteProductPage}
+        onDownload={runProductDownloadAction}
+        onToggleMenu={toggleProductActionMenu}
+      />
     {:else if activeView === "downloads"}
       <section class="downloads-panel" aria-label="Downloads">
         <div class="panel-title download-panel-title">
@@ -2351,7 +2310,6 @@
     font-size: 17px;
   }
 
-  .product-area,
   .downloads-panel,
   .accounts-panel,
   .activity-panel,
@@ -2376,15 +2334,6 @@
     font-weight: 600;
     line-height: 1.35;
     pointer-events: none;
-  }
-
-  .product-area {
-    display: flex;
-    flex: 0 0 auto;
-    flex-direction: column;
-    min-width: 0;
-    min-height: 0;
-    overflow: visible;
   }
 
   .accounts-panel,
@@ -2482,41 +2431,6 @@
   .account-form-grid {
     display: grid;
     gap: 14px;
-  }
-
-  .list-header {
-    display: flex;
-    flex: 0 0 auto;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 9px 14px;
-    border-bottom: 1px solid var(--border);
-    color: var(--muted);
-    font-size: 13px;
-  }
-
-  .pagination-controls {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-  }
-
-  .pagination-controls span {
-    color: var(--text-subtle);
-    font-size: 12px;
-    font-weight: 650;
-    white-space: nowrap;
-  }
-
-  .product-table {
-    display: block;
-    flex: 0 0 auto;
-    min-height: 0;
-    overflow: visible;
-    overflow-anchor: none;
-    overscroll-behavior: contain;
   }
 
   .account-name small {
@@ -3206,15 +3120,6 @@
     .account-row {
       align-items: stretch;
       flex-direction: column;
-    }
-
-    .list-header {
-      align-items: flex-start;
-      flex-direction: column;
-    }
-
-    .pagination-controls {
-      flex-wrap: wrap;
     }
 
     .path-control {
