@@ -13,6 +13,7 @@
   import LibraryFilters from "$lib/features/library/LibraryFilters.svelte";
   import ProductActionMenuView from "$lib/features/library/ProductActionMenu.svelte";
   import ProductCard from "$lib/features/library/ProductCard.svelte";
+  import ProductDetailDialog from "$lib/features/library/ProductDetailDialog.svelte";
   import ProductImagePreviewView from "$lib/features/library/ProductImagePreview.svelte";
   import ToastStack from "$lib/components/ToastStack.svelte";
   import UiButton from "$lib/components/ui/Button.svelte";
@@ -29,13 +30,8 @@
   } from "$lib/utils/accounts";
   import {
     appInfoValue,
-    detailDate,
-    detailValue,
-    downloadStatusLabel,
     errorMessage,
-    formatBytes,
     shortDate,
-    textVariantsLabel,
     valueOrNull,
   } from "$lib/utils/format";
   import {
@@ -60,14 +56,8 @@
     upsertJob,
   } from "$lib/utils/jobs";
   import {
-    ageLabel,
     ageTooltip,
     creditTextForKind,
-    creditTooltip,
-    productCreditFields,
-    productIsLocalOnly,
-    localOnlyTooltip,
-    productTypeFromCode,
   } from "$lib/utils/products";
   import type {
     Account,
@@ -875,9 +865,7 @@
     return customTags;
   }
 
-  async function addProductDetailCustomTags(event: Event) {
-    event.preventDefault();
-
+  async function addProductDetailCustomTags() {
     if (!productDetail) {
       return;
     }
@@ -2280,251 +2268,18 @@
 
   <ConfirmationDialogView dialog={confirmationDialog} onClose={closeConfirmationDialog} />
   <BulkDownloadDialogView dialog={bulkDownloadDialog} onClose={closeBulkDownloadDialog} />
-
-  {#if productDetail}
-    {@const detail = productDetail}
-    {@const detailTypeInfo = productTypeFromCode(detail.workType)}
-    <div
-      class="product-detail"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="product-detail-title"
-      tabindex="-1"
-    >
-      <button
-        class="product-detail-backdrop"
-        type="button"
-        aria-label="Close product detail"
-        onclick={closeProductDetail}
-      ></button>
-      <section class="product-detail-panel" data-tone={detailTypeInfo.tone}>
-        <div class="product-detail-belt" aria-hidden="true"></div>
-        <div class="product-detail-heading">
-          {#if detail.thumbnailUrl}
-            <button
-              class="detail-thumb"
-              type="button"
-              aria-label={`Preview image for ${detail.title}`}
-              onclick={() => openProductImageFromDetail(detail)}
-            >
-              <img src={detail.thumbnailUrl} alt="" />
-            </button>
-          {:else}
-            <div class="detail-thumb missing-thumb" aria-hidden="true">?</div>
-          {/if}
-
-          <div class="product-detail-title-block">
-            <p>Product detail</p>
-            <button
-              id="product-detail-title"
-              class="product-detail-title-copy"
-              type="button"
-              title={detail.titleVariants.length > 0 ? textVariantsLabel(detail.titleVariants) : `Copy ${detail.title}`}
-              onclick={() => copyText("title", detail.title, detail.workId)}
-            >
-              {detail.title}
-            </button>
-            <button
-              class="link-button"
-              type="button"
-              onclick={() => openDlsiteProductPage(detail.workId)}
-            >
-              Open on DLsite
-            </button>
-          </div>
-
-          <button
-            class="work-id detail-work-id"
-            type="button"
-            title={`Copy ${detail.workId}`}
-            onclick={() => copyWorkId(detail.workId)}
-          >
-            {detail.workId}
-          </button>
-
-          <button
-            class="dialog-close"
-            type="button"
-            aria-label="Close product detail"
-            onclick={closeProductDetail}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M18 6 6 18M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        <div class="product-detail-body">
-          <div class="detail-column">
-            <section class="detail-section">
-              <h3>Identity</h3>
-              <div class="detail-grid">
-                <div>
-                  <span>Maker</span>
-                  <button type="button" onclick={() => copyText("maker name", detail.makerName, detail.workId)}>
-                    {detailValue(detail.makerName)}
-                  </button>
-                </div>
-                <div>
-                  <span>Maker ID</span>
-                  <button type="button" onclick={() => copyText("maker ID", detail.makerId, detail.workId)}>
-                    {detailValue(detail.makerId)}
-                  </button>
-                </div>
-                <div>
-                  <span>Type</span>
-                  <span>{detailTypeInfo.label}</span>
-                </div>
-                <div>
-                  <span>Age</span>
-                  <span>{ageLabel(detail.ageCategory) || "-"}</span>
-                </div>
-                <div>
-                  <span>Size</span>
-                  <span>{detail.contentSizeBytes ? formatBytes(detail.contentSizeBytes) : "-"}</span>
-                </div>
-                <div>
-                  <span>Last detail sync</span>
-                  <span>{detailDate(detail.lastDetailSyncAt)}</span>
-                </div>
-              </div>
-            </section>
-
-            <section class="detail-section">
-              <h3>Credits</h3>
-              <div class="detail-credit-list">
-                {#each productCreditFields(detail) as field (field.key)}
-                  <button
-                    type="button"
-                    disabled={field.missing}
-                    title={creditTooltip(field)}
-                    onclick={() => copyCreditField(field, detail.workId)}
-                  >
-                    <span>{field.label}</span>
-                    <strong class:missing={field.missing}>{field.value}</strong>
-                  </button>
-                {/each}
-              </div>
-            </section>
-
-            <section class="detail-section">
-              <h3>Dates</h3>
-              <div class="detail-grid">
-                <div>
-                  <span>Registered</span>
-                  <span>{detailDate(detail.registeredAt)}</span>
-                </div>
-                <div>
-                  <span>Published</span>
-                  <span>{detailDate(detail.publishedAt)}</span>
-                </div>
-                <div>
-                  <span>Updated</span>
-                  <span>{detailDate(detail.updatedAt)}</span>
-                </div>
-                <div>
-                  <span>Latest Purchase</span>
-                  <span>{detailDate(detail.latestPurchasedAt)}</span>
-                </div>
-              </div>
-            </section>
-          </div>
-
-          <div class="detail-column">
-            <section class="detail-section">
-              <h3>Ownership</h3>
-              <div class="detail-chip-list">
-                {#if productIsLocalOnly(detail)}
-                  <span
-                    class="chip source-chip source-chip--local"
-                    title={localOnlyTooltip(detail.workId)}
-                  >
-                    Local Only
-                  </span>
-                {:else}
-                  {#each detail.owners as owner (owner.accountId)}
-                    <span title={owner.purchasedAt ? `${owner.label}: ${shortDate(owner.purchasedAt)}` : owner.label}>
-                      {owner.label}
-                    </span>
-                  {/each}
-                {/if}
-              </div>
-            </section>
-
-            <section class="detail-section">
-              <h3>Download</h3>
-              <div class="detail-grid">
-                <div>
-                  <span>Status</span>
-                  <span>{downloadStatusLabel(detail.download.status)}</span>
-                </div>
-                <div>
-                  <span>Policy</span>
-                  <span>{detailValue(detail.download.unpackPolicy)}</span>
-                </div>
-                <div class="wide">
-                  <span>Local path</span>
-                  <button
-                    type="button"
-                    onclick={() => copyText("local path", detail.download.localPath, detail.workId)}
-                  >
-                    {detailValue(detail.download.localPath)}
-                  </button>
-                </div>
-                {#if detail.download.errorMessage}
-                  <div class="wide">
-                    <span>Error</span>
-                    <span>{detail.download.errorMessage}</span>
-                  </div>
-                {/if}
-              </div>
-            </section>
-
-            <section class="detail-section">
-              <h3>Custom Tags</h3>
-              {#if detail.customTags.length > 0}
-                <div class="detail-chip-list custom-tag-list">
-                  {#each detail.customTags as tag (tag.name)}
-                    <span class="chip custom-tag-chip detail-custom-tag" title={`Custom tag: ${tag.name}`}>
-                      <button type="button" onclick={() => copyText("custom tag", tag.name, detail.workId)}>
-                        {tag.name}
-                      </button>
-                      <button
-                        class="custom-tag-remove"
-                        type="button"
-                        aria-label={`Remove custom tag ${tag.name}`}
-                        title={`Remove ${tag.name}`}
-                        onclick={() => removeProductDetailCustomTag(tag.name)}
-                      >
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                          <path d="M18 6 6 18M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </span>
-                  {/each}
-                </div>
-              {:else}
-                <p class="detail-muted">No custom tags</p>
-              {/if}
-
-              <form class="custom-tag-form" onsubmit={addProductDetailCustomTags}>
-                <input
-                  type="text"
-                  autocomplete="off"
-                  placeholder="Add custom tags"
-                  aria-label="Add custom tags"
-                  bind:value={customTagInput}
-                />
-                <button type="submit" disabled={!customTagInput.trim()}>
-                  Add Tag
-                </button>
-              </form>
-            </section>
-          </div>
-        </div>
-      </section>
-    </div>
-  {/if}
+  <ProductDetailDialog
+    detail={productDetail}
+    bind:customTagInput
+    onClose={closeProductDetail}
+    onPreview={openProductImageFromDetail}
+    onCopyText={copyText}
+    onCopyWorkId={copyWorkId}
+    onCopyCredit={copyCreditField}
+    onOpenDlsite={openDlsiteProductPage}
+    onAddTags={addProductDetailCustomTags}
+    onRemoveTag={removeProductDetailCustomTag}
+  />
 
   {#if productImagePreview}
     <ProductImagePreviewView preview={productImagePreview} onClose={closeProductImage} />
@@ -2621,418 +2376,6 @@
     font-weight: 600;
     line-height: 1.35;
     pointer-events: none;
-  }
-
-  .product-detail {
-    position: fixed;
-    z-index: 45;
-    inset: 0;
-    display: grid;
-    place-items: center;
-    padding: 28px;
-  }
-
-  .product-detail-backdrop {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    min-width: 0;
-    padding: 0;
-    border: 0;
-    border-radius: 0;
-    background: rgb(0 0 0 / 70%);
-    cursor: default;
-  }
-
-  .product-detail-panel {
-    --type-color: #6b7177;
-    --type-soft: rgb(107 113 119 / 18%);
-
-    position: relative;
-    z-index: 1;
-    display: grid;
-    grid-template-columns: 5px minmax(0, 1fr);
-    width: min(980px, 94vw);
-    max-height: 90vh;
-    border: 1px solid var(--border-strong);
-    border-radius: 8px;
-    background: var(--panel);
-    box-shadow: 0 24px 64px rgb(0 0 0 / 52%);
-    overflow: hidden;
-  }
-
-  .product-detail-panel[data-tone="audio"] {
-    --type-color: #d8a62d;
-    --type-soft: rgb(216 166 45 / 17%);
-  }
-
-  .product-detail-panel[data-tone="video"] {
-    --type-color: #d64b92;
-    --type-soft: rgb(214 75 146 / 17%);
-  }
-
-  .product-detail-panel[data-tone="voice-comic"] {
-    --type-color: #55bfe6;
-    --type-soft: rgb(85 191 230 / 16%);
-  }
-
-  .product-detail-panel[data-tone="game"] {
-    --type-color: #9863df;
-    --type-soft: rgb(152 99 223 / 17%);
-  }
-
-  .product-detail-panel[data-tone="image"] {
-    --type-color: #4fb85b;
-    --type-soft: rgb(79 184 91 / 16%);
-  }
-
-  .product-detail-belt {
-    grid-row: 1 / 3;
-    background: var(--type-color);
-  }
-
-  .product-detail-heading {
-    display: grid;
-    grid-template-columns: 120px minmax(0, 1fr) auto auto;
-    gap: 14px;
-    align-items: start;
-    min-width: 0;
-    padding: 16px;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .detail-thumb {
-    width: 120px;
-    height: 120px;
-    min-width: 0;
-    padding: 0;
-    border-color: var(--border-strong);
-    border-radius: 6px;
-    background: var(--panel-raised);
-    overflow: hidden;
-  }
-
-  .detail-thumb:hover {
-    border-color: var(--type-color);
-  }
-
-  .detail-thumb img {
-    display: block;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-
-  .missing-thumb {
-    display: grid;
-    place-items: center;
-    color: var(--text-subtle);
-    font-weight: 700;
-  }
-
-  .product-detail-title-block {
-    display: grid;
-    align-content: start;
-    gap: 6px;
-    min-width: 0;
-  }
-
-  .product-detail-title-block p {
-    margin: 0;
-    color: var(--muted);
-    font-size: 12px;
-    font-weight: 700;
-    text-transform: uppercase;
-  }
-
-  .product-detail-title-copy {
-    display: block;
-    width: 100%;
-    height: auto;
-    min-width: 0;
-    min-height: 0;
-    padding: 0;
-    border: 0;
-    color: var(--text-strong);
-    background: transparent;
-    font-size: 22px;
-    font-weight: 700;
-    line-height: 1.24;
-    text-align: left;
-    overflow-wrap: anywhere;
-  }
-
-  .product-detail-title-copy:hover:not(:disabled) {
-    color: var(--accent);
-    background: transparent;
-  }
-
-  .product-detail-title-copy:focus-visible {
-    outline: 2px solid var(--accent-muted);
-    outline-offset: 2px;
-  }
-
-  .link-button {
-    justify-self: start;
-    min-height: 26px;
-    padding: 0;
-    border: 0;
-    color: var(--accent);
-    background: transparent;
-    font-size: 12px;
-    font-weight: 650;
-  }
-
-  .link-button:hover {
-    color: var(--text-strong);
-    background: transparent;
-  }
-
-  .detail-work-id {
-    align-self: start;
-  }
-
-  .product-detail-body {
-    display: grid;
-    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
-    align-items: start;
-    gap: 12px;
-    min-height: 0;
-    max-height: calc(90vh - 154px);
-    padding: 16px;
-    overflow: auto;
-  }
-
-  .detail-column {
-    display: grid;
-    align-content: start;
-    gap: 12px;
-    min-width: 0;
-  }
-
-  .detail-section {
-    min-width: 0;
-    padding: 12px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--panel-soft);
-  }
-
-  .detail-section h3 {
-    margin: 0 0 10px;
-    color: var(--text-strong);
-    font-size: 13px;
-    font-weight: 700;
-  }
-
-  .detail-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(132px, 1fr));
-    gap: 12px;
-  }
-
-  .detail-grid div {
-    display: grid;
-    align-content: start;
-    gap: 4px;
-    min-width: 0;
-  }
-
-  .detail-credit-list button {
-    display: grid;
-    grid-template-columns: 104px minmax(0, 1fr);
-    gap: 8px;
-    align-items: baseline;
-    min-width: 0;
-  }
-
-  .detail-grid .wide {
-    grid-column: 1 / -1;
-  }
-
-  .detail-grid span:first-child,
-  .detail-credit-list span {
-    color: var(--text-subtle);
-    font-size: 12px;
-    font-weight: 700;
-  }
-
-  .detail-grid span:last-child,
-  .detail-grid button,
-  .detail-credit-list strong {
-    min-width: 0;
-    color: var(--text);
-    font-size: 13px;
-    font-weight: 600;
-    line-height: 1.35;
-    overflow-wrap: anywhere;
-  }
-
-  .detail-grid button,
-  .detail-credit-list button {
-    height: auto;
-    min-height: 0;
-    min-width: 0;
-    padding: 0;
-    border: 0;
-    border-radius: 3px;
-    color: inherit;
-    background: transparent;
-    text-align: left;
-  }
-
-  .detail-grid button {
-    justify-self: start;
-    max-width: 100%;
-  }
-
-  .detail-credit-list button {
-    width: 100%;
-  }
-
-  .detail-grid button:hover:not(:disabled),
-  .detail-credit-list button:hover:not(:disabled) strong {
-    color: var(--text-strong);
-  }
-
-  .detail-credit-list {
-    display: grid;
-    gap: 12px;
-  }
-
-  .detail-credit-list strong.missing {
-    color: var(--text-subtle);
-    opacity: 0.72;
-  }
-
-  .detail-chip-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    min-width: 0;
-  }
-
-  .detail-chip-list span {
-    max-width: 100%;
-    padding: 4px 8px;
-    border: 1px solid var(--border-strong);
-    border-radius: 999px;
-    color: var(--text);
-    background: var(--panel-raised);
-    font-size: 12px;
-    font-weight: 650;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .detail-chip-list .source-chip--local {
-    border-color: rgb(100 181 217 / 58%);
-    color: #9ed8ef;
-    background: rgb(100 181 217 / 13%);
-  }
-
-  .detail-chip-list .detail-custom-tag {
-    gap: 5px;
-    max-width: 100%;
-    min-height: 24px;
-    padding: 2px 6px 2px 8px;
-  }
-
-  .detail-custom-tag button {
-    width: auto;
-    height: 18px;
-    min-width: 0;
-    min-height: 0;
-    padding: 0;
-    border: 0;
-    color: inherit;
-    background: transparent;
-    font-size: 12px;
-    font-weight: 650;
-    line-height: 1;
-  }
-
-  .detail-custom-tag button:first-child {
-    display: block;
-    max-width: 220px;
-    height: auto;
-    line-height: 1.2;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .detail-custom-tag button:hover:not(:disabled) {
-    color: var(--text-strong);
-    background: transparent;
-  }
-
-  .custom-tag-remove {
-    display: grid;
-    place-items: center;
-    width: 18px;
-    min-width: 18px;
-    color: var(--muted);
-  }
-
-  .custom-tag-remove svg {
-    width: 13px;
-    height: 13px;
-    fill: none;
-    stroke: currentColor;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    stroke-width: 2.35;
-  }
-
-  .custom-tag-form {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 8px;
-    margin-top: 10px;
-  }
-
-  .custom-tag-form input,
-  .custom-tag-form button {
-    height: 32px;
-    font-size: 13px;
-  }
-
-  .custom-tag-form button {
-    min-width: 72px;
-  }
-
-  .detail-muted {
-    margin: 0;
-    color: var(--muted);
-    font-size: 13px;
-  }
-
-  .dialog-close {
-    width: 34px;
-    min-width: 34px;
-    height: 34px;
-    padding: 0;
-    border-color: var(--border-strong);
-    color: var(--muted);
-    background: var(--panel-raised);
-  }
-
-  .dialog-close:hover {
-    border-color: var(--accent);
-    color: var(--text);
-  }
-
-  .dialog-close svg {
-    width: 18px;
-    height: 18px;
-    fill: none;
-    stroke: currentColor;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    stroke-width: 2.35;
   }
 
   .product-area {
@@ -3854,26 +3197,6 @@
       position: static;
     }
 
-    .product-detail-heading {
-      grid-template-columns: 86px minmax(0, 1fr) auto;
-      gap: 12px;
-    }
-
-    .detail-thumb {
-      width: 86px;
-      height: 86px;
-    }
-
-    .detail-work-id {
-      grid-column: 2;
-      grid-row: 2;
-      justify-self: start;
-    }
-
-    .product-detail-body {
-      grid-template-columns: 1fr;
-      max-height: calc(90vh - 124px);
-    }
   }
 
   @media (max-width: 720px) {
@@ -3932,41 +3255,6 @@
       grid-template-columns: 1fr;
     }
 
-    .product-detail {
-      padding: 16px;
-    }
-
-    .product-detail-heading {
-      grid-template-columns: 72px minmax(0, 1fr) auto;
-      padding: 12px;
-    }
-
-    .product-detail-title-copy {
-      font-size: 18px;
-    }
-
-    .detail-thumb {
-      width: 72px;
-      height: 72px;
-    }
-
-    .product-detail-body {
-      max-height: calc(90vh - 108px);
-      padding: 12px;
-    }
-
-    .detail-grid {
-      grid-template-columns: 1fr;
-    }
-
-    .detail-credit-list button {
-      grid-template-columns: 82px minmax(0, 1fr);
-    }
-
-    .custom-tag-form {
-      grid-template-columns: 1fr;
-    }
-
     button,
     button.secondary {
       width: 100%;
@@ -3976,12 +3264,7 @@
     .account-actions button,
     .account-actions button.secondary,
     .download-queue-row button,
-    .download-queue-row button.secondary,
-    .detail-grid button,
-    .detail-credit-list button,
-    .detail-custom-tag button,
-    .custom-tag-form button,
-    .link-button {
+    .download-queue-row button.secondary {
       width: auto;
     }
   }
