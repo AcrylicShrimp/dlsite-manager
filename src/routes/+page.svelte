@@ -9,6 +9,7 @@
   import AppShell from "$lib/components/AppShell.svelte";
   import BulkDownloadDialogView from "$lib/components/BulkDownloadDialog.svelte";
   import ConfirmationDialogView from "$lib/components/ConfirmationDialog.svelte";
+  import AccountsView from "$lib/features/accounts/AccountsView.svelte";
   import DownloadsView from "$lib/features/downloads/DownloadsView.svelte";
   import LibraryView from "$lib/features/library/LibraryView.svelte";
   import ProductActionMenuView from "$lib/features/library/ProductActionMenu.svelte";
@@ -19,14 +20,6 @@
   import Field from "$lib/components/ui/Field.svelte";
   import TextInput from "$lib/components/ui/TextInput.svelte";
   import { DLSITE_URL, GITHUB_URL } from "$lib/model/constants";
-  import {
-    accountCredentialLabel,
-    accountEnabledLabel,
-    accountLastSyncLabel,
-    accountLoginLabel,
-    credentialedAccountCount,
-    enabledAccountCount,
-  } from "$lib/utils/accounts";
   import {
     appInfoValue,
     errorMessage,
@@ -1764,189 +1757,30 @@
         onCancel={cancelJob}
       />
     {:else if activeView === "accounts"}
-      <div class="accounts-layout">
-        <section class="accounts-panel account-list-panel" aria-label="Accounts">
-          <div class="panel-title account-panel-title">
-            <div>
-              <h2>Account sources</h2>
-              <p>{enabledAccountCount(accounts)} enabled of {accounts.length}</p>
-            </div>
-            <div class="panel-actions">
-              <button
-                class="secondary small"
-                type="button"
-                onclick={loadAccounts}
-                disabled={accountsLoading || accountSaving}
-              >
-                Reload
-              </button>
-              <button
-                class="small"
-                type="button"
-                onclick={syncEnabledAccounts}
-                disabled={accountsLoading || jobsLoading || !hasSyncableEnabledAccount()}
-              >
-                Sync All
-              </button>
-            </div>
-          </div>
-
-          <div class="account-summary-strip" aria-label="Account summary">
-            <div class="account-stat">
-              <span>{accounts.length}</span>
-              <small>Total</small>
-            </div>
-            <div class="account-stat">
-              <span>{enabledAccountCount(accounts)}</span>
-              <small>Enabled</small>
-            </div>
-            <div class="account-stat">
-              <span>{credentialedAccountCount(accounts)}</span>
-              <small>Credentials</small>
-            </div>
-            <div class="account-stat">
-              <span>{syncingAccountCount()}</span>
-              <small>Syncing</small>
-            </div>
-          </div>
-
-          <div class="account-list">
-            {#if accountsLoading}
-              <div class="empty-state compact">Loading</div>
-            {:else if accounts.length === 0}
-              <div class="empty-state compact">No accounts</div>
-            {:else}
-              {#each accounts as account (account.id)}
-                {@const activeSyncJob = activeAccountSyncJob(account.id)}
-                <article
-                  class="account-row"
-                  class:disabled={!account.enabled}
-                  class:selected={editingAccountId === account.id}
-                >
-                  <button
-                    class:disabled={!account.enabled}
-                    class="account-enabled-pill"
-                    type="button"
-                    title={account.enabled ? "Disable account" : "Enable account"}
-                    aria-label={account.enabled ? `Disable ${account.label}` : `Enable ${account.label}`}
-                    onclick={() => setAccountEnabled(account, !account.enabled)}
-                    disabled={Boolean(activeSyncJob)}
-                  >
-                    {accountEnabledLabel(account)}
-                  </button>
-                  <button class="account-name" type="button" onclick={() => editAccount(account)}>
-                    <span class="account-identity">
-                      <span title={account.label}>{account.label}</span>
-                      <small title={accountLoginLabel(account)}>{accountLoginLabel(account)}</small>
-                    </span>
-                  </button>
-                  <div class="account-meta-grid">
-                    <div>
-                      <span>Status</span>
-                      <strong class={`account-status-text ${accountStatusTone(account)}`} title={accountStatusLabel(account)}>
-                        {accountStatusLabel(account)}
-                      </strong>
-                    </div>
-                    <div>
-                      <span>Credential</span>
-                      <strong title={accountCredentialLabel(account)}>{accountCredentialLabel(account)}</strong>
-                    </div>
-                    <div>
-                      <span>Last sync</span>
-                      <strong title={accountLastSyncLabel(account)}>{accountLastSyncLabel(account)}</strong>
-                    </div>
-                  </div>
-                  <div class="account-actions">
-                    {#if activeSyncJob}
-                      <button
-                        class="secondary small"
-                        type="button"
-                        onclick={() => cancelAccountSync(account)}
-                        disabled={!activeSyncJob.cancellable || activeSyncJob.status === "cancelling"}
-                      >
-                        Cancel
-                      </button>
-                    {:else}
-                      <button
-                        class="small"
-                        type="button"
-                        onclick={() => syncAccount(account)}
-                        disabled={!account.enabled}
-                      >
-                        Sync
-                      </button>
-                    {/if}
-                    <button
-                      class="secondary small"
-                      type="button"
-                      title="Update saved credential"
-                      onclick={() => editAccount(account)}
-                    >
-                      Update Credential
-                    </button>
-                    <button
-                      class="secondary small"
-                      type="button"
-                      title="Remove account source"
-                      onclick={() => removeAccount(account)}
-                      disabled={Boolean(activeSyncJob)}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </article>
-              {/each}
-            {/if}
-          </div>
-        </section>
-
-        <section class="accounts-panel account-editor" aria-label="Account editor">
-          <div class="panel-title account-panel-title">
-            <div>
-              <h2>{editingAccountId ? "Account details" : "Add account"}</h2>
-              <p>{editingAccountId ? "Editing selected source" : "New DLsite source"}</p>
-            </div>
-            <button class="secondary small" type="button" onclick={resetAccountForm} disabled={accountSaving}>
-              New
-            </button>
-          </div>
-          <form class="account-form" onsubmit={saveAccount}>
-            <div class="account-form-grid">
-              <label>
-                <span>Label</span>
-                <input type="text" autocomplete="off" bind:value={accountLabel} disabled={accountSaving} />
-              </label>
-              <label>
-                <span>Login</span>
-                <input
-                  type="text"
-                  autocomplete="username"
-                  spellcheck="false"
-                  bind:value={accountLoginName}
-                  disabled={accountSaving}
-                />
-              </label>
-              <label>
-                <span>Password</span>
-                <input
-                  type="password"
-                  autocomplete="current-password"
-                  bind:value={accountPassword}
-                  disabled={accountSaving}
-                />
-              </label>
-            </div>
-            <div class="actions account-form-actions">
-              <span class="form-context">
-                {editingAccountId ? "Update source" : "Create source"}
-              </span>
-              <button type="submit" disabled={accountSaving}>
-                {editingAccountId ? "Save" : "Add"}
-              </button>
-            </div>
-          </form>
-        </section>
-      </div>
+      <AccountsView
+        {accounts}
+        loading={accountsLoading}
+        saving={accountSaving}
+        {jobsLoading}
+        {editingAccountId}
+        bind:label={accountLabel}
+        bind:loginName={accountLoginName}
+        bind:password={accountPassword}
+        syncingCount={syncingAccountCount()}
+        syncAllDisabled={!hasSyncableEnabledAccount()}
+        getActiveSyncJob={activeAccountSyncJob}
+        getStatusLabel={accountStatusLabel}
+        getStatusTone={accountStatusTone}
+        onReload={loadAccounts}
+        onSyncAll={syncEnabledAccounts}
+        onToggleEnabled={setAccountEnabled}
+        onEdit={editAccount}
+        onSync={syncAccount}
+        onCancelSync={cancelAccountSync}
+        onRemove={removeAccount}
+        onReset={resetAccountForm}
+        onSave={saveAccount}
+      />
     {:else if activeView === "activity"}
       <div class="activity-layout">
         <section class="activity-panel" aria-label="Jobs">
@@ -2218,14 +2052,12 @@
 
   .actions,
   .panel-title,
-  .panel-actions,
-  .account-actions {
+  .panel-actions {
     display: flex;
     align-items: center;
   }
 
-  .panel-actions,
-  .account-actions {
+  .panel-actions {
     gap: 8px;
   }
 
@@ -2239,7 +2071,6 @@
     font-size: 17px;
   }
 
-  .accounts-panel,
   .activity-panel,
   .settings-panel {
     border: 1px solid var(--border);
@@ -2264,14 +2095,12 @@
     pointer-events: none;
   }
 
-  .accounts-panel,
   .activity-panel,
   .settings-panel {
     padding: 18px;
   }
 
-  .settings-panel,
-  .account-form {
+  .settings-panel {
     display: grid;
     gap: 14px;
   }
@@ -2293,79 +2122,6 @@
     scrollbar-gutter: stable;
   }
 
-  .accounts-layout {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
-    gap: 18px;
-    align-items: start;
-    min-height: 0;
-    overflow: auto;
-  }
-
-  .account-list-panel {
-    min-width: 0;
-  }
-
-  .account-editor {
-    position: sticky;
-    top: 28px;
-  }
-
-  .account-panel-title {
-    align-items: flex-start;
-  }
-
-  .account-panel-title > div {
-    min-width: 0;
-  }
-
-  .account-panel-title p {
-    margin: 4px 0 0;
-    color: var(--muted);
-    font-size: 12px;
-  }
-
-  .account-summary-strip {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 1px;
-    margin-bottom: 14px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--border);
-    overflow: hidden;
-  }
-
-  .account-stat {
-    display: grid;
-    gap: 2px;
-    padding: 10px 12px;
-    background: var(--panel-soft);
-  }
-
-  .account-stat span {
-    color: var(--text-strong);
-    font-size: 18px;
-    font-weight: 700;
-    line-height: 1;
-  }
-
-  .account-stat small,
-  .form-context {
-    color: var(--muted);
-    font-size: 12px;
-  }
-
-  .account-form-grid {
-    display: grid;
-    gap: 14px;
-  }
-
-  .account-name small {
-    color: var(--muted);
-    font-size: 12px;
-  }
-
   .panel-title {
     justify-content: space-between;
     gap: 10px;
@@ -2381,177 +2137,6 @@
     color: var(--muted);
     font-size: 12px;
     line-height: 1.35;
-  }
-
-  .account-list {
-    display: grid;
-    gap: 8px;
-  }
-
-  .account-row {
-    display: grid;
-    grid-template-columns: minmax(220px, 1fr) minmax(340px, 0.88fr);
-    grid-template-rows: auto auto auto;
-    gap: 10px 30px;
-    align-items: start;
-    min-height: 132px;
-    padding: 14px 16px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--panel-soft);
-  }
-
-  .account-row.selected {
-    border-color: var(--accent);
-    box-shadow: inset 3px 0 0 var(--accent);
-  }
-
-  .account-row.disabled {
-    opacity: 0.62;
-  }
-
-  .account-name {
-    display: grid;
-    grid-column: 1;
-    grid-row: 2 / 4;
-    align-self: start;
-    justify-content: stretch;
-    justify-items: stretch;
-    width: 100%;
-    min-width: 0;
-    height: auto;
-    min-height: 0;
-    padding: 0;
-    border: 0;
-    color: inherit;
-    background: transparent;
-    text-align: left;
-  }
-
-  .account-status-text.synced {
-    color: var(--accent);
-  }
-
-  .account-status-text.syncing {
-    color: #d8a62d;
-  }
-
-  .account-status-text.failed {
-    color: var(--danger);
-  }
-
-  .account-status-text.warning {
-    color: #d8a62d;
-  }
-
-  .account-identity {
-    display: grid;
-    gap: 3px;
-    justify-self: start;
-    width: min(360px, 100%);
-    min-width: 0;
-  }
-
-  .account-identity span {
-    max-width: 100%;
-    color: var(--text);
-    font-size: 15px;
-    font-weight: 650;
-    line-height: 1.1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .account-identity small {
-    color: var(--muted);
-    font-size: 12px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .account-enabled-pill {
-    display: inline-flex;
-    align-items: center;
-    grid-column: 1;
-    grid-row: 1;
-    justify-content: flex-start;
-    justify-self: start;
-    gap: 6px;
-    min-width: 114px;
-    height: auto;
-    min-height: 28px;
-    padding: 3px 10px;
-    border: 1px solid rgb(112 165 120 / 58%);
-    border-radius: 5px;
-    color: var(--accent);
-    background: var(--accent-muted);
-    font-size: 12px;
-    font-weight: 650;
-    line-height: 1.1;
-    cursor: pointer;
-  }
-
-  .account-enabled-pill::before {
-    content: "";
-    width: 9px;
-    height: 9px;
-    border: 2px solid currentColor;
-    border-radius: 999px;
-    background: rgb(160 198 164 / 24%);
-  }
-
-  .account-enabled-pill.disabled {
-    border-color: var(--border-strong);
-    color: var(--text-subtle);
-    background: var(--field-disabled);
-  }
-
-  .account-enabled-pill:disabled {
-    cursor: default;
-  }
-
-  .account-meta-grid {
-    display: grid;
-    grid-column: 2;
-    grid-row: 2;
-    align-self: start;
-    grid-template-columns: 1fr;
-    gap: 7px;
-    min-width: 0;
-  }
-
-  .account-meta-grid div {
-    display: grid;
-    grid-template-columns: minmax(92px, 0.42fr) minmax(170px, 1fr);
-    gap: 16px;
-    align-items: baseline;
-    min-width: 0;
-  }
-
-  .account-meta-grid span {
-    color: var(--muted);
-    font-size: 13px;
-    font-weight: 600;
-  }
-
-  .account-meta-grid strong {
-    min-width: 0;
-    color: var(--text);
-    font-size: 13px;
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .account-actions {
-    grid-column: 2;
-    grid-row: 3;
-    align-self: end;
-    justify-content: flex-end;
-    flex-wrap: wrap;
   }
 
   .job-list {
@@ -2716,17 +2301,6 @@
     white-space: nowrap;
   }
 
-  label {
-    display: grid;
-    gap: 6px;
-  }
-
-  label span {
-    color: var(--text);
-    font-size: 13px;
-    font-weight: 650;
-  }
-
   .about-panel {
     gap: 10px;
   }
@@ -2760,27 +2334,6 @@
     grid-template-columns: minmax(0, 1fr) auto auto;
     gap: 8px;
     align-items: center;
-  }
-
-  input {
-    width: 100%;
-    min-width: 0;
-    height: 38px;
-    padding: 0 10px;
-    border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    color: var(--text);
-    background: var(--field);
-  }
-
-  input:focus {
-    border-color: var(--accent-strong);
-    outline: 2px solid var(--accent-muted);
-  }
-
-  input:disabled {
-    color: var(--text-subtle);
-    background: var(--field-disabled);
   }
 
   button {
@@ -2821,78 +2374,21 @@
     text-align: center;
   }
 
-  .empty-state.compact {
-    padding: 16px 8px;
-  }
-
   .actions {
     justify-content: space-between;
     gap: 14px;
   }
 
-  @media (max-width: 1220px) {
-    .account-row {
-      grid-template-columns: minmax(0, 1fr);
-    }
-
-    .account-name {
-      grid-column: 1;
-      grid-row: 2;
-    }
-
-    .account-meta-grid {
-      grid-column: 1 / -1;
-      grid-row: 3;
-    }
-
-    .account-actions {
-      grid-column: 1 / -1;
-      grid-row: 4;
-      justify-content: flex-start;
-    }
-
-  }
-
-  @media (max-width: 980px) {
-    .accounts-layout {
-      grid-template-columns: 1fr;
-    }
-
-    .account-editor {
-      position: static;
-    }
-
-  }
-
   @media (max-width: 720px) {
     .actions,
     .panel-title,
-    .panel-actions,
-    .account-row {
+    .panel-actions {
       align-items: stretch;
       flex-direction: column;
     }
 
     .path-control {
       grid-template-columns: 1fr;
-    }
-
-    .account-summary-strip {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .account-row,
-    .account-meta-grid {
-      grid-template-columns: 1fr;
-    }
-
-    .account-enabled-pill,
-    .account-name,
-    .account-meta-grid,
-    .account-actions {
-      grid-column: 1;
-      grid-row: auto;
-      justify-content: flex-start;
     }
 
     .job-row {
@@ -2904,10 +2400,5 @@
       width: 100%;
     }
 
-    .account-enabled-pill,
-    .account-actions button,
-    .account-actions button.secondary {
-      width: auto;
-    }
   }
 </style>
