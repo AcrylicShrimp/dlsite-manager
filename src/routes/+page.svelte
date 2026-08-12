@@ -16,13 +16,10 @@
   import ProductActionMenuView from "$lib/features/library/ProductActionMenu.svelte";
   import ProductDetailDialog from "$lib/features/library/ProductDetailDialog.svelte";
   import ProductImagePreviewView from "$lib/features/library/ProductImagePreview.svelte";
+  import SettingsView from "$lib/features/settings/SettingsView.svelte";
   import ToastStack from "$lib/components/ToastStack.svelte";
-  import UiButton from "$lib/components/ui/Button.svelte";
-  import Field from "$lib/components/ui/Field.svelte";
-  import TextInput from "$lib/components/ui/TextInput.svelte";
   import { DLSITE_URL, GITHUB_URL } from "$lib/model/constants";
   import {
-    appInfoValue,
     errorMessage,
     shortDate,
     valueOrNull,
@@ -1796,118 +1793,20 @@
         onReloadAudit={loadAuditEvents}
       />
     {:else}
-      <div class="settings-layout">
-        <form class="settings-panel" onsubmit={saveSettings}>
-          <div class="panel-title">
-            <div>
-              <h2>Storage paths</h2>
-              <p>Library is the final managed collection. Download staging keeps resumable partial files and fetched archives.</p>
-            </div>
-            <UiButton
-              variant="secondary"
-              size="small"
-              onclick={loadSettings}
-              disabled={settingsLoading || settingsSaving}
-            >
-              Reload
-            </UiButton>
-          </div>
-
-          <Field
-            id="library-root"
-            label="Library folder"
-            help="Final location for managed works after download and unpacking."
-          >
-            <div class="path-control">
-              <TextInput
-                id="library-root"
-                bind:value={libraryRoot}
-                disabled={settingsLoading || settingsSaving}
-              />
-              <UiButton
-                variant="secondary"
-                size="small"
-                onclick={() => chooseSettingsDirectory("library")}
-                disabled={settingsLoading || settingsSaving}
-              >
-                Browse
-              </UiButton>
-            </div>
-          </Field>
-
-          <Field
-            id="download-root"
-            label="Download staging folder"
-            help="Working folder for partial downloads, retries, and fetched archives. Defaults to your system Downloads folder."
-          >
-            <div class="path-control">
-              <TextInput
-                id="download-root"
-                bind:value={downloadRoot}
-                disabled={settingsLoading || settingsSaving}
-              />
-              <UiButton
-                variant="secondary"
-                size="small"
-                onclick={() => chooseSettingsDirectory("download")}
-                disabled={settingsLoading || settingsSaving}
-              >
-                Browse
-              </UiButton>
-              <UiButton
-                variant="secondary"
-                size="small"
-                onclick={useDefaultDownloadRoot}
-                disabled={settingsLoading || settingsSaving}
-              >
-                Use Default
-              </UiButton>
-            </div>
-          </Field>
-
-          <div class="actions">
-            <span></span>
-            <UiButton type="submit" disabled={settingsLoading || settingsSaving}>
-              {settingsSaving ? "Saving" : "Save"}
-            </UiButton>
-          </div>
-        </form>
-
-        <section class="settings-panel about-panel" aria-label="About">
-          <div class="panel-title">
-            <h2>About</h2>
-            <div class="panel-actions about-actions">
-              <UiButton
-                variant="secondary"
-                size="small"
-                onclick={() => openExternalUrl(GITHUB_URL, "GitHub")}
-              >
-                GitHub
-              </UiButton>
-              <UiButton
-                variant="secondary"
-                size="small"
-                onclick={() => openExternalUrl(DLSITE_URL, "DLsite")}
-              >
-                DLsite
-              </UiButton>
-            </div>
-          </div>
-          <dl class="about-grid">
-            <dt>Application</dt>
-            <dd>{appInfoValue(appInfo?.name, appInfoLoading)}</dd>
-
-            <dt>Version</dt>
-            <dd>{appInfoValue(appInfo?.version, appInfoLoading)}</dd>
-
-            <dt>Identifier</dt>
-            <dd>{appInfoValue(appInfo?.identifier, appInfoLoading)}</dd>
-
-            <dt>Tauri</dt>
-            <dd>{appInfoValue(appInfo?.tauriVersion, appInfoLoading)}</dd>
-          </dl>
-        </section>
-      </div>
+      <SettingsView
+        bind:libraryRoot
+        bind:downloadRoot
+        loading={settingsLoading}
+        saving={settingsSaving}
+        {appInfo}
+        {appInfoLoading}
+        onReload={loadSettings}
+        onChooseDirectory={chooseSettingsDirectory}
+        onUseDefaultDownloadRoot={useDefaultDownloadRoot}
+        onSave={saveSettings}
+        onOpenGitHub={() => openExternalUrl(GITHUB_URL, "GitHub")}
+        onOpenDlsite={() => openExternalUrl(DLSITE_URL, "DLsite")}
+      />
     {/if}
 
   <ConfirmationDialogView dialog={confirmationDialog} onClose={closeConfirmationDialog} />
@@ -1972,34 +1871,6 @@
     margin: 0;
   }
 
-  .actions,
-  .panel-title,
-  .panel-actions {
-    display: flex;
-    align-items: center;
-  }
-
-  .panel-actions {
-    gap: 8px;
-  }
-
-  h2 {
-    margin: 0;
-    color: var(--text-strong);
-    font-weight: 700;
-  }
-
-  h2 {
-    font-size: 17px;
-  }
-
-  .settings-panel {
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--panel);
-    box-shadow: 0 16px 40px rgb(0 0 0 / 18%);
-  }
-
   .chip-tooltip {
     position: fixed;
     z-index: 50;
@@ -2016,100 +1887,4 @@
     pointer-events: none;
   }
 
-  .settings-panel {
-    padding: 18px;
-  }
-
-  .settings-panel {
-    display: grid;
-    gap: 14px;
-  }
-
-  .settings-panel {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .settings-layout {
-    display: grid;
-    flex: 1 1 auto;
-    align-content: start;
-    gap: 14px;
-    width: 100%;
-    min-width: 0;
-    min-height: 0;
-    overflow: auto;
-    scrollbar-gutter: stable;
-  }
-
-  .panel-title {
-    justify-content: space-between;
-    gap: 10px;
-    margin-bottom: 14px;
-  }
-
-  .panel-title > div {
-    min-width: 0;
-  }
-
-  .panel-title p {
-    margin: 4px 0 0;
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 1.35;
-  }
-
-  .about-panel {
-    gap: 10px;
-  }
-
-  .about-grid {
-    display: grid;
-    grid-template-columns: max-content minmax(0, 1fr);
-    column-gap: 18px;
-    row-gap: 8px;
-    margin: 0;
-    font-size: 13px;
-  }
-
-  .about-grid dt {
-    color: var(--muted);
-    font-weight: 650;
-  }
-
-  .about-grid dd {
-    min-width: 0;
-    margin: 0;
-    color: var(--text);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .path-control {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    gap: 8px;
-    align-items: center;
-  }
-
-  .actions {
-    justify-content: space-between;
-    gap: 14px;
-  }
-
-  @media (max-width: 720px) {
-    .actions,
-    .panel-title,
-    .panel-actions {
-      align-items: stretch;
-      flex-direction: column;
-    }
-
-    .path-control {
-      grid-template-columns: 1fr;
-    }
-
-  }
 </style>
