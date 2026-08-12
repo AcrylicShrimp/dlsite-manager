@@ -8,6 +8,7 @@
   import { onDestroy, onMount } from "svelte";
   import AppShell from "$lib/components/AppShell.svelte";
   import ConfirmationDialogView from "$lib/components/ConfirmationDialog.svelte";
+  import LibraryControls from "$lib/features/library/LibraryControls.svelte";
   import ProductCard from "$lib/features/library/ProductCard.svelte";
   import ToastStack from "$lib/components/ToastStack.svelte";
   import UiButton from "$lib/components/ui/Button.svelte";
@@ -921,8 +922,7 @@
     }
   }
 
-  async function searchProducts(event: Event) {
-    event.preventDefault();
+  async function searchProducts() {
     await loadProducts({ resetPage: true });
   }
 
@@ -1719,62 +1719,21 @@
 
     {#if activeView === "library"}
       <section class="product-area" aria-label="Library">
-        <div class="library-controls">
-          <form class="library-search-panel" onsubmit={searchProducts}>
-            <div class="library-search-row">
-              <input
-                type="search"
-                autocomplete="off"
-                spellcheck="false"
-                placeholder="Search title, maker, credit, tag, source, work ID"
-                bind:value={productSearch}
-              />
-              <button type="submit" disabled={productsLoading}>Search</button>
-              <button class="secondary" type="button" onclick={resetLibraryFilters}>
-                Reset
-              </button>
-              <button
-                class="secondary filter-fold-button"
-                type="button"
-                aria-expanded={libraryFiltersOpen}
-                aria-controls="library-filter-grid"
-                onclick={() => (libraryFiltersOpen = !libraryFiltersOpen)}
-              >
-                {libraryFiltersOpen ? "Hide Filters" : "Show Filters"}
-              </button>
-            </div>
-          </form>
-
-          <div class="library-actions-panel" aria-label="Library actions">
-            <div class="library-action-group">
-              <button
-                class="secondary"
-                type="button"
-                onclick={reloadProducts}
-                disabled={productsLoading}
-              >
-                Reload
-              </button>
-              <button
-                type="button"
-                onclick={syncEnabledAccounts}
-                disabled={accountsLoading || jobsLoading || !hasSyncableEnabledAccount()}
-              >
-                Sync
-              </button>
-            </div>
-            <div class="library-action-group">
-              <button
-                class="secondary download-results-button"
-                type="button"
-                onclick={startBulkWorkDownload}
-                disabled={bulkDownloadPlanning || productsLoading || jobsLoading || totalProducts === 0}
-              >
-                {bulkDownloadButtonLabel()}
-              </button>
-            </div>
-          </div>
-        </div>
+        <LibraryControls
+          bind:search={productSearch}
+          filtersOpen={libraryFiltersOpen}
+          searchDisabled={productsLoading}
+          reloadDisabled={productsLoading}
+          syncDisabled={accountsLoading || jobsLoading || !hasSyncableEnabledAccount()}
+          bulkDisabled={bulkDownloadPlanning || productsLoading || jobsLoading || totalProducts === 0}
+          bulkLabel={bulkDownloadButtonLabel()}
+          onSearch={searchProducts}
+          onReset={resetLibraryFilters}
+          onToggleFilters={() => (libraryFiltersOpen = !libraryFiltersOpen)}
+          onReload={reloadProducts}
+          onSync={syncEnabledAccounts}
+          onBulkDownload={startBulkWorkDownload}
+        />
 
         {#if libraryFiltersOpen}
           <div id="library-filter-grid" class="library-filter-panel filter-grid">
@@ -3712,29 +3671,12 @@
     gap: 14px;
   }
 
-  .library-controls {
-    position: sticky;
-    top: 0;
-    z-index: 30;
-    display: grid;
-    flex: 0 0 auto;
-    gap: 1px;
-    border-bottom: 1px solid var(--border);
-    background: var(--border);
-    border-radius: 7px 7px 0 0;
-    box-shadow: 0 14px 26px rgb(0 0 0 / 22%);
-    overflow: hidden;
-  }
-
-  .library-search-panel,
-  .library-filter-panel,
-  .library-actions-panel {
+  .library-filter-panel {
     min-width: 0;
     padding: 14px;
     background: var(--panel-soft);
   }
 
-  .library-search-panel,
   .library-filter-panel {
     display: grid;
     gap: 10px;
@@ -3743,17 +3685,6 @@
   .library-filter-panel {
     flex: 0 0 auto;
     border-bottom: 1px solid var(--border);
-  }
-
-  .library-search-row {
-    display: grid;
-    grid-template-columns: minmax(260px, 1fr) auto auto auto;
-    gap: 10px;
-    align-items: center;
-  }
-
-  .filter-fold-button {
-    min-width: 112px;
   }
 
   .filter-grid {
@@ -3905,27 +3836,6 @@
     color: var(--text-subtle);
     font-size: 11px;
     font-weight: 700;
-  }
-
-  .library-actions-panel {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 10px;
-    width: 100%;
-    padding-block: 10px;
-  }
-
-  .library-action-group {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    min-width: 0;
-  }
-
-  .download-results-button {
-    min-width: 128px;
   }
 
   .list-header {
@@ -4667,14 +4577,6 @@
       justify-content: flex-start;
     }
 
-    .library-controls {
-      grid-template-columns: 1fr;
-    }
-
-    .library-actions-panel {
-      justify-content: flex-start;
-      width: 100%;
-    }
   }
 
   @media (max-width: 980px) {
@@ -4684,10 +4586,6 @@
 
     .account-editor {
       position: static;
-    }
-
-    .library-search-row {
-      grid-template-columns: minmax(0, 1fr) auto auto;
     }
 
     .product-detail-heading {
@@ -4721,7 +4619,6 @@
       flex-direction: column;
     }
 
-    .library-search-row,
     .filter-group {
       grid-template-columns: 1fr;
     }
@@ -4735,8 +4632,7 @@
       flex-wrap: wrap;
     }
 
-    .toggle-row button,
-    .library-actions-panel button {
+    .toggle-row button {
       flex: 1 1 130px;
     }
 

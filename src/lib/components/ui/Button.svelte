@@ -16,6 +16,7 @@
     title,
     ariaLabel,
     ariaExpanded,
+    ariaControls,
     onclick,
   }: {
     children?: Snippet;
@@ -27,6 +28,7 @@
     title?: string;
     ariaLabel?: string;
     ariaExpanded?: boolean;
+    ariaControls?: string;
     onclick?: (event: MouseEvent) => void;
   } = $props();
 </script>
@@ -42,6 +44,7 @@
   {title}
   aria-label={ariaLabel}
   aria-expanded={ariaExpanded}
+  aria-controls={ariaControls}
   {onclick}
 >
   {@render children?.()}
