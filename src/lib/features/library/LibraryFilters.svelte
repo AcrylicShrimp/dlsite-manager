@@ -236,19 +236,33 @@
   }
 
   .toggle-row button {
+    display: inline-flex;
+    align-items: center;
     justify-content: flex-start;
     min-width: 0;
     max-width: 210px;
     height: 30px;
     padding: 0 10px;
-    border-color: var(--border-strong);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
     color: var(--muted);
     background: var(--field);
+    font: inherit;
     font-size: 12px;
     font-weight: 650;
+    cursor: pointer;
     overflow: hidden;
     text-overflow: ellipsis;
+    transition:
+      border-color 120ms ease,
+      background-color 120ms ease,
+      color 120ms ease;
     white-space: nowrap;
+  }
+
+  .toggle-row button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 
   .toggle-row button.active {
