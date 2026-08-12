@@ -8,6 +8,7 @@
   import { onDestroy, onMount } from "svelte";
   import AppShell from "$lib/components/AppShell.svelte";
   import ConfirmationDialogView from "$lib/components/ConfirmationDialog.svelte";
+  import ProductCard from "$lib/features/library/ProductCard.svelte";
   import ToastStack from "$lib/components/ToastStack.svelte";
   import UiButton from "$lib/components/ui/Button.svelte";
   import Field from "$lib/components/ui/Field.svelte";
@@ -63,12 +64,12 @@
   } from "$lib/utils/jobs";
   import {
     ageLabel,
-    ageTone,
     ageTooltip,
     creditTextForKind,
     creditTooltip,
     productCreditFields,
-    productType,
+    productIsLocalOnly,
+    localOnlyTooltip,
     productTypeFromCode,
   } from "$lib/utils/products";
   import type {
@@ -1639,17 +1640,6 @@
     return !!job || (product.download.status === "downloaded" && !product.download.localPath);
   }
 
-  function productIsLocalOnly(product: Product | ProductDetail) {
-    return (
-      product.owners.length === 1 &&
-      product.owners[0]?.accountId === "__local__"
-    );
-  }
-
-  function localOnlyTooltip(workId: string) {
-    return `${workId} is present in the local library but is not owned by any enabled account.`;
-  }
-
   async function runProductDownloadAction(product: Product) {
     if (product.download.status === "downloaded") {
       await openDownloadedProduct(product);
@@ -1985,168 +1975,25 @@
         {:else}
           <div class="product-table" aria-label="Cached products">
             {#each products as product (product.workId)}
-              {@const typeInfo = productType(product)}
               {@const downloadJob = activeWorkDownloadJob(product.workId)}
-              <article class="product-card" data-tone={typeInfo.tone}>
-                <div class="type-belt" aria-hidden="true"></div>
-                {#if product.thumbnailUrl}
-                  <button
-                    class="thumb"
-                    type="button"
-                    title={`Preview ${product.title}`}
-                    aria-label={`Preview image for ${product.title}`}
-                    onclick={(event) => {
-                      event.stopPropagation();
-                      openProductImage(product);
-                    }}
-                  >
-                    <img src={product.thumbnailUrl} alt="" loading="lazy" />
-                  </button>
-                {:else}
-                  <div class="thumb" aria-hidden="true">
-                    <span>?</span>
-                  </div>
-                {/if}
-                <div class="product-main">
-                  <div class="product-title-row">
-                    <button
-                      class="product-title"
-                      type="button"
-                      title={`Open details for ${product.title}`}
-                      disabled={productDetailLoadingWorkId === product.workId}
-                      onclick={() => openProductDetail(product)}
-                    >
-                      {product.title}
-                    </button>
-                    <button
-                      class="work-id"
-                      type="button"
-                      title={`Copy ${product.workId}`}
-                      onclick={(event) => {
-                        event.stopPropagation();
-                        void copyWorkId(product.workId);
-                      }}
-                    >
-                      {product.workId}
-                    </button>
-                  </div>
-                  <div class="product-meta">
-                    {#each productCreditFields(product) as field (field.key)}
-                      <button
-                        class="credit-row"
-                        type="button"
-                        title={creditTooltip(field)}
-                        aria-label={field.missing ? `${field.label} is not available` : `Copy ${field.label}: ${field.value}`}
-                        disabled={field.missing}
-                        onclick={(event) => {
-                          event.stopPropagation();
-                          void copyCreditField(field, product.workId);
-                        }}
-                      >
-                        <span class="credit-label">{field.label}</span>
-                        <span class:missing={field.missing} class="credit-value">{field.value}</span>
-                      </button>
-                    {/each}
-                  </div>
-                  <div class="labeled-row" aria-label="Classifications">
-                    <span class="credit-label">Tags</span>
-                    <div class="chip-row">
-                      <span
-                        class="chip type-chip"
-                        role="note"
-                        aria-label={typeInfo.tooltip}
-                        onmouseenter={(event) => showChipTooltip(typeInfo.tooltip, event)}
-                        onmousemove={(event) => moveChipTooltip(typeInfo.tooltip, event)}
-                        onmouseleave={hideChipTooltip}
-                      >
-                        {typeInfo.label}
-                      </span>
-                      {#if ageLabel(product.ageCategory)}
-                        <span
-                          class="chip age-chip"
-                          role="note"
-                          data-age={ageTone(product.ageCategory)}
-                          aria-label={ageTooltip(product.ageCategory)}
-                          onmouseenter={(event) =>
-                            showChipTooltip(ageTooltip(product.ageCategory), event)}
-                          onmousemove={(event) =>
-                            moveChipTooltip(ageTooltip(product.ageCategory), event)}
-                          onmouseleave={hideChipTooltip}
-                        >
-                          {ageLabel(product.ageCategory)}
-                        </span>
-                      {/if}
-                      {#if productIsLocalOnly(product)}
-                        <span
-                          class="chip source-chip source-chip--local"
-                          role="note"
-                          title={localOnlyTooltip(product.workId)}
-                        >
-                          Local Only
-                        </span>
-                      {/if}
-                      {#each product.customTags as tag (tag.name)}
-                        <span
-                          class="chip custom-tag-chip"
-                          role="note"
-                          title={`Custom tag: ${tag.name}`}
-                        >
-                          {tag.name}
-                        </span>
-                      {/each}
-                    </div>
-                  </div>
-                  <div class="product-footer">
-                    <div class="labeled-row owner-row" aria-label="Owners">
-                      <span class="credit-label">Owned by</span>
-                      <div class="owner-list">
-                        {#each product.owners as owner (owner.accountId)}
-                          <span title={owner.purchasedAt ? `${owner.label}: ${shortDate(owner.purchasedAt)}` : owner.label}>
-                            {owner.label}
-                          </span>
-                        {/each}
-                      </div>
-                    </div>
-                    <div class="product-actions" aria-label="Actions">
-                      <button
-                        class="secondary small"
-                        type="button"
-                        title={`Open ${product.workId} on DLsite`}
-                        onclick={(event) => {
-                          event.stopPropagation();
-                          void openDlsiteProductPage(product.workId);
-                        }}
-                      >
-                        DLsite
-                      </button>
-                      <button
-                        class="small"
-                        type="button"
-                        title={productDownloadActionTitle(product, downloadJob)}
-                        disabled={productDownloadActionDisabled(product, downloadJob)}
-                        onclick={(event) => {
-                          event.stopPropagation();
-                          void runProductDownloadAction(product);
-                        }}
-                      >
-                        {productDownloadActionLabel(product, downloadJob)}
-                      </button>
-                      <button
-                        class="secondary small menu-button"
-                        type="button"
-                        title="More actions"
-                        aria-expanded={productActionMenu?.workId === product.workId}
-                        onclick={(event) => {
-                          event.stopPropagation();
-                          toggleProductActionMenu(product, event);
-                        }}
-                      >
-                        ...
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </article>
+              <ProductCard
+                {product}
+                detailLoading={productDetailLoadingWorkId === product.workId}
+                downloadLabel={productDownloadActionLabel(product, downloadJob)}
+                downloadTitle={productDownloadActionTitle(product, downloadJob)}
+                downloadDisabled={productDownloadActionDisabled(product, downloadJob)}
+                menuOpen={productActionMenu?.workId === product.workId}
+                onPreview={openProductImage}
+                onOpenDetails={openProductDetail}
+                onCopyWorkId={copyWorkId}
+                onCopyCredit={copyCreditField}
+                onShowTooltip={showChipTooltip}
+                onMoveTooltip={moveChipTooltip}
+                onHideTooltip={hideChipTooltip}
+                onOpenDlsite={openDlsiteProductPage}
+                onDownload={runProductDownloadAction}
+                onToggleMenu={toggleProductActionMenu}
+              />
             {/each}
           </div>
         {/if}
@@ -4116,362 +3963,9 @@
     overscroll-behavior: contain;
   }
 
-  .product-card {
-    --type-color: #6b7177;
-    --type-soft: rgb(107 113 119 / 18%);
-    --meta-column-gap: clamp(8px, 1.15vw, 14px);
-    --credit-label-width: clamp(60px, 4.1vw, 66px);
-    --credit-gap: clamp(5px, 0.7vw, 7px);
-    --meta-width: min(100%, clamp(520px, 48vw, 760px));
-    --meta-grid-height: 74px;
-    --row-height: 220px;
-    --thumb-size: 112px;
-
-    display: grid;
-    grid-template-columns: 5px var(--thumb-size) minmax(0, 1fr);
-    gap: 14px;
-    align-items: start;
-    height: var(--row-height);
-    padding: 12px 14px 12px 0;
-    border-bottom: 1px solid var(--border);
-    contain: layout paint;
-    overflow: hidden;
-    overflow-anchor: none;
-  }
-
-  .product-card:hover {
-    background: var(--panel-soft);
-  }
-
-  .product-card:last-child {
-    border-bottom: 0;
-  }
-
-  .product-card[data-tone="audio"] {
-    --type-color: #d8a62d;
-    --type-soft: rgb(216 166 45 / 17%);
-  }
-
-  .product-card[data-tone="video"] {
-    --type-color: #d64b92;
-    --type-soft: rgb(214 75 146 / 17%);
-  }
-
-  .product-card[data-tone="voice-comic"] {
-    --type-color: #55bfe6;
-    --type-soft: rgb(85 191 230 / 16%);
-  }
-
-  .product-card[data-tone="game"] {
-    --type-color: #9863df;
-    --type-soft: rgb(152 99 223 / 17%);
-  }
-
-  .product-card[data-tone="image"] {
-    --type-color: #4fb85b;
-    --type-soft: rgb(79 184 91 / 16%);
-  }
-
-  .type-belt {
-    align-self: stretch;
-    width: 5px;
-    border-radius: 0 6px 6px 0;
-    background: var(--type-color);
-  }
-
-  .thumb {
-    display: block;
-    width: var(--thumb-size);
-    height: var(--thumb-size);
-    min-width: 0;
-    padding: 0;
-    border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    color: inherit;
-    background: var(--panel-raised);
-    cursor: pointer;
-    overflow: hidden;
-  }
-
-  .thumb:hover {
-    border-color: var(--type-color);
-  }
-
-  .thumb:focus-visible {
-    border-color: var(--type-color);
-    outline: 2px solid var(--type-soft);
-    outline-offset: 2px;
-  }
-
-  .thumb[aria-hidden="true"] {
-    cursor: default;
-  }
-
-  .thumb[aria-hidden="true"]:hover {
-    border-color: var(--border-strong);
-  }
-
-  .thumb img {
-    display: block;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-
-  .thumb span {
-    display: grid;
-    place-items: center;
-    width: 100%;
-    height: 100%;
-    color: var(--text-subtle);
-    font-weight: 700;
-  }
-
-  .product-main {
-    display: grid;
-    grid-template-rows: auto var(--meta-grid-height) 24px 32px;
-    gap: 9px;
-    height: 100%;
-    min-width: 0;
-    overflow: hidden;
-  }
-
-  .product-title-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 12px;
-    align-items: start;
-    min-width: 0;
-  }
-
-  .product-title {
-    display: block;
-    width: 100%;
-    min-height: 0;
-    min-width: 0;
-    height: auto;
-    padding: 0;
-    border: 0;
-    color: var(--text-strong);
-    background: transparent;
-    font-size: 17px;
-    font-weight: 700;
-    line-height: 1.25;
-    text-align: left;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .product-title:hover:not(:disabled) {
-    color: var(--accent);
-    background: transparent;
-  }
-
-  .work-id {
-    min-width: 102px;
-    height: 27px;
-    padding: 0 8px;
-    border-color: var(--border-strong);
-    color: var(--muted);
-    background: var(--field);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .work-id:hover {
-    border-color: var(--type-color);
-    color: var(--text);
-  }
-
-  .product-meta {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-rows: repeat(4, 15px);
-    align-content: start;
-    gap: 3px var(--meta-column-gap);
-    justify-self: start;
-    height: var(--meta-grid-height);
-    width: var(--meta-width);
-    min-width: 0;
-    overflow: hidden;
-  }
-
-  .credit-row,
-  .labeled-row {
-    display: grid;
-    grid-template-columns: var(--credit-label-width) minmax(0, 1fr);
-    gap: var(--credit-gap);
-    min-width: 0;
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 1.2;
-  }
-
-  .credit-row {
-    width: 100%;
-    height: 15px;
-    min-width: 0;
-    min-height: 0;
-    padding: 0;
-    border: 0;
-    border-radius: 3px;
-    background: transparent;
-    cursor: pointer;
-    text-align: left;
-  }
-
-  .credit-row:hover:not(:disabled) .credit-value {
-    color: var(--text);
-  }
-
-  .credit-row:focus-visible {
-    outline: 2px solid var(--accent-muted);
-    outline-offset: 2px;
-  }
-
-  .credit-row:disabled {
-    cursor: default;
-    opacity: 1;
-  }
-
-  .labeled-row {
-    align-items: center;
-    justify-self: start;
-    width: var(--meta-width);
-    min-height: 24px;
-  }
-
-  .credit-label {
-    color: var(--text-subtle);
-    font-weight: 650;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .credit-value {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .credit-value.missing {
-    color: var(--text-subtle);
-    opacity: 0.72;
-  }
-
-  .chip-row {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
-    min-width: 0;
-    max-height: 24px;
-    overflow: hidden;
-  }
-
-  .chip {
-    display: inline-flex;
-    align-items: center;
-    min-height: 24px;
-    max-width: 190px;
-    padding: 2px 8px;
-    border: 1px solid var(--border-strong);
-    border-radius: 999px;
-    color: var(--muted);
-    background: var(--panel-raised);
-    font-size: 12px;
-    font-weight: 650;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .type-chip {
-    border-color: var(--type-color);
-    color: var(--type-color);
-    background: var(--type-soft);
-  }
-
-  .age-chip[data-age="all"] {
-    border-color: rgb(112 165 120 / 58%);
-    color: #9bc89f;
-    background: rgb(112 165 120 / 14%);
-  }
-
-  .age-chip[data-age="r15"] {
-    border-color: rgb(204 166 61 / 58%);
-    color: #d2b56c;
-    background: rgb(204 166 61 / 14%);
-  }
-
-  .age-chip[data-age="r18"] {
-    border-color: rgb(185 64 64 / 62%);
-    color: #d77b7b;
-    background: rgb(185 64 64 / 16%);
-  }
-
-  .custom-tag-chip {
-    border-color: rgb(96 165 250 / 54%);
-    color: #9fc8ff;
-    background: rgb(96 165 250 / 13%);
-  }
-
-  .source-chip--local {
-    border-color: rgb(100 181 217 / 58%);
-    color: #9ed8ef;
-    background: rgb(100 181 217 / 13%);
-  }
-
-  .product-footer {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 12px;
-    align-items: center;
-    height: 32px;
-    min-width: 0;
-  }
-
-  .owner-list,
   .account-name small {
     color: var(--muted);
     font-size: 12px;
-  }
-
-  .owner-list {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 5px;
-    min-width: 0;
-    max-height: 24px;
-    overflow: hidden;
-  }
-
-  .owner-list span {
-    max-width: 150px;
-    padding: 3px 7px;
-    border: 1px solid var(--border-strong);
-    border-radius: 999px;
-    color: var(--text);
-    background: var(--panel-raised);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .product-actions {
-    display: flex;
-    gap: 8px;
-    justify-content: flex-end;
-  }
-
-  .menu-button {
-    min-width: 42px;
-    padding: 0 10px;
   }
 
   .product-action-menu {
@@ -5196,36 +4690,6 @@
       grid-template-columns: minmax(0, 1fr) auto auto;
     }
 
-    .product-card {
-      --meta-column-gap: 8px;
-      --credit-label-width: 62px;
-      --credit-gap: 6px;
-      --meta-width: 100%;
-      --meta-grid-height: 148px;
-      --row-height: 270px;
-      --thumb-size: 84px;
-
-      gap: 12px;
-    }
-
-    .product-meta {
-      grid-template-columns: 1fr;
-      grid-template-rows: repeat(7, 15px);
-    }
-
-    .product-main {
-      grid-template-rows: auto var(--meta-grid-height) 24px minmax(24px, auto);
-    }
-
-    .product-footer {
-      grid-template-columns: 1fr;
-      align-items: start;
-    }
-
-    .product-actions {
-      justify-content: flex-start;
-    }
-
     .product-detail-heading {
       grid-template-columns: 86px minmax(0, 1fr) auto;
       gap: 12px;
@@ -5310,31 +4774,6 @@
       justify-content: flex-start;
     }
 
-    .product-card {
-      --credit-label-width: 60px;
-      --credit-gap: 5px;
-      --row-height: 286px;
-      --thumb-size: 72px;
-
-      padding-right: 10px;
-    }
-
-    .product-title-row {
-      grid-template-columns: 1fr;
-      gap: 6px;
-    }
-
-    .work-id,
-    .product-actions,
-    .product-actions button,
-    .product-actions button.secondary {
-      width: auto;
-    }
-
-    .work-id {
-      justify-self: start;
-    }
-
     .job-row {
       grid-template-columns: 1fr;
     }
@@ -5379,8 +4818,6 @@
       width: 100%;
     }
 
-    .product-actions button,
-    .product-actions button.secondary,
     .account-enabled-pill,
     .account-actions button,
     .account-actions button.secondary,
@@ -5390,8 +4827,7 @@
     .detail-credit-list button,
     .detail-custom-tag button,
     .custom-tag-form button,
-    .link-button,
-    .work-id {
+    .link-button {
       width: auto;
     }
   }

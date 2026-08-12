@@ -4,24 +4,29 @@
   type ButtonType = "button" | "submit" | "reset";
   type ButtonVariant = "primary" | "secondary" | "danger";
   type ButtonSize = "normal" | "small";
+  type ButtonResponsiveWidth = "fill" | "auto";
 
   let {
     children,
     type = "button",
     variant = "primary",
     size = "normal",
+    responsiveWidth = "fill",
     disabled = false,
     title,
     ariaLabel,
+    ariaExpanded,
     onclick,
   }: {
     children?: Snippet;
     type?: ButtonType;
     variant?: ButtonVariant;
     size?: ButtonSize;
+    responsiveWidth?: ButtonResponsiveWidth;
     disabled?: boolean;
     title?: string;
     ariaLabel?: string;
+    ariaExpanded?: boolean;
     onclick?: (event: MouseEvent) => void;
   } = $props();
 </script>
@@ -31,10 +36,12 @@
   class:secondary={variant === "secondary"}
   class:danger={variant === "danger"}
   class:small={size === "small"}
+  class:auto-width={responsiveWidth === "auto"}
   {type}
   {disabled}
   {title}
   aria-label={ariaLabel}
+  aria-expanded={ariaExpanded}
   {onclick}
 >
   {@render children?.()}
@@ -115,6 +122,10 @@
   @media (max-width: 720px) {
     .button {
       width: 100%;
+    }
+
+    .button.auto-width {
+      width: auto;
     }
   }
 </style>
