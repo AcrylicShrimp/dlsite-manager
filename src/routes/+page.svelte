@@ -1,11 +1,11 @@
 <script lang="ts">
   import { getIdentifier, getName, getTauriVersion, getVersion } from "@tauri-apps/api/app";
-  import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { downloadDir } from "@tauri-apps/api/path";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { onDestroy, onMount } from "svelte";
+  import * as commands from "$lib/api/tauri";
   import AppShell from "$lib/components/AppShell.svelte";
   import BulkDownloadDialogView from "$lib/components/BulkDownloadDialog.svelte";
   import ConfirmationDialogView from "$lib/components/ConfirmationDialog.svelte";
@@ -45,9 +45,7 @@
   } from "$lib/utils/products";
   import type {
     Account,
-    AccountRemovalReport,
     AppInfo,
-    AppSettings,
     AuditEvent,
     BulkDownloadDialog,
     BulkWorkDownloadPreview,
@@ -63,8 +61,6 @@
     ProductDownload,
     ProductFilterFacets,
     ProductImagePreview,
-    ProductListPage,
-    StartJobResponse,
     StartWorkDownloadOptions,
     Toast,
     ToastKind,
@@ -213,7 +209,7 @@
     settingsLoading = true;
 
     try {
-      const settings = await invoke<AppSettings>("get_settings");
+      const settings = await commands.getSettings();
       const defaultDownloadRoot = await systemDownloadRoot();
       libraryRoot = settings.libraryRoot ?? "";
       downloadRoot = settings.downloadRoot ?? defaultDownloadRoot;
@@ -229,11 +225,9 @@
     settingsSaving = true;
 
     try {
-      const settings = await invoke<AppSettings>("save_settings", {
-        settings: {
-          libraryRoot: valueOrNull(libraryRoot),
-          downloadRoot: valueOrNull(downloadRoot),
-        },
+      const settings = await commands.saveSettings({
+        libraryRoot: valueOrNull(libraryRoot),
+        downloadRoot: valueOrNull(downloadRoot),
       });
       const defaultDownloadRoot = await systemDownloadRoot();
       libraryRoot = settings.libraryRoot ?? "";
@@ -292,7 +286,7 @@
     accountsLoading = true;
 
     try {
-      accounts = await invoke<Account[]>("list_accounts");
+      accounts = await commands.listAccounts();
       selectedAccountIds = selectedAccountIds.filter((accountId) =>
         accounts.some((account) => account.id === accountId),
       );
@@ -308,13 +302,11 @@
     accountSaving = true;
 
     try {
-      const account = await invoke<Account>("save_account", {
-        request: {
-          id: editingAccountId,
-          label: accountLabel,
-          loginName: valueOrNull(accountLoginName),
-          password: valueOrNull(accountPassword),
-        },
+      const account = await commands.saveAccount({
+        id: editingAccountId,
+        label: accountLabel,
+        loginName: valueOrNull(accountLoginName),
+        password: valueOrNull(accountPassword),
       });
       notifySuccess(editingAccountId ? "Account updated" : "Account added");
       editAccount(account);
@@ -329,12 +321,7 @@
 
   async function setAccountEnabled(account: Account, enabled: boolean) {
     try {
-      await invoke("set_account_enabled", {
-        request: {
-          accountId: account.id,
-          enabled,
-        },
-      });
+      await commands.setAccountEnabled(account.id, enabled);
       await loadAccounts();
       await loadProducts({ clampInvalidPage: true });
     } catch (err) {
@@ -357,11 +344,7 @@
     }
 
     try {
-      const report = await invoke<AccountRemovalReport>("remove_account", {
-        request: {
-          accountId: account.id,
-        },
-      });
+      const report = await commands.removeAccount(account.id);
 
       notifySuccess(`Removed ${report.label}`);
 
@@ -400,9 +383,7 @@
 
     try {
       let request = productListRequest();
-      let page = await invoke<ProductListPage>("list_products", {
-        request,
-      });
+      let page = await commands.listProducts(request);
 
       if (options.clampInvalidPage) {
         const pageIndex = clampedProductPageIndex(page.totalCount);
@@ -412,9 +393,7 @@
 
           if (page.totalCount > 0) {
             request = productListRequest();
-            page = await invoke<ProductListPage>("list_products", {
-              request,
-            });
+            page = await commands.listProducts(request);
           }
         }
       }
@@ -430,12 +409,10 @@
   }
 
   async function loadProductFilterFacets(request = productListRequest()) {
-    productFilterFacets = await invoke<ProductFilterFacets>("list_product_filter_facets", {
-      request,
-    });
+    productFilterFacets = await commands.listProductFilterFacets(request);
   }
 
-  function productListRequest() {
+  function productListRequest(): commands.ProductListRequest {
     return {
       search: valueOrNull(productSearch),
       accountIds: selectedAccountIds,
@@ -519,7 +496,7 @@
     await loadProducts({ clampInvalidPage: true });
   }
 
-  function productBulkRequest() {
+  function productBulkRequest(): commands.BulkWorkDownloadRequest {
     return {
       search: valueOrNull(productSearch),
       accountIds: selectedAccountIds,
@@ -651,7 +628,7 @@
     jobsLoading = true;
 
     try {
-      jobs = await invoke<JobSnapshot[]>("list_jobs");
+      jobs = await commands.listJobs();
     } catch (err) {
       notifyError(errorMessage(err));
     } finally {
@@ -836,12 +813,7 @@
   }
 
   async function saveProductCustomTags(workId: string, names: string[]) {
-    const customTags = await invoke<ProductCustomTag[]>("set_product_custom_tags", {
-      request: {
-        workId,
-        tags: names,
-      },
-    });
+    const customTags = await commands.setProductCustomTags(workId, names);
 
     patchProductCustomTags(workId, customTags);
     await loadProductFilterFacets();
@@ -936,11 +908,7 @@
     productDetailLoadingWorkId = product.workId;
 
     try {
-      productDetail = await invoke<ProductDetail>("get_product_detail", {
-        request: {
-          workId: product.workId,
-        },
-      });
+      productDetail = await commands.getProductDetail(product.workId);
     } catch (err) {
       notifyError(errorMessage(err));
     } finally {
@@ -1023,12 +991,10 @@
 
   async function syncAccount(account: Account): Promise<boolean> {
     try {
-      const response = await invoke<StartJobResponse>("start_account_sync", {
-        request: {
-          accountId: account.id,
-          password: editingAccountId === account.id ? valueOrNull(accountPassword) : null,
-        },
-      });
+      const response = await commands.startAccountSync(
+        account.id,
+        editingAccountId === account.id ? valueOrNull(accountPassword) : null,
+      );
       notifyInfo("Sync queued");
       jobMessages = {
         ...jobMessages,
@@ -1072,14 +1038,12 @@
     }
 
     try {
-      const response = await invoke<StartJobResponse>("start_work_download", {
-        request: {
-          workId: product.workId,
-          accountId: downloadAccountId(),
-          password: null,
-          unpackPolicy: options.unpackPolicy ?? "unpackWhenRecognized",
-          replaceExisting: options.replaceExisting ?? false,
-        },
+      const response = await commands.startWorkDownload({
+        workId: product.workId,
+        accountId: downloadAccountId(),
+        password: null,
+        unpackPolicy: options.unpackPolicy ?? "unpackWhenRecognized",
+        replaceExisting: options.replaceExisting ?? false,
       });
       const queuedMessage = options.queuedMessage ?? "Download queued";
       notifyInfo(`${queuedMessage} for ${product.workId}`);
@@ -1097,9 +1061,7 @@
     bulkDownloadPlanning = true;
 
     try {
-      const preview = await invoke<BulkWorkDownloadPreview>("preview_bulk_work_download", {
-        request: productBulkRequest(),
-      });
+      const preview = await commands.previewBulkWorkDownload(productBulkRequest());
 
       if (preview.requestedCount === 0) {
         await showBulkDownloadDialog(preview, "notice");
@@ -1112,9 +1074,7 @@
         return;
       }
 
-      const response = await invoke<StartJobResponse>("start_bulk_work_download", {
-        request: productBulkRequest(),
-      });
+      const response = await commands.startBulkWorkDownload(productBulkRequest());
       notifyInfo("Bulk download queued");
       jobMessages = {
         ...jobMessages,
@@ -1134,11 +1094,7 @@
     }
 
     try {
-      await invoke("open_work_download", {
-        request: {
-          workId: product.workId,
-        },
-      });
+      await commands.openWorkDownload(product.workId);
     } catch (err) {
       notifyError(errorMessage(err));
     }
@@ -1197,11 +1153,7 @@
     }
 
     try {
-      const download = await invoke<ProductDownload>("delete_work_download", {
-        request: {
-          workId: product.workId,
-        },
-      });
+      const download = await commands.deleteWorkDownload(product.workId);
       notifySuccess(`Deleted download for ${product.workId}`);
       setProductDownload(product.workId, download);
     } catch (err) {
@@ -1226,12 +1178,7 @@
         return;
       }
 
-      const download = await invoke<ProductDownload>("mark_work_downloaded", {
-        request: {
-          workId: product.workId,
-          localPath: selected,
-        },
-      });
+      const download = await commands.markWorkDownloaded(product.workId, selected);
       notifySuccess(`Marked ${product.workId} as downloaded`);
       setProductDownload(product.workId, download);
     } catch (err) {
@@ -1274,11 +1221,7 @@
 
   async function cancelJob(job: JobSnapshot) {
     try {
-      await invoke("cancel_job", {
-        request: {
-          jobId: job.id,
-        },
-      });
+      await commands.cancelJob(job.id);
       const workId = jobWorkId(job) ?? jobOutputString(job, "workId");
       notifyInfo(workId ? `Cancellation requested for ${workId}` : "Cancellation requested");
       await loadJobs();
@@ -1289,7 +1232,7 @@
 
   async function clearFinishedJobs() {
     try {
-      await invoke("clear_finished_jobs");
+      await commands.clearFinishedJobs();
       await loadJobs();
     } catch (err) {
       notifyError(errorMessage(err));
@@ -1300,11 +1243,7 @@
     auditLoading = true;
 
     try {
-      auditEvents = await invoke<AuditEvent[]>("list_audit_events", {
-        request: {
-          limit: 80,
-        },
-      });
+      auditEvents = await commands.listAuditEvents(80);
     } catch (err) {
       notifyError(errorMessage(err));
     } finally {
@@ -1314,7 +1253,7 @@
 
   async function loadAuditLogDir() {
     try {
-      const result = await invoke<{ path: string }>("get_audit_log_dir");
+      const result = await commands.getAuditLogDir();
       auditLogDir = result.path;
     } catch (err) {
       notifyError(errorMessage(err));
@@ -1323,7 +1262,7 @@
 
   async function openAuditLogDir() {
     try {
-      await invoke("open_audit_log_dir");
+      await commands.openAuditLogDir();
     } catch (err) {
       notifyError(errorMessage(err));
     }
