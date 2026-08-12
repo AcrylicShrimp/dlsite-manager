@@ -1,10 +1,6 @@
 <script lang="ts">
-  import { getIdentifier, getName, getTauriVersion, getVersion } from "@tauri-apps/api/app";
-  import { listen } from "@tauri-apps/api/event";
-  import { downloadDir } from "@tauri-apps/api/path";
-  import { open as openDialog } from "@tauri-apps/plugin-dialog";
-  import { openUrl } from "@tauri-apps/plugin-opener";
   import { onDestroy, onMount } from "svelte";
+  import * as native from "$lib/api/native";
   import * as commands from "$lib/api/tauri";
   import AppShell from "$lib/components/AppShell.svelte";
   import BulkDownloadDialogView from "$lib/components/BulkDownloadDialog.svelte";
@@ -135,8 +131,8 @@
     let unlisten: (() => void) | null = null;
     let disposed = false;
 
-    void listen<JobEvent>("dm-job-event", (event) => {
-      void handleJobEvent(event.payload);
+    void native.listenToJobEvents((event) => {
+      void handleJobEvent(event);
     }).then((cleanup) => {
       if (disposed) {
         cleanup();
@@ -184,19 +180,7 @@
     appInfoLoading = true;
 
     try {
-      const [name, version, identifier, tauriVersion] = await Promise.all([
-        getName(),
-        getVersion(),
-        getIdentifier(),
-        getTauriVersion(),
-      ]);
-
-      appInfo = {
-        name,
-        version,
-        identifier,
-        tauriVersion,
-      };
+      appInfo = await native.getAppInfo();
     } catch (err) {
       appInfo = null;
       notifyError(errorMessage(err));
@@ -244,9 +228,7 @@
     try {
       const fallbackRoot = await systemDownloadRoot();
       const currentRoot = kind === "library" ? libraryRoot : downloadRoot;
-      const selected = await openDialog({
-        directory: true,
-        multiple: false,
+      const selected = await native.chooseDirectory({
         canCreateDirectories: true,
         defaultPath: currentRoot.trim() || fallbackRoot || undefined,
         title: kind === "library" ? "Choose library folder" : "Choose download staging folder",
@@ -276,7 +258,7 @@
 
   async function systemDownloadRoot() {
     try {
-      return await downloadDir();
+      return await native.getSystemDownloadDirectory();
     } catch {
       return "";
     }
@@ -1166,9 +1148,7 @@
 
     try {
       const fallbackRoot = libraryRoot.trim() || (await systemDownloadRoot());
-      const selected = await openDialog({
-        directory: true,
-        multiple: false,
+      const selected = await native.chooseDirectory({
         canCreateDirectories: false,
         defaultPath: fallbackRoot || undefined,
         title: `Choose local folder for ${product.workId}`,
@@ -1270,7 +1250,7 @@
 
   async function openExternalUrl(url: string, label: string) {
     try {
-      await openUrl(url);
+      await native.openExternalUrl(url);
     } catch (err) {
       notifyError(`Failed to open ${label}: ${errorMessage(err)}`);
     }
