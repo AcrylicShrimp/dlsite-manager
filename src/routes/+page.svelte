@@ -6,6 +6,7 @@
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { onDestroy, onMount } from "svelte";
+  import AppShell from "$lib/components/AppShell.svelte";
   import ConfirmationDialogView from "$lib/components/ConfirmationDialog.svelte";
   import ToastStack from "$lib/components/ToastStack.svelte";
   import UiButton from "$lib/components/ui/Button.svelte";
@@ -1716,36 +1717,6 @@
     }
   }
 
-  function viewEyebrow(view: View) {
-    switch (view) {
-      case "library":
-        return "Collection";
-      case "downloads":
-        return "Queue";
-      case "accounts":
-        return "Sources";
-      case "activity":
-        return "Jobs";
-      case "settings":
-        return "Application";
-    }
-  }
-
-  function viewTitle(view: View) {
-    switch (view) {
-      case "library":
-        return "Library";
-      case "downloads":
-        return "Downloads";
-      case "accounts":
-        return "Accounts";
-      case "activity":
-        return "Activity";
-      case "settings":
-        return "Settings";
-    }
-  }
-
 </script>
 
 <svelte:head>
@@ -1754,57 +1725,7 @@
 
 <svelte:window onclick={handleWindowClick} onkeydown={handleWindowKeydown} />
 
-<main class="app-shell">
-  <aside class="sidebar" aria-label="Primary">
-    <div class="brand">dlsite-manager</div>
-    <nav class="main-nav" aria-label="Main">
-      <button
-        class:active={activeView === "library"}
-        type="button"
-        onclick={() => (activeView = "library")}
-      >
-        Library
-      </button>
-      <button
-        class:active={activeView === "downloads"}
-        type="button"
-        onclick={() => (activeView = "downloads")}
-      >
-        Downloads
-      </button>
-      <button
-        class:active={activeView === "accounts"}
-        type="button"
-        onclick={() => (activeView = "accounts")}
-      >
-        Accounts
-      </button>
-      <button
-        class:active={activeView === "settings"}
-        type="button"
-        onclick={() => (activeView = "settings")}
-      >
-        Settings
-      </button>
-    </nav>
-    <nav class="utility-nav" aria-label="Utility">
-      <button
-        class:active={activeView === "activity"}
-        type="button"
-        onclick={() => (activeView = "activity")}
-      >
-        Activity
-      </button>
-    </nav>
-  </aside>
-
-  <section class="workspace" class:library-workspace={activeView === "library"}>
-    <header class="workspace-header">
-      <div>
-        <p class="eyebrow">{viewEyebrow(activeView)}</p>
-        <h1>{viewTitle(activeView)}</h1>
-      </div>
-    </header>
+<AppShell {activeView} onNavigate={(view) => (activeView = view)}>
 
     {#if activeView === "library"}
       <section class="product-area" aria-label="Library">
@@ -2699,7 +2620,6 @@
         </section>
       </div>
     {/if}
-  </section>
 
   <ConfirmationDialogView dialog={confirmationDialog} onClose={closeConfirmationDialog} />
 
@@ -3142,7 +3062,7 @@
   {/if}
 
   <ToastStack {toasts} onDismiss={dismissToast} />
-</main>
+</AppShell>
 
 <style>
   :global(html),
@@ -3155,77 +3075,6 @@
     margin: 0;
   }
 
-  .app-shell {
-    display: grid;
-    grid-template-columns: 220px minmax(0, 1fr);
-    height: 100vh;
-    min-height: 100vh;
-    overflow: hidden;
-  }
-
-  .sidebar {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-    padding: 24px 18px;
-    border-right: 1px solid var(--border);
-    background: #111417;
-    color: var(--text);
-    overflow: auto;
-  }
-
-  .brand {
-    font-size: 16px;
-    font-weight: 700;
-  }
-
-  nav {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .utility-nav {
-    margin-top: auto;
-    padding-top: 12px;
-    border-top: 1px solid var(--border);
-  }
-
-  nav button {
-    width: 100%;
-    justify-content: flex-start;
-    border-color: transparent;
-    color: var(--muted);
-    background: transparent;
-  }
-
-  nav button.active {
-    border-color: var(--border);
-    background: var(--accent-muted);
-    color: var(--text-strong);
-  }
-
-  .workspace {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    min-height: 0;
-    overflow: hidden;
-    padding: 28px;
-  }
-
-  .workspace.library-workspace {
-    overflow: auto;
-    padding-top: 0;
-    overscroll-behavior: contain;
-    scrollbar-gutter: stable;
-  }
-
-  .workspace.library-workspace .workspace-header {
-    padding-top: 28px;
-  }
-
-  .workspace-header,
   .actions,
   .panel-title,
   .panel-actions,
@@ -3234,34 +3083,15 @@
     align-items: center;
   }
 
-  .workspace-header {
-    flex: 0 0 auto;
-    justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 14px;
-  }
-
   .panel-actions,
   .account-actions {
     gap: 8px;
   }
 
-  .eyebrow {
-    margin: 0 0 4px;
-    color: var(--muted);
-    font-size: 13px;
-    font-weight: 600;
-  }
-
-  h1,
   h2 {
     margin: 0;
     color: var(--text-strong);
     font-weight: 700;
-  }
-
-  h1 {
-    font-size: 28px;
   }
 
   h2 {
@@ -5419,31 +5249,6 @@
   }
 
   @media (max-width: 720px) {
-    .app-shell {
-      grid-template-columns: 1fr;
-      grid-template-rows: auto minmax(0, 1fr);
-    }
-
-    .sidebar {
-      padding: 14px 16px;
-      border-right: 0;
-      border-bottom: 1px solid var(--border);
-    }
-
-    nav {
-      flex-direction: row;
-      flex-wrap: wrap;
-    }
-
-    nav button {
-      flex: 1 1 130px;
-    }
-
-    .workspace {
-      padding: 20px 16px;
-    }
-
-    .workspace-header,
     .actions,
     .panel-title,
     .panel-actions,
