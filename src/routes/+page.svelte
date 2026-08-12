@@ -10,6 +10,7 @@
   import BulkDownloadDialogView from "$lib/components/BulkDownloadDialog.svelte";
   import ConfirmationDialogView from "$lib/components/ConfirmationDialog.svelte";
   import AccountsView from "$lib/features/accounts/AccountsView.svelte";
+  import ActivityView from "$lib/features/activity/ActivityView.svelte";
   import DownloadsView from "$lib/features/downloads/DownloadsView.svelte";
   import LibraryView from "$lib/features/library/LibraryView.svelte";
   import ProductActionMenuView from "$lib/features/library/ProductActionMenu.svelte";
@@ -28,8 +29,6 @@
   } from "$lib/utils/format";
   import {
     activeJobDetail,
-    auditDetail,
-    auditOutcomeLabel,
     bulkDownloadResult,
     isActiveJob,
     isDownloadQueueJob,
@@ -1782,97 +1781,20 @@
         onSave={saveAccount}
       />
     {:else if activeView === "activity"}
-      <div class="activity-layout">
-        <section class="activity-panel" aria-label="Jobs">
-          <div class="panel-title">
-            <h2>Jobs</h2>
-            <div class="panel-actions">
-              <button class="secondary small" type="button" onclick={loadJobs} disabled={jobsLoading}>
-                Reload
-              </button>
-              <button class="small" type="button" onclick={clearFinishedJobs} disabled={jobsLoading}>
-                Clear
-              </button>
-            </div>
-          </div>
-
-          {#if jobsLoading}
-            <div class="empty-state">Loading</div>
-          {:else if visibleJobs().length === 0}
-            <div class="empty-state">No jobs</div>
-          {:else}
-            <div class="job-list large">
-              {#each visibleJobs() as job (job.id)}
-                <article class="job-row" class:failed={job.status === "failed"}>
-                  <div>
-                    <div class="job-title">{jobAccountLabel(job)}</div>
-                    <div class="job-detail">{jobDetail(job)}</div>
-                  </div>
-                  <span class:active={isActiveJob(job)}>{jobLabel(job)}</span>
-                  {#if isActiveJob(job)}
-                    <button
-                      class="secondary small"
-                      type="button"
-                      onclick={() => cancelJob(job)}
-                      disabled={!job.cancellable || job.status === "cancelling"}
-                    >
-                      Cancel
-                    </button>
-                  {/if}
-                </article>
-              {/each}
-            </div>
-          {/if}
-        </section>
-
-        <section class="activity-panel" aria-label="Audit log">
-          <div class="panel-title">
-            <div>
-              <h2>Audit log</h2>
-              <p>{auditLogDir || "App log directory"}</p>
-            </div>
-            <div class="panel-actions">
-              <button
-                class="secondary small"
-                type="button"
-                onclick={openAuditLogDir}
-                disabled={!auditLogDir}
-              >
-                Open Folder
-              </button>
-              <button
-                class="secondary small"
-                type="button"
-                onclick={loadAuditEvents}
-                disabled={auditLoading}
-              >
-                Reload
-              </button>
-            </div>
-          </div>
-
-          {#if auditLoading}
-            <div class="empty-state">Loading</div>
-          {:else if visibleAuditEvents().length === 0}
-            <div class="empty-state">No audit events</div>
-          {:else}
-            <div class="audit-list">
-              {#each visibleAuditEvents() as event, index (`${event.at}-${event.operation}-${index}`)}
-                <article class="audit-row" data-level={event.level} data-outcome={event.outcome}>
-                  <div>
-                    <div class="audit-title">
-                      <span>{event.operation}</span>
-                      <strong>{auditOutcomeLabel(event.outcome)}</strong>
-                    </div>
-                    <div class="audit-detail">{auditDetail(event)}</div>
-                  </div>
-                  <time datetime={event.at}>{shortDate(event.at)}</time>
-                </article>
-              {/each}
-            </div>
-          {/if}
-        </section>
-      </div>
+      <ActivityView
+        jobs={visibleJobs()}
+        jobLoading={jobsLoading}
+        auditEvents={visibleAuditEvents()}
+        {auditLoading}
+        {auditLogDir}
+        getJobTitle={jobAccountLabel}
+        getJobDetail={jobDetail}
+        onReloadJobs={loadJobs}
+        onClearJobs={clearFinishedJobs}
+        onCancelJob={cancelJob}
+        onOpenAuditFolder={openAuditLogDir}
+        onReloadAudit={loadAuditEvents}
+      />
     {:else}
       <div class="settings-layout">
         <form class="settings-panel" onsubmit={saveSettings}>
@@ -2071,7 +1993,6 @@
     font-size: 17px;
   }
 
-  .activity-panel,
   .settings-panel {
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -2095,7 +2016,6 @@
     pointer-events: none;
   }
 
-  .activity-panel,
   .settings-panel {
     padding: 18px;
   }
@@ -2139,168 +2059,6 @@
     line-height: 1.35;
   }
 
-  .job-list {
-    display: grid;
-    gap: 7px;
-  }
-
-  .job-list.large {
-    flex: 1 1 auto;
-    gap: 0;
-    align-content: start;
-    grid-auto-rows: max-content;
-    min-height: 0;
-    padding-right: 4px;
-    overflow: auto;
-    overscroll-behavior: contain;
-    scrollbar-gutter: stable;
-  }
-
-  .activity-layout {
-    display: grid;
-    flex: 1 1 auto;
-    grid-template-rows: minmax(120px, 0.42fr) minmax(0, 1fr);
-    gap: 18px;
-    min-width: 0;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .activity-panel {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .activity-panel > .panel-title {
-    flex: 0 0 auto;
-  }
-
-  .job-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    gap: 8px;
-    align-items: center;
-    min-height: 56px;
-    padding: 10px 0;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .job-row:last-child {
-    border-bottom: 0;
-  }
-
-  .job-row.failed .job-title {
-    color: var(--danger);
-  }
-
-  .job-title {
-    color: var(--text);
-    font-size: 13px;
-    font-weight: 650;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .job-detail {
-    margin-top: 2px;
-    color: var(--muted);
-    font-size: 12px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .job-row > span {
-    color: var(--muted);
-    font-size: 12px;
-    white-space: nowrap;
-  }
-
-  .job-row > span.active {
-    color: var(--accent);
-    font-weight: 650;
-  }
-
-  .audit-list {
-    display: grid;
-    flex: 1 1 auto;
-    gap: 0;
-    align-content: start;
-    grid-auto-rows: max-content;
-    min-height: 0;
-    padding-right: 4px;
-    overflow: auto;
-    overscroll-behavior: contain;
-    scrollbar-gutter: stable;
-  }
-
-  .audit-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 14px;
-    align-items: center;
-    min-height: 58px;
-    padding: 10px 0;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .audit-row:last-child {
-    border-bottom: 0;
-  }
-
-  .audit-title {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    min-width: 0;
-  }
-
-  .audit-title span {
-    color: var(--text);
-    font-size: 13px;
-    font-weight: 650;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .audit-title strong {
-    flex: 0 0 auto;
-    color: var(--muted);
-    font-size: 12px;
-    font-weight: 650;
-  }
-
-  .audit-row[data-outcome="succeeded"] .audit-title strong {
-    color: var(--accent);
-  }
-
-  .audit-row[data-outcome="failed"] .audit-title strong {
-    color: var(--danger);
-  }
-
-  .audit-row[data-outcome="cancelled"] .audit-title strong {
-    color: #d8a62d;
-  }
-
-  .audit-detail {
-    margin-top: 2px;
-    color: var(--muted);
-    font-size: 12px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .audit-row time {
-    color: var(--text-subtle);
-    font-size: 12px;
-    white-space: nowrap;
-  }
-
   .about-panel {
     gap: 10px;
   }
@@ -2336,44 +2094,6 @@
     align-items: center;
   }
 
-  button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 84px;
-    height: 38px;
-    padding: 0 13px;
-    border: 1px solid var(--accent);
-    border-radius: 6px;
-    color: #09110c;
-    background: var(--accent);
-    cursor: pointer;
-  }
-
-  button.secondary {
-    border-color: var(--border-strong);
-    color: var(--text);
-    background: var(--panel-raised);
-  }
-
-  button.small {
-    min-width: 62px;
-    height: 32px;
-    padding: 0 10px;
-    font-size: 13px;
-  }
-
-  button:disabled {
-    cursor: default;
-    opacity: 0.58;
-  }
-
-  .empty-state {
-    padding: 36px 14px;
-    color: var(--muted);
-    text-align: center;
-  }
-
   .actions {
     justify-content: space-between;
     gap: 14px;
@@ -2389,15 +2109,6 @@
 
     .path-control {
       grid-template-columns: 1fr;
-    }
-
-    .job-row {
-      grid-template-columns: 1fr;
-    }
-
-    button,
-    button.secondary {
-      width: 100%;
     }
 
   }
