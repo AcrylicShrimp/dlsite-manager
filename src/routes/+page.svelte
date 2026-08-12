@@ -12,6 +12,7 @@
   import LibraryFilters from "$lib/features/library/LibraryFilters.svelte";
   import ProductActionMenuView from "$lib/features/library/ProductActionMenu.svelte";
   import ProductCard from "$lib/features/library/ProductCard.svelte";
+  import ProductImagePreviewView from "$lib/features/library/ProductImagePreview.svelte";
   import ToastStack from "$lib/components/ToastStack.svelte";
   import UiButton from "$lib/components/ui/Button.svelte";
   import Field from "$lib/components/ui/Field.svelte";
@@ -2425,7 +2426,7 @@
           </button>
 
           <button
-            class="image-preview-close"
+            class="dialog-close"
             type="button"
             aria-label="Close product detail"
             onclick={closeProductDetail}
@@ -2609,41 +2610,7 @@
   {/if}
 
   {#if productImagePreview}
-    <div
-      class="image-preview"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="image-preview-title"
-      tabindex="-1"
-    >
-      <button
-        class="image-preview-backdrop"
-        type="button"
-        aria-label="Close image preview"
-        onclick={closeProductImage}
-      ></button>
-      <div class="image-preview-panel">
-        <div class="image-preview-heading">
-          <div>
-            <h2 id="image-preview-title">{productImagePreview.title}</h2>
-            <p>{productImagePreview.workId}</p>
-          </div>
-          <button
-            class="image-preview-close"
-            type="button"
-            aria-label="Close image preview"
-            onclick={closeProductImage}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M18 6 6 18M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-        <div class="image-preview-frame">
-          <img src={productImagePreview.url} alt="" />
-        </div>
-      </div>
-    </div>
+    <ProductImagePreviewView preview={productImagePreview} onClose={closeProductImage} />
   {/if}
 
   {#if chipTooltip}
@@ -3270,68 +3237,7 @@
     font-size: 13px;
   }
 
-  .image-preview {
-    position: fixed;
-    z-index: 90;
-    inset: 0;
-    display: grid;
-    place-items: center;
-    padding: 28px;
-  }
-
-  .image-preview-backdrop {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    min-width: 0;
-    padding: 0;
-    border: 0;
-    border-radius: 0;
-    background: rgb(0 0 0 / 70%);
-    cursor: default;
-  }
-
-  .image-preview-panel {
-    position: relative;
-    z-index: 1;
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
-    gap: 14px;
-    width: min(920px, 92vw);
-    max-height: 88vh;
-    padding: 16px;
-    border: 1px solid var(--border-strong);
-    border-radius: 8px;
-    background: var(--panel);
-    box-shadow: 0 24px 64px rgb(0 0 0 / 52%);
-  }
-
-  .image-preview-heading {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 12px;
-    align-items: start;
-  }
-
-  .image-preview-heading h2 {
-    margin: 0;
-    color: var(--text-strong);
-    font-size: 17px;
-    line-height: 1.25;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .image-preview-heading p {
-    margin: 4px 0 0;
-    color: var(--muted);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-size: 12px;
-  }
-
-  .image-preview-close {
+  .dialog-close {
     width: 34px;
     min-width: 34px;
     height: 34px;
@@ -3341,12 +3247,12 @@
     background: var(--panel-raised);
   }
 
-  .image-preview-close:hover {
+  .dialog-close:hover {
     border-color: var(--accent);
     color: var(--text);
   }
 
-  .image-preview-close svg {
+  .dialog-close svg {
     width: 18px;
     height: 18px;
     fill: none;
@@ -3354,23 +3260,6 @@
     stroke-linecap: round;
     stroke-linejoin: round;
     stroke-width: 2.35;
-  }
-
-  .image-preview-frame {
-    display: grid;
-    place-items: center;
-    min-height: 0;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg);
-    overflow: hidden;
-  }
-
-  .image-preview-frame img {
-    display: block;
-    max-width: 100%;
-    max-height: calc(88vh - 110px);
-    object-fit: contain;
   }
 
   .product-area {
