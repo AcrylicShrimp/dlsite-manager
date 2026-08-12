@@ -10,6 +10,7 @@
   import ConfirmationDialogView from "$lib/components/ConfirmationDialog.svelte";
   import LibraryControls from "$lib/features/library/LibraryControls.svelte";
   import LibraryFilters from "$lib/features/library/LibraryFilters.svelte";
+  import ProductActionMenuView from "$lib/features/library/ProductActionMenu.svelte";
   import ProductCard from "$lib/features/library/ProductCard.svelte";
   import ToastStack from "$lib/components/ToastStack.svelte";
   import UiButton from "$lib/components/ui/Button.svelte";
@@ -1296,10 +1297,6 @@
     return productActionMenu
       ? products.find((product) => product.workId === productActionMenu?.workId) ?? null
       : null;
-  }
-
-  function productHasDownloadRecord(product: Product) {
-    return product.download.status !== "notDownloaded";
   }
 
   async function cancelJob(job: JobSnapshot) {
@@ -2663,60 +2660,18 @@
     {@const menuProduct = productActionMenuProduct()}
     {#if menuProduct}
       {@const menuDownloadJob = activeWorkDownloadJob(menuProduct.workId)}
-      <div
-        class="product-action-menu"
-        role="menu"
-        tabindex="-1"
-        aria-label={`Actions for ${menuProduct.workId}`}
-        style={`left: ${productActionMenu.left}px; top: ${productActionMenu.top}px;`}
-        onclick={(event) => event.stopPropagation()}
-        onkeydown={(event) => {
-          if (event.key === "Escape") {
-            closeProductActionMenu();
-          }
-        }}
-      >
-        {#if menuProduct.download.status !== "downloaded"}
-          <button
-            type="button"
-            role="menuitem"
-            disabled={!!menuDownloadJob}
-            onclick={() => downloadProductArchivesOnly(menuProduct)}
-          >
-            Download Archives Only
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            disabled={!!menuDownloadJob}
-            onclick={() => markProductDownloaded(menuProduct)}
-          >
-            Mark as Downloaded
-          </button>
-        {/if}
-        {#if menuProduct.download.status === "downloaded"}
-          <button
-            class="danger"
-            type="button"
-            role="menuitem"
-            disabled={!!menuDownloadJob}
-            onclick={() => redownloadProduct(menuProduct)}
-          >
-            Re-download
-          </button>
-        {/if}
-        {#if productHasDownloadRecord(menuProduct)}
-          <button
-            class="danger"
-            type="button"
-            role="menuitem"
-            disabled={!!menuDownloadJob}
-            onclick={() => deleteDownloadedProduct(menuProduct)}
-          >
-            Delete Download
-          </button>
-        {/if}
-      </div>
+      <ProductActionMenuView
+        workId={menuProduct.workId}
+        downloadStatus={menuProduct.download.status}
+        busy={!!menuDownloadJob}
+        left={productActionMenu.left}
+        top={productActionMenu.top}
+        onClose={closeProductActionMenu}
+        onDownloadArchives={() => downloadProductArchivesOnly(menuProduct)}
+        onMarkDownloaded={() => markProductDownloaded(menuProduct)}
+        onRedownload={() => redownloadProduct(menuProduct)}
+        onDeleteDownload={() => deleteDownloadedProduct(menuProduct)}
+      />
     {/if}
   {/if}
 
@@ -3562,43 +3517,6 @@
   .account-name small {
     color: var(--muted);
     font-size: 12px;
-  }
-
-  .product-action-menu {
-    position: fixed;
-    z-index: 80;
-    display: grid;
-    width: 220px;
-    gap: 4px;
-    padding: 6px;
-    border: 1px solid var(--border-strong);
-    border-radius: 8px;
-    background: var(--panel-raised);
-    box-shadow: 0 18px 40px rgb(0 0 0 / 38%);
-  }
-
-  .product-action-menu button {
-    justify-content: flex-start;
-    width: 100%;
-    min-height: 34px;
-    padding: 0 10px;
-    border: 0;
-    color: var(--text);
-    background: transparent;
-    font-size: 13px;
-    text-align: left;
-  }
-
-  .product-action-menu button:hover:not(:disabled) {
-    background: var(--panel-soft);
-  }
-
-  .product-action-menu button.danger {
-    color: var(--danger);
-  }
-
-  .product-action-menu button.danger:hover:not(:disabled) {
-    background: rgb(248 113 113 / 11%);
   }
 
   .panel-title {
