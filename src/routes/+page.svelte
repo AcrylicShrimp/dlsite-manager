@@ -5,6 +5,8 @@
   import AppShell from "$lib/components/AppShell.svelte";
   import BulkDownloadDialogView from "$lib/components/BulkDownloadDialog.svelte";
   import ConfirmationDialogView from "$lib/components/ConfirmationDialog.svelte";
+  import ToastStack from "$lib/components/ToastStack.svelte";
+  import { JobController } from "$lib/controllers/job-controller.svelte";
   import AccountsView from "$lib/features/accounts/AccountsView.svelte";
   import ActivityView from "$lib/features/activity/ActivityView.svelte";
   import DownloadsView from "$lib/features/downloads/DownloadsView.svelte";
@@ -13,7 +15,6 @@
   import ProductDetailDialog from "$lib/features/library/ProductDetailDialog.svelte";
   import ProductImagePreviewView from "$lib/features/library/ProductImagePreview.svelte";
   import SettingsView from "$lib/features/settings/SettingsView.svelte";
-  import ToastStack from "$lib/components/ToastStack.svelte";
   import { DLSITE_URL, GITHUB_URL } from "$lib/model/constants";
   import {
     errorMessage,
@@ -33,7 +34,6 @@
     jobOutputString,
     jobWorkId,
     metadataNumber,
-    upsertJob,
   } from "$lib/utils/jobs";
   import {
     ageTooltip,
@@ -104,9 +104,7 @@
   let productSort = $state("latestPurchaseDesc");
   let libraryFiltersOpen = $state(false);
 
-  let jobs = $state<JobSnapshot[]>([]);
-  let jobsLoading = $state(true);
-  let jobMessages = $state<Record<string, string>>({});
+  const jobController = new JobController();
   let auditEvents = $state<AuditEvent[]>([]);
   let auditLoading = $state(true);
   let auditLogDir = $state("");
@@ -131,9 +129,7 @@
     let unlisten: (() => void) | null = null;
     let disposed = false;
 
-    void native.listenToJobEvents((event) => {
-      void handleJobEvent(event);
-    }).then((cleanup) => {
+    void jobController.listen(handleJobEvent).then((cleanup) => {
       if (disposed) {
         cleanup();
       } else {
@@ -607,27 +603,14 @@
   }
 
   async function loadJobs() {
-    jobsLoading = true;
-
     try {
-      jobs = await commands.listJobs();
+      await jobController.load();
     } catch (err) {
       notifyError(errorMessage(err));
-    } finally {
-      jobsLoading = false;
     }
   }
 
   async function handleJobEvent(event: JobEvent) {
-    jobs = upsertJob(jobs, event.snapshot);
-
-    if (event.message) {
-      jobMessages = {
-        ...jobMessages,
-        [event.jobId]: event.message,
-      };
-    }
-
     if (event.kind === "accountSync" && isTerminalJob(event.snapshot)) {
       await Promise.all([
         loadAccounts(),
@@ -978,10 +961,7 @@
         editingAccountId === account.id ? valueOrNull(accountPassword) : null,
       );
       notifyInfo("Sync queued");
-      jobMessages = {
-        ...jobMessages,
-        [response.jobId]: "Sync queued",
-      };
+      jobController.setMessage(response.jobId, "Sync queued");
       accountPassword = "";
       await loadJobs();
       return true;
@@ -1029,10 +1009,7 @@
       });
       const queuedMessage = options.queuedMessage ?? "Download queued";
       notifyInfo(`${queuedMessage} for ${product.workId}`);
-      jobMessages = {
-        ...jobMessages,
-        [response.jobId]: queuedMessage,
-      };
+      jobController.setMessage(response.jobId, queuedMessage);
       await loadJobs();
     } catch (err) {
       notifyError(errorMessage(err));
@@ -1058,10 +1035,7 @@
 
       const response = await commands.startBulkWorkDownload(productBulkRequest());
       notifyInfo("Bulk download queued");
-      jobMessages = {
-        ...jobMessages,
-        [response.jobId]: "Bulk download queued",
-      };
+      jobController.setMessage(response.jobId, "Bulk download queued");
       await loadJobs();
     } catch (err) {
       notifyError(errorMessage(err));
@@ -1325,7 +1299,9 @@
   }
 
   function accountSyncJobs(accountId: string) {
-    return jobs.filter((job) => job.kind === "accountSync" && jobAccountId(job) === accountId);
+    return jobController.jobs.filter(
+      (job) => job.kind === "accountSync" && jobAccountId(job) === accountId,
+    );
   }
 
   function activeAccountSyncJob(accountId: string) {
@@ -1337,7 +1313,9 @@
   }
 
   function workDownloadJobs(workId: string) {
-    return jobs.filter((job) => job.kind === "workDownload" && jobWorkId(job) === workId);
+    return jobController.jobs.filter(
+      (job) => job.kind === "workDownload" && jobWorkId(job) === workId,
+    );
   }
 
   function activeWorkDownloadJob(workId: string) {
@@ -1346,7 +1324,7 @@
 
   function activeBulkDownloadPlanningJob() {
     return (
-      [...jobs]
+      [...jobController.jobs]
         .reverse()
         .find((job) => job.kind === "bulkWorkDownloadPreview" && isActiveJob(job)) ?? null
     );
@@ -1363,7 +1341,7 @@
   }
 
   function visibleJobs(limit = 20) {
-    return [...jobs].reverse().slice(0, limit);
+    return [...jobController.jobs].reverse().slice(0, limit);
   }
 
   function visibleDownloadJobs(limit = 50) {
@@ -1371,7 +1349,7 @@
   }
 
   function currentDownloadJobs() {
-    return jobs.filter((job) => isDownloadQueueJob(job) && isActiveJob(job));
+    return jobController.jobs.filter((job) => isDownloadQueueJob(job) && isActiveJob(job));
   }
 
   function queuedDownloadJobCount() {
@@ -1421,7 +1399,10 @@
       }
     }
 
-    return jobMessages[job.id] ?? shortDate(job.finishedAt ?? job.startedAt ?? job.createdAt);
+    return (
+      jobController.messages[job.id] ??
+      shortDate(job.finishedAt ?? job.startedAt ?? job.createdAt)
+    );
   }
 
   function downloadQueueTitle(job: JobSnapshot) {
@@ -1620,8 +1601,8 @@
         pageLabel={productPageLabel()}
         previousDisabled={productsLoading || !hasPreviousProductPage()}
         nextDisabled={productsLoading || !hasNextProductPage()}
-        syncDisabled={accountsLoading || jobsLoading || !hasSyncableEnabledAccount()}
-        bulkDisabled={bulkDownloadPlanning || productsLoading || jobsLoading || totalProducts === 0}
+        syncDisabled={accountsLoading || jobController.loading || !hasSyncableEnabledAccount()}
+        bulkDisabled={bulkDownloadPlanning || productsLoading || jobController.loading || totalProducts === 0}
         bulkLabel={bulkDownloadButtonLabel()}
         detailLoadingWorkId={productDetailLoadingWorkId}
         openMenuWorkId={productActionMenu?.workId ?? null}
@@ -1663,7 +1644,7 @@
     {:else if activeView === "downloads"}
       <DownloadsView
         jobs={visibleDownloadJobs()}
-        loading={jobsLoading}
+        loading={jobController.loading}
         queuedCount={queuedDownloadJobCount()}
         runningCount={runningDownloadJobCount()}
         getTitle={downloadQueueTitle}
@@ -1676,7 +1657,7 @@
         {accounts}
         loading={accountsLoading}
         saving={accountSaving}
-        {jobsLoading}
+        jobsLoading={jobController.loading}
         {editingAccountId}
         bind:label={accountLabel}
         bind:loginName={accountLoginName}
@@ -1699,7 +1680,7 @@
     {:else if activeView === "activity"}
       <ActivityView
         jobs={visibleJobs()}
-        jobLoading={jobsLoading}
+        jobLoading={jobController.loading}
         auditEvents={visibleAuditEvents()}
         {auditLoading}
         {auditLogDir}
