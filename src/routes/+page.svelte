@@ -9,19 +9,13 @@
   import AppShell from "$lib/components/AppShell.svelte";
   import ConfirmationDialogView from "$lib/components/ConfirmationDialog.svelte";
   import LibraryControls from "$lib/features/library/LibraryControls.svelte";
+  import LibraryFilters from "$lib/features/library/LibraryFilters.svelte";
   import ProductCard from "$lib/features/library/ProductCard.svelte";
   import ToastStack from "$lib/components/ToastStack.svelte";
   import UiButton from "$lib/components/ui/Button.svelte";
   import Field from "$lib/components/ui/Field.svelte";
   import TextInput from "$lib/components/ui/TextInput.svelte";
-  import {
-    AGE_FILTERS,
-    DLSITE_URL,
-    GITHUB_URL,
-    SOURCE_FILTERS,
-    SORT_OPTIONS,
-    TYPE_FILTERS,
-  } from "$lib/model/constants";
+  import { DLSITE_URL, GITHUB_URL } from "$lib/model/constants";
   import {
     accountCredentialLabel,
     accountEnabledLabel,
@@ -1736,172 +1730,31 @@
         />
 
         {#if libraryFiltersOpen}
-          <div id="library-filter-grid" class="library-filter-panel filter-grid">
-            <div class="filter-group sort-filter">
-              <span>Sort</span>
-              <div class="toggle-row">
-                {#each SORT_OPTIONS as [value, label] (value)}
-                  <button
-                    class:active={productSort === value}
-                    type="button"
-                    onclick={() => setProductSort(value)}
-                  >
-                    <span class="filter-chip-label">{label}</span>
-                  </button>
-                {/each}
-              </div>
-            </div>
-
-            <div class="filter-group">
-              <span>Accounts</span>
-              <div class="toggle-row">
-                <button
-                  class:active={selectedAccountIds.length === 0}
-                  type="button"
-                  onclick={clearAccountFilters}
-                >
-                  <span class="filter-chip-label">All</span>
-                </button>
-                {#each accounts as account (account.id)}
-                  <button
-                    class:active={selectedAccountIds.includes(account.id)}
-                    type="button"
-                    title={account.loginName ?? account.label}
-                    onclick={() => toggleAccountFilter(account.id)}
-                  >
-                    <span class="filter-chip-label">{account.label}</span>
-                  </button>
-                {/each}
-              </div>
-            </div>
-
-            <div class="filter-group">
-              <span>Source</span>
-              <div class="toggle-row">
-                <button
-                  class:active={selectedProductSources.length === 0}
-                  type="button"
-                  onclick={clearSourceFilters}
-                >
-                  <span class="filter-chip-label">Any</span>
-                </button>
-                {#each SOURCE_FILTERS as [value, label] (value)}
-                  <button
-                    class:active={selectedProductSources.includes(value)}
-                    data-source-filter={value}
-                    type="button"
-                    onclick={() => toggleProductSourceFilter(value)}
-                  >
-                    <span class="filter-chip-label">{label}</span>
-                  </button>
-                {/each}
-              </div>
-            </div>
-
-            <div class="filter-group">
-              <span>Age</span>
-              <div class="toggle-row">
-                <button
-                  class:active={selectedAgeCategories.length === 0}
-                  type="button"
-                  onclick={clearAgeFilters}
-                >
-                  <span class="filter-chip-label">Any</span>
-                </button>
-                {#each AGE_FILTERS as [value, label] (value)}
-                  <button
-                    class:active={selectedAgeCategories.includes(value)}
-                    data-age-filter={value}
-                    type="button"
-                    onclick={() => toggleAgeFilter(value)}
-                  >
-                    <span class="filter-chip-label">{label}</span>
-                  </button>
-                {/each}
-              </div>
-            </div>
-
-            <div class="filter-group">
-              <span>Type</span>
-              <div class="toggle-row">
-                <button
-                  class:active={selectedProductTypes.length === 0}
-                  type="button"
-                  onclick={clearTypeFilters}
-                >
-                  <span class="filter-chip-label">Any</span>
-                </button>
-                {#each TYPE_FILTERS as [value, label] (value)}
-                  <button
-                    class:active={selectedProductTypes.includes(value)}
-                    data-type-filter={value}
-                    type="button"
-                    onclick={() => toggleProductTypeFilter(value)}
-                  >
-                    <span class="filter-chip-label">{label}</span>
-                  </button>
-                {/each}
-              </div>
-            </div>
-
-            <div class="filter-group maker-filter">
-              <span>Makers</span>
-              <div class="toggle-row">
-                <button
-                  class:active={selectedMakerNames.length === 0}
-                  type="button"
-                  onclick={clearMakerFilters}
-                >
-                  <span class="filter-chip-label">Any</span>
-                </button>
-                {#each productFilterFacets.makers as maker (maker.name)}
-                  <button
-                    class:active={selectedMakerNames.includes(maker.name)}
-                    type="button"
-                    title={`${maker.name} (${maker.count})`}
-                    onclick={() => toggleMakerFilter(maker.name)}
-                  >
-                    <span class="filter-chip-label">{maker.name}</span>
-                    <small>{maker.count}</small>
-                  </button>
-                {/each}
-              </div>
-            </div>
-
-            <div class="filter-group custom-tag-filter">
-              <span>Custom Tags</span>
-              <div class="toggle-row">
-                <button
-                  class:active={selectedCustomTagNames.length === 0 && excludedCustomTagNames.length === 0}
-                  type="button"
-                  onclick={clearCustomTagFilters}
-                >
-                  <span class="filter-chip-label">Any</span>
-                </button>
-                {#each productFilterFacets.customTags as tag (tag.name)}
-                  {@const state = customTagFilterState(tag.name)}
-                  <button
-                    class:active={state === "include"}
-                    class:excluded={state === "exclude"}
-                    type="button"
-                    title={
-                      state === "include"
-                        ? `Including ${tag.name}. Click to exclude.`
-                        : state === "exclude"
-                          ? `Excluding ${tag.name}. Click to clear.`
-                          : `Click to include ${tag.name}; click again to exclude.`
-                    }
-                    onclick={() => cycleCustomTagFilter(tag.name)}
-                  >
-                    <span class="filter-chip-label">
-                      {state === "exclude" ? `Not ${tag.name}` : tag.name}
-                    </span>
-                    <small>{tag.count}</small>
-                  </button>
-                {/each}
-              </div>
-            </div>
-          </div>
+          <LibraryFilters
+            {accounts}
+            facets={productFilterFacets}
+            sort={productSort}
+            {selectedAccountIds}
+            selectedSources={selectedProductSources}
+            selectedAges={selectedAgeCategories}
+            selectedTypes={selectedProductTypes}
+            selectedMakers={selectedMakerNames}
+            selectedCustomTags={selectedCustomTagNames}
+            excludedCustomTags={excludedCustomTagNames}
+            onSetSort={setProductSort}
+            onClearAccounts={clearAccountFilters}
+            onToggleAccount={toggleAccountFilter}
+            onClearSources={clearSourceFilters}
+            onToggleSource={toggleProductSourceFilter}
+            onClearAges={clearAgeFilters}
+            onToggleAge={toggleAgeFilter}
+            onClearTypes={clearTypeFilters}
+            onToggleType={toggleProductTypeFilter}
+            onClearMakers={clearMakerFilters}
+            onToggleMaker={toggleMakerFilter}
+            onClearCustomTags={clearCustomTagFilters}
+            onCycleCustomTag={cycleCustomTagFilter}
+          />
         {/if}
 
         <div class="list-header">
@@ -3671,173 +3524,6 @@
     gap: 14px;
   }
 
-  .library-filter-panel {
-    min-width: 0;
-    padding: 14px;
-    background: var(--panel-soft);
-  }
-
-  .library-filter-panel {
-    display: grid;
-    gap: 10px;
-  }
-
-  .library-filter-panel {
-    flex: 0 0 auto;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .filter-grid {
-    display: grid;
-    gap: 10px;
-  }
-
-  .filter-group {
-    display: grid;
-    grid-template-columns: 78px minmax(0, 1fr);
-    gap: 10px;
-    align-items: start;
-    min-width: 0;
-  }
-
-  .filter-group > span {
-    padding-top: 6px;
-    color: var(--text-subtle);
-    font-size: 12px;
-    font-weight: 700;
-  }
-
-  .toggle-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    min-width: 0;
-  }
-
-  .maker-filter .toggle-row {
-    align-items: flex-start;
-  }
-
-  .toggle-row button {
-    justify-content: flex-start;
-    min-width: 0;
-    max-width: 210px;
-    height: 30px;
-    padding: 0 10px;
-    border-color: var(--border-strong);
-    color: var(--muted);
-    background: var(--field);
-    font-size: 12px;
-    font-weight: 650;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .toggle-row button.active {
-    border-color: var(--accent);
-    color: var(--text-strong);
-    background: var(--accent-muted);
-  }
-
-  .toggle-row button[data-age-filter],
-  .toggle-row button[data-source-filter],
-  .toggle-row button[data-type-filter] {
-    --filter-color: #8b949e;
-    --filter-soft: rgb(139 148 158 / 12%);
-
-    border-color: color-mix(in srgb, var(--filter-color) 22%, var(--border-strong));
-    color: color-mix(in srgb, var(--filter-color) 28%, var(--text-subtle));
-    background: color-mix(in srgb, var(--filter-soft) 24%, var(--field));
-  }
-
-  .toggle-row button[data-age-filter]:hover:not(:disabled),
-  .toggle-row button[data-source-filter]:hover:not(:disabled),
-  .toggle-row button[data-type-filter]:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--filter-color) 72%, var(--border-strong));
-    color: color-mix(in srgb, var(--filter-color) 82%, var(--text-strong));
-  }
-
-  .toggle-row button[data-age-filter].active,
-  .toggle-row button[data-source-filter].active,
-  .toggle-row button[data-type-filter].active {
-    border-color: color-mix(in srgb, var(--filter-color) 82%, white);
-    color: var(--text-strong);
-    background: color-mix(in srgb, var(--filter-color) 28%, var(--field));
-  }
-
-  .toggle-row button[data-age-filter="all"] {
-    --filter-color: #9bc89f;
-    --filter-soft: rgb(112 165 120 / 14%);
-  }
-
-  .toggle-row button[data-age-filter="r15"] {
-    --filter-color: #d2b56c;
-    --filter-soft: rgb(204 166 61 / 14%);
-  }
-
-  .toggle-row button[data-age-filter="r18"] {
-    --filter-color: #d77b7b;
-    --filter-soft: rgb(185 64 64 / 16%);
-  }
-
-  .toggle-row button[data-source-filter="owned"] {
-    --filter-color: #9bc89f;
-    --filter-soft: rgb(112 165 120 / 14%);
-  }
-
-  .toggle-row button[data-source-filter="localOnly"] {
-    --filter-color: #64b5d9;
-    --filter-soft: rgb(100 181 217 / 14%);
-  }
-
-  .toggle-row button[data-type-filter="audio"] {
-    --filter-color: #d8a62d;
-    --filter-soft: rgb(216 166 45 / 14%);
-  }
-
-  .toggle-row button[data-type-filter="video"] {
-    --filter-color: #d64b92;
-    --filter-soft: rgb(214 75 146 / 14%);
-  }
-
-  .toggle-row button[data-type-filter="game"] {
-    --filter-color: #9863df;
-    --filter-soft: rgb(152 99 223 / 15%);
-  }
-
-  .toggle-row button[data-type-filter="image"] {
-    --filter-color: #4fb85b;
-    --filter-soft: rgb(79 184 91 / 14%);
-  }
-
-  .toggle-row button[data-type-filter="other"] {
-    --filter-color: #8b949e;
-    --filter-soft: rgb(139 148 158 / 12%);
-  }
-
-  .toggle-row button.excluded {
-    border-color: rgb(248 113 113 / 52%);
-    color: #fca5a5;
-    background: rgb(248 113 113 / 12%);
-  }
-
-  .filter-chip-label {
-    display: block;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .toggle-row button small {
-    flex: 0 0 auto;
-    margin-left: 6px;
-    color: var(--text-subtle);
-    font-size: 11px;
-    font-weight: 700;
-  }
-
   .list-header {
     display: flex;
     flex: 0 0 auto;
@@ -4619,10 +4305,6 @@
       flex-direction: column;
     }
 
-    .filter-group {
-      grid-template-columns: 1fr;
-    }
-
     .list-header {
       align-items: flex-start;
       flex-direction: column;
@@ -4630,10 +4312,6 @@
 
     .pagination-controls {
       flex-wrap: wrap;
-    }
-
-    .toggle-row button {
-      flex: 1 1 130px;
     }
 
     .path-control {
