@@ -2,6 +2,7 @@
   import UiButton from "$lib/components/ui/Button.svelte";
   import Field from "$lib/components/ui/Field.svelte";
   import TextInput from "$lib/components/ui/TextInput.svelte";
+  import UpdatePanel from "$lib/features/settings/UpdatePanel.svelte";
   import type { AppInfo } from "$lib/model/types";
   import { appInfoValue } from "$lib/utils/format";
 
@@ -12,12 +13,15 @@
     saving = false,
     appInfo = null,
     appInfoLoading = false,
+    updatePhase = "idle",
+    updateProgressMessage = "",
     onReload,
     onChooseDirectory,
     onUseDefaultDownloadRoot,
     onSave,
     onOpenGitHub,
     onOpenDlsite,
+    onCheckForUpdates,
   }: {
     libraryRoot?: string;
     downloadRoot?: string;
@@ -25,12 +29,15 @@
     saving?: boolean;
     appInfo?: AppInfo | null;
     appInfoLoading?: boolean;
+    updatePhase?: "idle" | "checking" | "downloading" | "installing";
+    updateProgressMessage?: string;
     onReload: () => void;
     onChooseDirectory: (kind: "library" | "download") => void;
     onUseDefaultDownloadRoot: () => void;
     onSave: (event: SubmitEvent) => void;
     onOpenGitHub: () => void;
     onOpenDlsite: () => void;
+    onCheckForUpdates: () => void;
   } = $props();
 
   const busy = $derived(loading || saving);
@@ -91,6 +98,8 @@
       <dt>Identifier</dt><dd>{appInfoValue(appInfo?.identifier, appInfoLoading)}</dd>
       <dt>Tauri</dt><dd>{appInfoValue(appInfo?.tauriVersion, appInfoLoading)}</dd>
     </dl>
+
+    <UpdatePanel phase={updatePhase} message={updateProgressMessage} onCheck={onCheckForUpdates} />
   </section>
 </div>
 

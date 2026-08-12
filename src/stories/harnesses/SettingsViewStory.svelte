@@ -4,7 +4,7 @@
   let {
     viewState = "ready",
   }: {
-    viewState?: "ready" | "loading" | "saving";
+    viewState?: "ready" | "loading" | "saving" | "checking" | "downloading" | "installing";
   } = $props();
 
   let libraryRoot = $state("/Users/example/Library/DLsite Manager Collection");
@@ -18,14 +18,17 @@
     bind:downloadRoot
     loading={viewState === "loading"}
     saving={viewState === "saving"}
-    appInfo={{ name: "DLsite Manager", version: "3.0.0", identifier: "com.acrylicshrimp.dlsite-manager", tauriVersion: "2.8.5" }}
+    appInfo={{ name: "DLsite Manager", version: "3.2.2", identifier: "com.acrylicshrimp.dlsite-manager", tauriVersion: "2.8.5" }}
     appInfoLoading={viewState === "loading"}
+    updatePhase={viewState === "checking" || viewState === "downloading" || viewState === "installing" ? viewState : "idle"}
+    updateProgressMessage={viewState === "checking" ? "Checking for updates" : viewState === "downloading" ? "Downloading 3.2.3 68%" : viewState === "installing" ? "Installing 3.2.3" : ""}
     onReload={() => (lastAction = "Reload")}
     onChooseDirectory={(kind) => (lastAction = `Browse ${kind}`)}
     onUseDefaultDownloadRoot={() => { downloadRoot = "/Users/example/Downloads"; lastAction = "Use default"; }}
     onSave={(event) => { event.preventDefault(); lastAction = `Save ${libraryRoot}`; }}
     onOpenGitHub={() => (lastAction = "Open GitHub")}
     onOpenDlsite={() => (lastAction = "Open DLsite")}
+    onCheckForUpdates={() => (lastAction = "Check for updates")}
   />
   <p aria-live="polite">{lastAction}</p>
 </main>

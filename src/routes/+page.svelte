@@ -18,6 +18,7 @@
   import { DLSITE_URL, GITHUB_URL } from "$lib/model/constants";
   import {
     errorMessage,
+    formatBytes,
     shortDate,
     valueOrNull,
   } from "$lib/utils/format";
@@ -78,6 +79,8 @@
   let settingsSaving = $state(false);
   let appInfo = $state<AppInfo | null>(null);
   let appInfoLoading = $state(true);
+  let updatePhase = $state<"idle" | "checking" | "downloading" | "installing">("idle");
+  let updateProgressMessage = $state("");
 
   let accounts = $state<Account[]>([]);
   let accountsLoading = $state(true);
@@ -197,6 +200,45 @@
       notifyError(errorMessage(err));
     } finally {
       settingsLoading = false;
+    }
+  }
+
+  async function checkForUpdates() {
+    if (updatePhase !== "idle") {
+      return;
+    }
+
+    updatePhase = "checking";
+    updateProgressMessage = "Checking for updates";
+
+    try {
+      const version = await native.downloadAndInstallAvailableUpdate((progress) => {
+        updatePhase = progress.phase;
+
+        if (progress.phase === "installing") {
+          updateProgressMessage = `Installing ${progress.version}`;
+        } else if (progress.contentLength && progress.contentLength > 0) {
+          const percent = Math.min(100, Math.floor((progress.downloadedBytes / progress.contentLength) * 100));
+          updateProgressMessage = `Downloading ${progress.version} ${percent}%`;
+        } else {
+          updateProgressMessage = `Downloading ${progress.version} ${formatBytes(progress.downloadedBytes)}`;
+        }
+      });
+
+      if (!version) {
+        updateProgressMessage = "";
+        notifyInfo("dlsite-manager is up to date");
+        return;
+      }
+
+      updateProgressMessage = `Installed ${version}. Relaunching`;
+      notifySuccess(`Installed update ${version}. Relaunching`);
+      await native.relaunchApp();
+    } catch (err) {
+      updateProgressMessage = "";
+      notifyError(`Update failed: ${errorMessage(err)}`);
+    } finally {
+      updatePhase = "idle";
     }
   }
 
@@ -1700,12 +1742,15 @@
         saving={settingsSaving}
         {appInfo}
         {appInfoLoading}
+        {updatePhase}
+        {updateProgressMessage}
         onReload={loadSettings}
         onChooseDirectory={chooseSettingsDirectory}
         onUseDefaultDownloadRoot={useDefaultDownloadRoot}
         onSave={saveSettings}
         onOpenGitHub={() => openExternalUrl(GITHUB_URL, "GitHub")}
         onOpenDlsite={() => openExternalUrl(DLSITE_URL, "DLsite")}
+        onCheckForUpdates={checkForUpdates}
       />
     {/if}
 

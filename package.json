@@ -1,6 +1,6 @@
 {
   "name": "dlsite-manager",
-  "version": "3.0.0",
+  "version": "3.2.2",
   "description": "Desktop manager for DLsite works and libraries.",
   "type": "module",
   "scripts": {
@@ -17,7 +17,9 @@
   "dependencies": {
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
-    "@tauri-apps/plugin-opener": "^2"
+    "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-process": "^2",
+    "@tauri-apps/plugin-updater": "^2"
   },
   "devDependencies": {
     "@storybook/addon-a11y": "10.5.7",
