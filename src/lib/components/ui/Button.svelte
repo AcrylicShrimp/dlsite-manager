@@ -55,6 +55,11 @@
     font: inherit;
     letter-spacing: 0;
     cursor: pointer;
+    transition:
+      border-color 120ms ease,
+      background-color 120ms ease,
+      color 120ms ease,
+      transform 120ms ease;
   }
 
   .button.secondary {
@@ -74,6 +79,32 @@
     height: 32px;
     padding: 0 10px;
     font-size: 13px;
+  }
+
+  .button:hover:not(:disabled) {
+    border-color: #b3d8b8;
+    background: #a8cfad;
+  }
+
+  .button.secondary:hover:not(:disabled) {
+    border-color: var(--accent-strong);
+    color: var(--text-strong);
+    background: color-mix(in srgb, var(--panel-raised) 84%, var(--accent));
+  }
+
+  .button.danger:hover:not(:disabled) {
+    border-color: #fca5a5;
+    color: #fca5a5;
+    background: rgb(248 113 113 / 16%);
+  }
+
+  .button:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  .button:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
   }
 
   .button:disabled {

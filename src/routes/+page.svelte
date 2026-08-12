@@ -3145,10 +3145,6 @@
 </main>
 
 <style>
-  :global(*) {
-    box-sizing: border-box;
-  }
-
   :global(html),
   :global(body) {
     height: 100%;
@@ -3156,37 +3152,7 @@
   }
 
   :global(body) {
-    --accent: #95c29b;
-    --accent-strong: #6fa579;
-    --accent-muted: rgb(149 194 155 / 16%);
-    --bg: #101214;
-    --border: #2c343a;
-    --border-strong: #46515a;
-    --danger: #f87171;
-    --field: #121518;
-    --field-disabled: #1a1f23;
-    --muted: #9aa5ae;
-    --panel: #181c20;
-    --panel-raised: #20252a;
-    --panel-soft: #15181b;
-    --text: #edf2f6;
-    --text-strong: #ffffff;
-    --text-subtle: #707b85;
-
     margin: 0;
-    color: var(--text);
-    background: var(--bg);
-    font-family:
-      Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    font-size: 15px;
-    letter-spacing: 0;
-  }
-
-  :global(button),
-  :global(input),
-  :global(select) {
-    font: inherit;
-    letter-spacing: 0;
   }
 
   .app-shell {
