@@ -434,7 +434,7 @@
     border: 0;
     border-radius: 3px;
     background: transparent;
-    font: inherit;
+    font-family: inherit;
     cursor: pointer;
     text-align: left;
   }

@@ -95,6 +95,22 @@ type Story = StoryObj<typeof meta>;
 
 export const OwnedAudio: Story = {};
 
+export const JapaneseCredits: Story = {
+  args: {
+    product: {
+      ...ownedProduct,
+      workId: "RJ09999998",
+      title: "日本語クレジットの行高確認用音声作品",
+      makerName: "LollipopLand",
+      creditGroups: [
+        { kind: "voice", label: "Voice", names: ["餅梨あむ"] },
+        { kind: "scenario", label: "Scenario", names: ["星野ことり"] },
+        { kind: "illust", label: "Illustration", names: ["月見工房"] },
+      ],
+    },
+  },
+};
+
 export const LocalOnly: Story = {
   args: {
     product: localProduct,
