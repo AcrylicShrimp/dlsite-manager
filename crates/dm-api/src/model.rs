@@ -71,6 +71,51 @@ pub enum SessionStatus {
     Unauthorized,
 }
 
+/// Result of submitting login credentials.
+///
+/// DLsite answers a correct password for a two-factor-enabled account with a challenge page
+/// instead of a session, so the caller has to collect a verification code and come back
+/// through [`crate::DlsiteClient::complete_two_factor`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoginOutcome {
+    Authorized(SessionSnapshot),
+    TwoFactorRequired(TwoFactorChallenge),
+}
+
+/// The two-factor form as rendered by DLsite, captured so it can be replayed with the
+/// verification code filled in.
+///
+/// `fields` holds every non-code control the page rendered, in document order, including the
+/// per-request `_token` and the `recaptcha_token` placeholder. Replaying them verbatim keeps
+/// the submission identical to what a browser would send apart from the code itself.
+///
+/// The challenge is only valid for the client whose cookie jar produced it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct TwoFactorChallenge {
+    pub page_url: Url,
+    pub action: Url,
+    pub code_field: String,
+    pub fields: Vec<(String, String)>,
+}
+
+impl fmt::Debug for TwoFactorChallenge {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TwoFactorChallenge")
+            .field("page_url", &self.page_url)
+            .field("action", &self.action)
+            .field("code_field", &self.code_field)
+            .field(
+                "fields",
+                &self
+                    .fields
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>(),
+            )
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContentCount {
     pub user: u64,

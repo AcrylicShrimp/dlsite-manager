@@ -38,12 +38,70 @@ struct AppState {
     jobs: JobManager,
     audit: AuditLogger,
     download_reservations: DownloadReservations,
+    two_factor_prompts: TwoFactorPrompts,
     _tracing_guard: tracing_appender::non_blocking::WorkerGuard,
 }
 
 const WORK_DOWNLOAD_PROGRESS_EVENT_INTERVAL: Duration = Duration::from_secs(1);
 const BULK_DOWNLOAD_PAGE_LIMIT: u32 = 500;
 const DOWNLOAD_RESERVATION_METADATA_KEY: &str = "downloadReservationId";
+const TWO_FACTOR_REQUEST_EVENT: &str = "dm-two-factor-request";
+const TWO_FACTOR_CLOSED_EVENT: &str = "dm-two-factor-closed";
+/// How long a two-factor dialog stays open before the job gives up waiting.
+const TWO_FACTOR_PROMPT_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Open two-factor dialogs, keyed by request ID.
+///
+/// A job parks on the receiver while the UI shows the dialog; `submit_two_factor_code` and
+/// `cancel_two_factor` complete it from the command side.
+#[derive(Clone, Default)]
+struct TwoFactorPrompts {
+    inner: Arc<Mutex<TwoFactorPromptsInner>>,
+}
+
+#[derive(Default)]
+struct TwoFactorPromptsInner {
+    next_id: u64,
+    pending: BTreeMap<String, tokio::sync::oneshot::Sender<Option<String>>>,
+}
+
+impl TwoFactorPrompts {
+    fn open(&self) -> (String, tokio::sync::oneshot::Receiver<Option<String>>) {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let mut inner = self.inner.lock().expect("two-factor prompt lock");
+
+        inner.next_id += 1;
+
+        let request_id = format!("two-factor-{}", inner.next_id);
+
+        inner.pending.insert(request_id.clone(), sender);
+
+        (request_id, receiver)
+    }
+
+    /// Answers an open dialog. Returns whether the request was still open.
+    fn answer(&self, request_id: &str, code: Option<String>) -> bool {
+        let sender = self
+            .inner
+            .lock()
+            .expect("two-factor prompt lock")
+            .pending
+            .remove(request_id);
+
+        match sender {
+            Some(sender) => sender.send(code).is_ok(),
+            None => false,
+        }
+    }
+
+    fn close(&self, request_id: &str) {
+        self.inner
+            .lock()
+            .expect("two-factor prompt lock")
+            .pending
+            .remove(request_id);
+    }
+}
 
 #[derive(Clone, Default)]
 struct DownloadReservations {
@@ -500,8 +558,73 @@ async fn set_product_custom_tags(
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SubmitTwoFactorCodeRequest {
+    request_id: String,
+    code: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CancelTwoFactorRequest {
+    request_id: String,
+}
+
+/// Hands a verification code to the job waiting on `requestId`.
+///
+/// The code is never logged or audited; only the fact that a code was supplied is.
+#[tauri::command]
+async fn submit_two_factor_code(
+    state: State<'_, AppState>,
+    request: SubmitTwoFactorCodeRequest,
+) -> Result<(), String> {
+    let code = request.code.trim().to_owned();
+
+    if code.is_empty() {
+        return Err("Verification code must not be empty".to_owned());
+    }
+
+    if !state
+        .two_factor_prompts
+        .answer(&request.request_id, Some(code))
+    {
+        return Err("This verification request is no longer waiting for a code".to_owned());
+    }
+
+    record_audit(
+        &state.audit,
+        AuditEvent::succeeded("account.login.twoFactor", "Submitted two-factor code")
+            .with_details(json!({ "requestId": request.request_id })),
+    )
+    .await;
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn cancel_two_factor(
+    state: State<'_, AppState>,
+    request: CancelTwoFactorRequest,
+) -> Result<(), String> {
+    state.two_factor_prompts.answer(&request.request_id, None);
+
+    record_audit(
+        &state.audit,
+        AuditEvent::succeeded(
+            "account.login.twoFactor",
+            "Cancelled two-factor verification",
+        )
+        .with_details(json!({ "requestId": request.request_id })),
+    )
+    .await;
+
+    Ok(())
+}
+
 #[tauri::command]
 async fn start_account_sync(
+    app: AppHandle,
     state: State<'_, AppState>,
     request: StartAccountSyncRequest,
 ) -> Result<StartJobResponse, String> {
@@ -554,6 +677,7 @@ async fn start_account_sync(
     }
 
     let job_account_id = account_id.clone();
+    let two_factor_prompts = state.two_factor_prompts.clone();
     let job_id = state.jobs.spawn(
         "accountSync",
         format!("Sync {job_account_id}"),
@@ -567,6 +691,8 @@ async fn start_account_sync(
             let progress_sink = JobSyncProgressSink {
                 context: context.clone(),
             };
+            let two_factor_prompt =
+                JobTwoFactorPrompt::new(app, two_factor_prompts, context.clone());
             let report = library
                 .sync_account_with_source(
                     AccountSyncRequest {
@@ -574,6 +700,7 @@ async fn start_account_sync(
                         password: password.as_deref(),
                         cancellation_token: Some(context.cancellation_token()),
                         progress_sink: Some(&progress_sink),
+                        two_factor_prompt: Some(&two_factor_prompt),
                     },
                     &source,
                 )
@@ -844,6 +971,8 @@ async fn start_work_download(
 
     let job_work_id = work_id.clone();
     let audit_account_id = account_id.clone();
+    let two_factor_prompts = state.two_factor_prompts.clone();
+    let two_factor_app = app.clone();
     let job_id = state.jobs.spawn(
         "workDownload",
         format!("Download {job_work_id}"),
@@ -854,6 +983,8 @@ async fn start_work_download(
                 .map_err(|error| JobFailure::with_code("api_client", error.to_string()))?;
             let source = DlsiteWorkDownloadSource::new(client);
             let progress_sink = JobWorkDownloadProgressSink::new(context.clone());
+            let two_factor_prompt =
+                JobTwoFactorPrompt::new(two_factor_app, two_factor_prompts, context.clone());
             let report = library
                 .download_work_with_source(
                     WorkDownloadRequest {
@@ -866,6 +997,7 @@ async fn start_work_download(
                         replace_existing,
                         cancellation_token: Some(context.cancellation_token()),
                         progress_sink: Some(&progress_sink),
+                        two_factor_prompt: Some(&two_factor_prompt),
                     },
                     &source,
                 )
@@ -1066,6 +1198,8 @@ async fn start_bulk_work_download(
     }
 
     let audit_metadata = metadata.clone();
+    let two_factor_prompts = state.two_factor_prompts.clone();
+    let two_factor_app = app.clone();
     let job_id = state.jobs.spawn(
         "bulkWorkDownload",
         "Download Library results",
@@ -1083,6 +1217,8 @@ async fn start_bulk_work_download(
             let progress_sink = JobBulkWorkDownloadProgressSink {
                 context: context.clone(),
             };
+            let two_factor_prompt =
+                JobTwoFactorPrompt::new(two_factor_app, two_factor_prompts, context.clone());
             let report = library
                 .download_products_with_source(
                     BulkWorkDownloadRequest {
@@ -1094,6 +1230,7 @@ async fn start_bulk_work_download(
                         skip_downloaded,
                         cancellation_token: Some(context.cancellation_token()),
                         progress_sink: Some(&progress_sink),
+                        two_factor_prompt: Some(&two_factor_prompt),
                     },
                     &source,
                 )
@@ -2652,6 +2789,81 @@ struct AuditLogDirDto {
     path: String,
 }
 
+/// Two-factor prompt that runs a dialog in the app window on behalf of a background job.
+struct JobTwoFactorPrompt {
+    app: AppHandle,
+    prompts: TwoFactorPrompts,
+    context: JobContext,
+}
+
+impl JobTwoFactorPrompt {
+    fn new(app: AppHandle, prompts: TwoFactorPrompts, context: JobContext) -> Self {
+        Self {
+            app,
+            prompts,
+            context,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl dm_library::TwoFactorPrompt for JobTwoFactorPrompt {
+    async fn request_code(
+        &self,
+        request: dm_library::TwoFactorPromptRequest,
+    ) -> Result<Option<String>, dm_library::LibraryError> {
+        let (request_id, receiver) = self.prompts.open();
+
+        self.context.set_phase("waitingForTwoFactor");
+        self.context.clear_progress();
+        self.context.info(format!(
+            "Waiting for a two-factor code for account {}",
+            request.account_id
+        ));
+
+        if let Err(error) = self.app.emit(
+            TWO_FACTOR_REQUEST_EVENT,
+            json!({
+                "requestId": request_id,
+                "accountId": request.account_id,
+                "accountLabel": request.account_label,
+                "attempt": request.attempt,
+                "previousCodeRejected": request.previous_code_rejected,
+                "jobId": self.context.job_id().as_str(),
+            }),
+        ) {
+            self.prompts.close(&request_id);
+            return Err(dm_library::LibraryError::SyncSource(format!(
+                "could not show the two-factor dialog: {error}"
+            )));
+        }
+
+        let answer = tokio::select! {
+            answer = receiver => answer.ok().flatten(),
+            () = wait_for_cancellation(self.context.cancellation_token()) => None,
+            () = tokio::time::sleep(TWO_FACTOR_PROMPT_TIMEOUT) => {
+                self.context.warn("Two-factor code was not entered in time");
+                None
+            }
+        };
+
+        // The dialog must come down whether it was answered, timed out, or the job was
+        // cancelled underneath it.
+        self.prompts.close(&request_id);
+        let _ = self
+            .app
+            .emit(TWO_FACTOR_CLOSED_EVENT, json!({ "requestId": request_id }));
+
+        Ok(answer)
+    }
+}
+
+async fn wait_for_cancellation(cancellation: &dm_library::CancellationToken) {
+    while !cancellation.is_cancelled() {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
 struct JobSyncProgressSink {
     context: JobContext,
 }
@@ -3572,6 +3784,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         jobs,
         audit,
         download_reservations,
+        two_factor_prompts: TwoFactorPrompts::default(),
         _tracing_guard: tracing_guard,
     });
 
@@ -3719,6 +3932,8 @@ pub fn run() {
             start_work_download,
             start_bulk_work_download,
             preview_bulk_work_download,
+            submit_two_factor_code,
+            cancel_two_factor,
             open_work_download,
             delete_work_download,
             mark_work_downloaded,

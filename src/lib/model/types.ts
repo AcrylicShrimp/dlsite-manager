@@ -167,6 +167,19 @@ export type BulkDownloadDialog = {
   preview: BulkWorkDownloadPreview;
 };
 
+export type TwoFactorRequest = {
+  requestId: string;
+  accountId: string;
+  accountLabel: string;
+  attempt: number;
+  previousCodeRejected: boolean;
+  jobId: string;
+};
+
+export type TwoFactorClosed = {
+  requestId: string;
+};
+
 export type ConfirmationDialog = {
   eyebrow: string;
   title: string;

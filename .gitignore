@@ -5,6 +5,7 @@ node_modules
 /package
 /target
 /.dlsite-downloads/
+/.dlsite-probe/
 .env
 .env.*
 !.env.example

@@ -2,7 +2,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, Utc};
 use dm_api::{
     ContentCount, ContentQuery, Credentials, DlsiteClient, DmApiError, DownloadFile, DownloadPlan,
-    Language, LocalizedText, PublicWork, Purchase, SerialNumber, Work, WorkId,
+    Language, LocalizedText, LoginOutcome, PublicWork, Purchase, SerialNumber, SessionSnapshot,
+    SessionStatus, TwoFactorChallenge, Work, WorkId,
 };
 use dm_credentials::{CredentialRef, CredentialStore, CredentialsError};
 use dm_download::{
@@ -17,7 +18,7 @@ use dm_storage::{
 };
 use serde_json::{json, Map, Value};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -31,6 +32,8 @@ const DOWNLOAD_CANCELLATION_POLL_INTERVAL: std::time::Duration =
 const SERIAL_INFORMATION_FILE_NAME: &str = "dlsite-manager-serial.txt";
 const SERIAL_INFORMATION_NUMBERED_PREFIX: &str = "dlsite-manager-serial-";
 const SERIAL_INFORMATION_MARKER: &str = "# dlsite-manager serial information";
+/// How many verification codes a user may get wrong before the operation gives up.
+const MAX_TWO_FACTOR_ATTEMPTS: u32 = 3;
 
 #[derive(Debug, thiserror::Error)]
 pub enum LibraryError {
@@ -50,6 +53,12 @@ pub enum LibraryError {
     MissingLoginName(String),
     #[error("account has no available password: {0}")]
     MissingPassword(String),
+    #[error("two-factor verification is required but no prompt is available: {0}")]
+    TwoFactorPromptUnavailable(String),
+    #[error("two-factor verification was cancelled: {0}")]
+    TwoFactorCancelled(String),
+    #[error("two-factor verification failed after {attempts} attempts: {account_id}")]
+    TwoFactorRejected { account_id: String, attempts: u32 },
     #[error("sync was cancelled")]
     Cancelled,
     #[error("download error")]
@@ -79,6 +88,9 @@ impl LibraryError {
             Self::AccountDisabled(_) => "account_disabled",
             Self::MissingLoginName(_) => "missing_login_name",
             Self::MissingPassword(_) => "missing_password",
+            Self::TwoFactorPromptUnavailable(_) => "two_factor_prompt_unavailable",
+            Self::TwoFactorCancelled(_) => "two_factor_cancelled",
+            Self::TwoFactorRejected { .. } => "two_factor_rejected",
             Self::Cancelled => "cancelled",
             Self::Download(_) => "download",
             Self::DownloadAccountNotFound(_) => "download_account_not_found",
@@ -104,6 +116,18 @@ impl LibraryError {
             Self::MissingPassword(account_id) => {
                 format!("Account has no saved password: {account_id}")
             }
+            Self::TwoFactorPromptUnavailable(account_id) => format!(
+                "Account {account_id} needs a two-factor code, but this operation cannot ask for one"
+            ),
+            Self::TwoFactorCancelled(account_id) => {
+                format!("Two-factor verification was cancelled for account {account_id}")
+            }
+            Self::TwoFactorRejected {
+                account_id,
+                attempts,
+            } => format!(
+                "DLsite rejected the two-factor code for account {account_id} after {attempts} attempts"
+            ),
             Self::Cancelled => "Operation was cancelled".to_owned(),
             Self::Download(error) => download_error_support_message(error),
             Self::DownloadAccountNotFound(work_id) => {
@@ -157,6 +181,22 @@ impl LibraryError {
                 "failureKind": "missing_password",
                 "accountId": account_id,
             }),
+            Self::TwoFactorPromptUnavailable(account_id) => json!({
+                "failureKind": "two_factor_prompt_unavailable",
+                "accountId": account_id,
+            }),
+            Self::TwoFactorCancelled(account_id) => json!({
+                "failureKind": "two_factor_cancelled",
+                "accountId": account_id,
+            }),
+            Self::TwoFactorRejected {
+                account_id,
+                attempts,
+            } => json!({
+                "failureKind": "two_factor_rejected",
+                "accountId": account_id,
+                "attempts": attempts,
+            }),
             Self::Cancelled => json!({
                 "failureKind": "cancelled",
             }),
@@ -193,6 +233,18 @@ fn dm_api_error_support_message(error: &DmApiError) -> String {
     match error {
         DmApiError::InvalidCredentials => "DLsite rejected the account credentials".to_owned(),
         DmApiError::NotAuthorized => "DLsite session is not authorized".to_owned(),
+        DmApiError::TwoFactorRequired => {
+            "DLsite requires a two-factor verification code for this account".to_owned()
+        }
+        DmApiError::InvalidTwoFactorCode => {
+            "DLsite rejected the two-factor verification code".to_owned()
+        }
+        DmApiError::TwoFactorFormNotRecognized { page, .. } => {
+            format!(
+                "DLsite two-factor challenge page could not be read at {}",
+                safe_url_for_log(page.as_str())
+            )
+        }
         DmApiError::XsrfTokenNotFound => "DLsite session did not provide an XSRF token".to_owned(),
         DmApiError::LocationHeaderMissing { endpoint } => {
             format!(
@@ -267,6 +319,19 @@ fn dm_api_error_support_details(error: &DmApiError) -> Value {
         DmApiError::NotAuthorized => json!({
             "failureKind": "api",
             "apiErrorKind": "not_authorized",
+        }),
+        DmApiError::TwoFactorRequired => json!({
+            "failureKind": "api",
+            "apiErrorKind": "two_factor_required",
+        }),
+        DmApiError::InvalidTwoFactorCode => json!({
+            "failureKind": "api",
+            "apiErrorKind": "invalid_two_factor_code",
+        }),
+        DmApiError::TwoFactorFormNotRecognized { page, .. } => json!({
+            "failureKind": "api",
+            "apiErrorKind": "two_factor_form_not_recognized",
+            "page": safe_url_for_log(page.as_str()),
         }),
         DmApiError::XsrfTokenNotFound => json!({
             "failureKind": "api",
@@ -589,6 +654,12 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 pub struct Library {
     storage: Storage,
     credentials: Arc<dyn CredentialStore>,
+    /// One lock per account, held across authentication only.
+    ///
+    /// Without it, jobs started together would each begin their own login and each raise its
+    /// own two-factor prompt. Serializing lets the first login store a session the others can
+    /// then reuse.
+    login_locks: Arc<std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
 }
 
 impl Library {
@@ -596,6 +667,7 @@ impl Library {
         Self {
             storage,
             credentials,
+            login_locks: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -639,6 +711,16 @@ impl Library {
             enabled: request.enabled,
         };
 
+        // Changed sign-in details invalidate whatever session was stored for this account.
+        let identity_changed = request.password.is_some()
+            || existing_account
+                .as_ref()
+                .is_none_or(|existing| existing.login_name != account.login_name);
+
+        if identity_changed {
+            self.forget_account_session(&account_id)?;
+        }
+
         self.storage.save_account(&account).await?;
         self.find_account(&account_id).await
     }
@@ -664,6 +746,7 @@ impl Library {
             false
         };
 
+        self.forget_account_session(account_id)?;
         self.storage.delete_account(account_id).await?;
 
         Ok(AccountRemovalReport {
@@ -833,6 +916,7 @@ impl Library {
                         replace_existing: false,
                         cancellation_token: request.cancellation_token,
                         progress_sink: None,
+                        two_factor_prompt: request.two_factor_prompt,
                     },
                     source,
                 )
@@ -1351,16 +1435,7 @@ impl Library {
         request.check_cancelled()?;
         request.emit(SyncProgress::LoggingIn);
 
-        let login_name = account
-            .login_name
-            .as_deref()
-            .ok_or_else(|| LibraryError::MissingLoginName(account.id.clone()))?;
-        let password = self.password_for_account(account, request.password)?;
-        let credentials = Credentials::new(login_name, password);
-
-        source.login(&credentials).await?;
-        self.storage
-            .record_account_login(&account.id, &now_string())
+        self.authenticate_account(account, request.password, request.two_factor_prompt, source)
             .await?;
 
         request.check_cancelled()?;
@@ -1433,16 +1508,7 @@ impl Library {
         request.check_cancelled()?;
         request.emit(WorkDownloadProgress::LoggingIn);
 
-        let login_name = account
-            .login_name
-            .as_deref()
-            .ok_or_else(|| LibraryError::MissingLoginName(account.id.clone()))?;
-        let password = self.password_for_account(account, request.password)?;
-        let credentials = Credentials::new(login_name, password);
-
-        source.login(&credentials).await?;
-        self.storage
-            .record_account_login(&account.id, &now_string())
+        self.authenticate_account(account, request.password, request.two_factor_prompt, source)
             .await?;
 
         request.check_cancelled()?;
@@ -1597,6 +1663,142 @@ impl Library {
             .load_password(&credential_ref)?
             .ok_or_else(|| LibraryError::MissingPassword(account.id.clone()))
     }
+
+    /// Brings `source` to an authorized state for `account`.
+    ///
+    /// A stored session is tried first so that two-factor accounts are not asked for a code
+    /// on every job — TOTP codes are single-use, and login happens once per sync and once
+    /// per download. Only when no usable session exists does this fall back to a password
+    /// login, and only a two-factor-enabled account reaches `prompt`.
+    async fn authenticate_account<S>(
+        &self,
+        account: &Account,
+        password: Option<&str>,
+        two_factor_prompt: Option<&dyn TwoFactorPrompt>,
+        source: &S,
+    ) -> Result<()>
+    where
+        S: DlsiteAuthSource + Sync,
+    {
+        let login_lock = self.login_lock(&account.id);
+        let _login_guard = login_lock.lock().await;
+        let session_ref = CredentialRef::account_session(&account.id)?;
+
+        if self.restore_stored_session(&session_ref, source).await? {
+            self.storage
+                .record_account_login(&account.id, &now_string())
+                .await?;
+            return Ok(());
+        }
+
+        let login_name = account
+            .login_name
+            .as_deref()
+            .ok_or_else(|| LibraryError::MissingLoginName(account.id.clone()))?;
+        let password = self.password_for_account(account, password)?;
+        let credentials = Credentials::new(login_name, password);
+
+        let session = match source.begin_login(&credentials).await? {
+            LoginOutcome::Authorized(session) => session,
+            LoginOutcome::TwoFactorRequired(challenge) => {
+                let prompt = two_factor_prompt
+                    .ok_or_else(|| LibraryError::TwoFactorPromptUnavailable(account.id.clone()))?;
+
+                self.complete_two_factor_login(account, &challenge, prompt, source)
+                    .await?
+            }
+        };
+
+        self.credentials
+            .save_password(&session_ref, &session.cookies_json)?;
+        self.storage
+            .record_account_login(&account.id, &now_string())
+            .await?;
+
+        Ok(())
+    }
+
+    fn login_lock(&self, account_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.login_locks
+            .lock()
+            .expect("login lock registry is poisoned")
+            .entry(account_id.to_owned())
+            .or_default()
+            .clone()
+    }
+
+    /// Returns whether a stored session was restored and is still authorized. A session that
+    /// no longer works is discarded so the next attempt does not retry it.
+    async fn restore_stored_session<S>(
+        &self,
+        session_ref: &CredentialRef,
+        source: &S,
+    ) -> Result<bool>
+    where
+        S: DlsiteAuthSource + Sync,
+    {
+        let Some(cookies_json) = self.credentials.load_password(session_ref)? else {
+            return Ok(false);
+        };
+
+        let session = SessionSnapshot { cookies_json };
+
+        if source.restore_session(&session).await.is_ok() && source.validate_session().await? {
+            return Ok(true);
+        }
+
+        self.credentials.delete_password(session_ref)?;
+
+        Ok(false)
+    }
+
+    async fn complete_two_factor_login<S>(
+        &self,
+        account: &Account,
+        challenge: &TwoFactorChallenge,
+        prompt: &dyn TwoFactorPrompt,
+        source: &S,
+    ) -> Result<SessionSnapshot>
+    where
+        S: DlsiteAuthSource + Sync,
+    {
+        let mut previous_code_rejected = false;
+
+        for attempt in 1..=MAX_TWO_FACTOR_ATTEMPTS {
+            let code = prompt
+                .request_code(TwoFactorPromptRequest {
+                    account_id: account.id.clone(),
+                    account_label: account.label.clone(),
+                    attempt,
+                    previous_code_rejected,
+                })
+                .await?
+                .ok_or_else(|| LibraryError::TwoFactorCancelled(account.id.clone()))?;
+
+            match source.complete_two_factor(challenge, &code).await {
+                Ok(session) => return Ok(session),
+                Err(LibraryError::Api(DmApiError::InvalidTwoFactorCode)) => {
+                    previous_code_rejected = true;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        Err(LibraryError::TwoFactorRejected {
+            account_id: account.id.clone(),
+            attempts: MAX_TWO_FACTOR_ATTEMPTS,
+        })
+    }
+
+    /// Drops any stored session for an account, so a removed or re-credentialed account does
+    /// not leave a usable session behind.
+    fn forget_account_session(&self, account_id: &str) -> Result<()> {
+        let session_ref = CredentialRef::account_session(account_id)?;
+
+        self.credentials.delete_password(&session_ref)?;
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1628,6 +1830,7 @@ pub struct AccountSyncRequest<'a> {
     pub password: Option<&'a str>,
     pub cancellation_token: Option<&'a CancellationToken>,
     pub progress_sink: Option<&'a dyn SyncProgressSink>,
+    pub two_factor_prompt: Option<&'a dyn TwoFactorPrompt>,
 }
 
 impl<'a> AccountSyncRequest<'a> {
@@ -1637,6 +1840,7 @@ impl<'a> AccountSyncRequest<'a> {
             password: None,
             cancellation_token: None,
             progress_sink: None,
+            two_factor_prompt: None,
         }
     }
 
@@ -1680,6 +1884,7 @@ pub struct WorkDownloadRequest<'a> {
     pub replace_existing: bool,
     pub cancellation_token: Option<&'a CancellationToken>,
     pub progress_sink: Option<&'a dyn WorkDownloadProgressSink>,
+    pub two_factor_prompt: Option<&'a dyn TwoFactorPrompt>,
 }
 
 impl<'a> WorkDownloadRequest<'a> {
@@ -1694,6 +1899,7 @@ impl<'a> WorkDownloadRequest<'a> {
             replace_existing: false,
             cancellation_token: None,
             progress_sink: None,
+            two_factor_prompt: None,
         }
     }
 
@@ -1863,6 +2069,7 @@ pub struct BulkWorkDownloadRequest<'a> {
     pub skip_downloaded: bool,
     pub cancellation_token: Option<&'a CancellationToken>,
     pub progress_sink: Option<&'a dyn BulkWorkDownloadProgressSink>,
+    pub two_factor_prompt: Option<&'a dyn TwoFactorPrompt>,
 }
 
 impl<'a> BulkWorkDownloadRequest<'a> {
@@ -1876,6 +2083,7 @@ impl<'a> BulkWorkDownloadRequest<'a> {
             skip_downloaded: true,
             cancellation_token: None,
             progress_sink: None,
+            two_factor_prompt: None,
         }
     }
 
@@ -2061,9 +2269,43 @@ pub struct BulkWorkDownloadPreviewFile {
     pub expected_size: Option<u64>,
 }
 
+/// Authentication surface shared by every source that talks to DLsite on behalf of an
+/// account.
+///
+/// It is split from the feature traits because logging in is identical for sync and
+/// download, and because two-factor login is a multi-step conversation: the caller has to be
+/// able to restore a stored session, notice it is stale, and resume a challenge with a code
+/// obtained from the user.
 #[async_trait]
-pub trait WorkDownloadSource {
-    async fn login(&self, credentials: &Credentials) -> Result<()>;
+pub trait DlsiteAuthSource {
+    async fn restore_session(&self, session: &SessionSnapshot) -> Result<()>;
+    async fn validate_session(&self) -> Result<bool>;
+    async fn begin_login(&self, credentials: &Credentials) -> Result<LoginOutcome>;
+    async fn complete_two_factor(
+        &self,
+        challenge: &TwoFactorChallenge,
+        code: &str,
+    ) -> Result<SessionSnapshot>;
+}
+
+/// Context handed to the UI when a two-factor code is needed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TwoFactorPromptRequest {
+    pub account_id: String,
+    pub account_label: String,
+    /// 1 for the first prompt of this login.
+    pub attempt: u32,
+    pub previous_code_rejected: bool,
+}
+
+#[async_trait]
+pub trait TwoFactorPrompt: Send + Sync {
+    /// Returns the code the user entered, or `None` if they declined to provide one.
+    async fn request_code(&self, request: TwoFactorPromptRequest) -> Result<Option<String>>;
+}
+
+#[async_trait]
+pub trait WorkDownloadSource: DlsiteAuthSource {
     async fn download_plan(&self, work_id: &WorkId) -> Result<DownloadPlan>;
     async fn download_file_metadata(
         &self,
@@ -2091,12 +2333,30 @@ impl DlsiteWorkDownloadSource {
 }
 
 #[async_trait]
-impl WorkDownloadSource for DlsiteWorkDownloadSource {
-    async fn login(&self, credentials: &Credentials) -> Result<()> {
-        self.client.login(credentials).await?;
-        Ok(())
+impl DlsiteAuthSource for DlsiteWorkDownloadSource {
+    async fn restore_session(&self, session: &SessionSnapshot) -> Result<()> {
+        Ok(self.client.import_session(session)?)
     }
 
+    async fn validate_session(&self) -> Result<bool> {
+        Ok(self.client.validate_session().await? == SessionStatus::Authorized)
+    }
+
+    async fn begin_login(&self, credentials: &Credentials) -> Result<LoginOutcome> {
+        Ok(self.client.begin_login(credentials).await?)
+    }
+
+    async fn complete_two_factor(
+        &self,
+        challenge: &TwoFactorChallenge,
+        code: &str,
+    ) -> Result<SessionSnapshot> {
+        Ok(self.client.complete_two_factor(challenge, code).await?)
+    }
+}
+
+#[async_trait]
+impl WorkDownloadSource for DlsiteWorkDownloadSource {
     async fn download_plan(&self, work_id: &WorkId) -> Result<DownloadPlan> {
         Ok(self.client.download_plan(work_id).await?)
     }
@@ -2172,8 +2432,7 @@ pub trait SyncProgressSink: Send + Sync {
 }
 
 #[async_trait]
-pub trait AccountSyncSource {
-    async fn login(&self, credentials: &Credentials) -> Result<()>;
+pub trait AccountSyncSource: DlsiteAuthSource {
     async fn content_count(&self) -> Result<ContentCount>;
     async fn purchases(&self) -> Result<Vec<Purchase>>;
     async fn works(&self, ids: &[WorkId]) -> Result<Vec<Work>>;
@@ -2195,12 +2454,30 @@ impl DlsiteSyncSource {
 }
 
 #[async_trait]
-impl AccountSyncSource for DlsiteSyncSource {
-    async fn login(&self, credentials: &Credentials) -> Result<()> {
-        self.client.login(credentials).await?;
-        Ok(())
+impl DlsiteAuthSource for DlsiteSyncSource {
+    async fn restore_session(&self, session: &SessionSnapshot) -> Result<()> {
+        Ok(self.client.import_session(session)?)
     }
 
+    async fn validate_session(&self) -> Result<bool> {
+        Ok(self.client.validate_session().await? == SessionStatus::Authorized)
+    }
+
+    async fn begin_login(&self, credentials: &Credentials) -> Result<LoginOutcome> {
+        Ok(self.client.begin_login(credentials).await?)
+    }
+
+    async fn complete_two_factor(
+        &self,
+        challenge: &TwoFactorChallenge,
+        code: &str,
+    ) -> Result<SessionSnapshot> {
+        Ok(self.client.complete_two_factor(challenge, code).await?)
+    }
+}
+
+#[async_trait]
+impl AccountSyncSource for DlsiteSyncSource {
     async fn content_count(&self) -> Result<ContentCount> {
         Ok(self.client.content_count(ContentQuery::default()).await?)
     }
@@ -3051,19 +3328,78 @@ mod tests {
         Works,
     }
 
+    fn assert_fake_credentials(credentials: &Credentials) {
+        assert_eq!(credentials.username, "user@example.test");
+        assert_eq!(credentials.password, "secret");
+    }
+
+    fn fake_session() -> SessionSnapshot {
+        SessionSnapshot {
+            cookies_json: "{}".to_owned(),
+        }
+    }
+
+    /// Test sources authenticate with a password in one step; `validate_session` always says
+    /// no so every operation exercises the login path rather than a stored session.
+    macro_rules! impl_fake_auth_source {
+        ($source:ty) => {
+            #[async_trait]
+            impl DlsiteAuthSource for $source {
+                async fn restore_session(&self, _session: &SessionSnapshot) -> Result<()> {
+                    Ok(())
+                }
+
+                async fn validate_session(&self) -> Result<bool> {
+                    Ok(false)
+                }
+
+                async fn begin_login(&self, credentials: &Credentials) -> Result<LoginOutcome> {
+                    assert_fake_credentials(credentials);
+                    Ok(LoginOutcome::Authorized(fake_session()))
+                }
+
+                async fn complete_two_factor(
+                    &self,
+                    _challenge: &TwoFactorChallenge,
+                    _code: &str,
+                ) -> Result<SessionSnapshot> {
+                    unreachable!("fake source never issues a two-factor challenge")
+                }
+            }
+        };
+    }
+
     #[async_trait]
-    impl AccountSyncSource for FakeSyncSource {
-        async fn login(&self, credentials: &Credentials) -> Result<()> {
-            assert_eq!(credentials.username, "user@example.test");
-            assert_eq!(credentials.password, "secret");
+    impl DlsiteAuthSource for FakeSyncSource {
+        async fn restore_session(&self, _session: &SessionSnapshot) -> Result<()> {
+            Ok(())
+        }
+
+        async fn validate_session(&self) -> Result<bool> {
+            Ok(false)
+        }
+
+        async fn begin_login(&self, credentials: &Credentials) -> Result<LoginOutcome> {
+            assert_fake_credentials(credentials);
 
             if self.fail_at == Some(FakeFailurePoint::Login) {
                 return Err(LibraryError::SyncSource("login failed".to_owned()));
             }
 
-            Ok(())
+            Ok(LoginOutcome::Authorized(fake_session()))
         }
 
+        async fn complete_two_factor(
+            &self,
+            _challenge: &TwoFactorChallenge,
+            _code: &str,
+        ) -> Result<SessionSnapshot> {
+            unreachable!("fake sync source never issues a two-factor challenge")
+        }
+    }
+
+    #[async_trait]
+    impl AccountSyncSource for FakeSyncSource {
         async fn content_count(&self) -> Result<ContentCount> {
             Ok(self.content_count.clone())
         }
@@ -3117,14 +3453,10 @@ mod tests {
     #[derive(Debug, Clone, Default)]
     struct FakeDownloadSource;
 
+    impl_fake_auth_source!(FakeDownloadSource);
+
     #[async_trait]
     impl WorkDownloadSource for FakeDownloadSource {
-        async fn login(&self, credentials: &Credentials) -> Result<()> {
-            assert_eq!(credentials.username, "user@example.test");
-            assert_eq!(credentials.password, "secret");
-            Ok(())
-        }
-
         async fn download_plan(&self, work_id: &WorkId) -> Result<DownloadPlan> {
             Ok(DownloadPlan {
                 work_id: work_id.clone(),
@@ -3191,12 +3523,10 @@ mod tests {
     #[derive(Debug, Clone, Default)]
     struct SerialDownloadSource;
 
+    impl_fake_auth_source!(SerialDownloadSource);
+
     #[async_trait]
     impl WorkDownloadSource for SerialDownloadSource {
-        async fn login(&self, credentials: &Credentials) -> Result<()> {
-            FakeDownloadSource.login(credentials).await
-        }
-
         async fn download_plan(&self, work_id: &WorkId) -> Result<DownloadPlan> {
             let mut plan = FakeDownloadSource.download_plan(work_id).await?;
             plan.serial_numbers = vec![SerialNumber {
@@ -3247,14 +3577,10 @@ mod tests {
         }
     }
 
+    impl_fake_auth_source!(WaitingDownloadSource);
+
     #[async_trait]
     impl WorkDownloadSource for WaitingDownloadSource {
-        async fn login(&self, credentials: &Credentials) -> Result<()> {
-            assert_eq!(credentials.username, "user@example.test");
-            assert_eq!(credentials.password, "secret");
-            Ok(())
-        }
-
         async fn download_plan(&self, work_id: &WorkId) -> Result<DownloadPlan> {
             Ok(DownloadPlan {
                 work_id: work_id.clone(),
@@ -3309,12 +3635,10 @@ mod tests {
         fail_work_id: &'static str,
     }
 
+    impl_fake_auth_source!(FailingDownloadSource);
+
     #[async_trait]
     impl WorkDownloadSource for FailingDownloadSource {
-        async fn login(&self, credentials: &Credentials) -> Result<()> {
-            FakeDownloadSource.login(credentials).await
-        }
-
         async fn download_plan(&self, work_id: &WorkId) -> Result<DownloadPlan> {
             FakeDownloadSource.download_plan(work_id).await
         }
@@ -3500,6 +3824,143 @@ mod tests {
         }
     }
 
+    const VALID_TWO_FACTOR_CODE: &str = "123456";
+    const TWO_FACTOR_SESSION: &str = "{\"two-factor\":true}";
+
+    /// Sync source for a two-factor-enabled account: the password alone only ever yields a
+    /// challenge, and a session becomes valid once it has been issued by a correct code.
+    #[derive(Clone)]
+    struct TwoFactorSyncSource {
+        inner: FakeSyncSource,
+        state: Arc<Mutex<TwoFactorSourceState>>,
+    }
+
+    #[derive(Default)]
+    struct TwoFactorSourceState {
+        issued_session: Option<String>,
+        restored_session: Option<String>,
+        submitted_codes: Vec<String>,
+        login_count: u32,
+    }
+
+    impl TwoFactorSyncSource {
+        fn new() -> Self {
+            Self {
+                inner: sync_source(),
+                state: Arc::new(Mutex::new(TwoFactorSourceState::default())),
+            }
+        }
+
+        fn state(&self) -> std::sync::MutexGuard<'_, TwoFactorSourceState> {
+            self.state.lock().expect("two-factor state lock")
+        }
+
+        fn challenge() -> TwoFactorChallenge {
+            TwoFactorChallenge {
+                page_url: Url::parse("https://login.dlsite.com/login/two-factor").unwrap(),
+                action: Url::parse("https://login.dlsite.com/login/two-factor?user=self").unwrap(),
+                code_field: "otp".to_owned(),
+                fields: vec![("_token".to_owned(), "token".to_owned())],
+            }
+        }
+    }
+
+    #[async_trait]
+    impl DlsiteAuthSource for TwoFactorSyncSource {
+        async fn restore_session(&self, session: &SessionSnapshot) -> Result<()> {
+            self.state().restored_session = Some(session.cookies_json.clone());
+            Ok(())
+        }
+
+        async fn validate_session(&self) -> Result<bool> {
+            let state = self.state();
+            Ok(state.restored_session.is_some() && state.restored_session == state.issued_session)
+        }
+
+        async fn begin_login(&self, credentials: &Credentials) -> Result<LoginOutcome> {
+            assert_fake_credentials(credentials);
+            self.state().login_count += 1;
+            Ok(LoginOutcome::TwoFactorRequired(Self::challenge()))
+        }
+
+        async fn complete_two_factor(
+            &self,
+            challenge: &TwoFactorChallenge,
+            code: &str,
+        ) -> Result<SessionSnapshot> {
+            assert_eq!(challenge.code_field, "otp");
+
+            let mut state = self.state();
+            state.submitted_codes.push(code.to_owned());
+
+            if code != VALID_TWO_FACTOR_CODE {
+                return Err(LibraryError::Api(DmApiError::InvalidTwoFactorCode));
+            }
+
+            state.issued_session = Some(TWO_FACTOR_SESSION.to_owned());
+
+            Ok(SessionSnapshot {
+                cookies_json: TWO_FACTOR_SESSION.to_owned(),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl AccountSyncSource for TwoFactorSyncSource {
+        async fn content_count(&self) -> Result<ContentCount> {
+            self.inner.content_count().await
+        }
+
+        async fn purchases(&self) -> Result<Vec<Purchase>> {
+            self.inner.purchases().await
+        }
+
+        async fn works(&self, ids: &[WorkId]) -> Result<Vec<Work>> {
+            self.inner.works(ids).await
+        }
+    }
+
+    /// Prompt that hands back a scripted sequence of answers and records what it was asked.
+    #[derive(Clone, Default)]
+    struct ScriptedTwoFactorPrompt {
+        answers: Arc<Mutex<Vec<Option<String>>>>,
+        requests: Arc<Mutex<Vec<TwoFactorPromptRequest>>>,
+    }
+
+    impl ScriptedTwoFactorPrompt {
+        fn new(answers: impl IntoIterator<Item = Option<&'static str>>) -> Self {
+            Self {
+                answers: Arc::new(Mutex::new(
+                    answers
+                        .into_iter()
+                        .map(|answer| answer.map(str::to_owned))
+                        .collect(),
+                )),
+                requests: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn requests(&self) -> Vec<TwoFactorPromptRequest> {
+            self.requests.lock().expect("prompt lock").clone()
+        }
+    }
+
+    #[async_trait]
+    impl TwoFactorPrompt for ScriptedTwoFactorPrompt {
+        async fn request_code(&self, request: TwoFactorPromptRequest) -> Result<Option<String>> {
+            self.requests.lock().expect("prompt lock").push(request);
+
+            let mut answers = self.answers.lock().expect("prompt lock");
+
+            assert!(
+                !answers.is_empty(),
+                "prompt was asked more often than scripted"
+            );
+
+            Ok(answers.remove(0))
+        }
+    }
+
     fn sync_source() -> FakeSyncSource {
         FakeSyncSource {
             content_count: ContentCount {
@@ -3661,6 +4122,7 @@ mod tests {
                     password: None,
                     cancellation_token: None,
                     progress_sink: Some(&sink),
+                    two_factor_prompt: None,
                 },
                 &sync_source(),
             )
@@ -4451,12 +4913,171 @@ mod tests {
                     password: Some("secret"),
                     cancellation_token: None,
                     progress_sink: None,
+                    two_factor_prompt: None,
                 },
                 &sync_source(),
             )
             .await?;
 
         assert_eq!(report.cached_work_count, 2);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn two_factor_sync_completes_with_a_prompted_code() -> Result<()> {
+        let library = migrated_library().await?;
+        library.save_account(save_account_request(true)).await?;
+
+        let source = TwoFactorSyncSource::new();
+        let prompt = ScriptedTwoFactorPrompt::new([Some(VALID_TWO_FACTOR_CODE)]);
+        let report = library
+            .sync_account_with_source(
+                AccountSyncRequest {
+                    two_factor_prompt: Some(&prompt),
+                    ..AccountSyncRequest::new("account-a")
+                },
+                &source,
+            )
+            .await?;
+
+        assert_eq!(report.cached_work_count, 2);
+        assert_eq!(source.state().submitted_codes, vec![VALID_TWO_FACTOR_CODE]);
+
+        let requests = prompt.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].account_id, "account-a");
+        assert_eq!(requests[0].attempt, 1);
+        assert!(!requests[0].previous_code_rejected);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejected_two_factor_code_is_prompted_again() -> Result<()> {
+        let library = migrated_library().await?;
+        library.save_account(save_account_request(true)).await?;
+
+        let source = TwoFactorSyncSource::new();
+        let prompt = ScriptedTwoFactorPrompt::new([Some("000000"), Some(VALID_TWO_FACTOR_CODE)]);
+
+        library
+            .sync_account_with_source(
+                AccountSyncRequest {
+                    two_factor_prompt: Some(&prompt),
+                    ..AccountSyncRequest::new("account-a")
+                },
+                &source,
+            )
+            .await?;
+
+        assert_eq!(
+            source.state().submitted_codes,
+            vec!["000000", VALID_TWO_FACTOR_CODE]
+        );
+
+        let requests = prompt.requests();
+        assert_eq!(requests.len(), 2);
+        assert!(!requests[0].previous_code_rejected);
+        assert_eq!(requests[1].attempt, 2);
+        assert!(requests[1].previous_code_rejected);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelled_two_factor_prompt_fails_sync() -> Result<()> {
+        let library = migrated_library().await?;
+        library.save_account(save_account_request(true)).await?;
+
+        let source = TwoFactorSyncSource::new();
+        let prompt = ScriptedTwoFactorPrompt::new([None]);
+        let result = library
+            .sync_account_with_source(
+                AccountSyncRequest {
+                    two_factor_prompt: Some(&prompt),
+                    ..AccountSyncRequest::new("account-a")
+                },
+                &source,
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(LibraryError::TwoFactorCancelled(account_id)) if account_id == "account-a"
+        ));
+        assert!(source.state().submitted_codes.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn two_factor_challenge_without_a_prompt_is_reported() -> Result<()> {
+        let library = migrated_library().await?;
+        library.save_account(save_account_request(true)).await?;
+
+        let result = library
+            .sync_account_with_source(
+                AccountSyncRequest::new("account-a"),
+                &TwoFactorSyncSource::new(),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(LibraryError::TwoFactorPromptUnavailable(account_id)) if account_id == "account-a"
+        ));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn stored_session_skips_the_two_factor_prompt() -> Result<()> {
+        let library = migrated_library().await?;
+        library.save_account(save_account_request(true)).await?;
+
+        let source = TwoFactorSyncSource::new();
+        let prompt = ScriptedTwoFactorPrompt::new([Some(VALID_TWO_FACTOR_CODE)]);
+        let request = || AccountSyncRequest {
+            two_factor_prompt: Some(&prompt),
+            ..AccountSyncRequest::new("account-a")
+        };
+
+        library.sync_account_with_source(request(), &source).await?;
+        library.sync_account_with_source(request(), &source).await?;
+
+        // The second sync reused the stored session instead of logging in again.
+        assert_eq!(prompt.requests().len(), 1);
+        assert_eq!(source.state().login_count, 1);
+        assert_eq!(
+            source.state().restored_session.as_deref(),
+            Some(TWO_FACTOR_SESSION)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn changing_the_password_forgets_the_stored_session() -> Result<()> {
+        let library = migrated_library().await?;
+        library.save_account(save_account_request(true)).await?;
+
+        let source = TwoFactorSyncSource::new();
+        let prompt = ScriptedTwoFactorPrompt::new([
+            Some(VALID_TWO_FACTOR_CODE),
+            Some(VALID_TWO_FACTOR_CODE),
+        ]);
+        let request = || AccountSyncRequest {
+            two_factor_prompt: Some(&prompt),
+            ..AccountSyncRequest::new("account-a")
+        };
+
+        library.sync_account_with_source(request(), &source).await?;
+        library.save_account(save_account_request(true)).await?;
+        library.sync_account_with_source(request(), &source).await?;
+
+        assert_eq!(prompt.requests().len(), 2);
+        assert_eq!(source.state().login_count, 2);
 
         Ok(())
     }
@@ -4545,6 +5166,7 @@ mod tests {
                         password: None,
                         cancellation_token: Some(&token),
                         progress_sink: None,
+                        two_factor_prompt: None,
                     },
                     &sync_source(),
                 )

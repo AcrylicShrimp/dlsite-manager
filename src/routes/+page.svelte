@@ -8,6 +8,7 @@
   import { onDestroy, onMount } from "svelte";
   import ConfirmationDialogView from "$lib/components/ConfirmationDialog.svelte";
   import ToastStack from "$lib/components/ToastStack.svelte";
+  import TwoFactorDialog from "$lib/components/TwoFactorDialog.svelte";
   import UiButton from "$lib/components/ui/Button.svelte";
   import Field from "$lib/components/ui/Field.svelte";
   import TextInput from "$lib/components/ui/TextInput.svelte";
@@ -93,6 +94,8 @@
     ProductListPage,
     StartJobResponse,
     StartWorkDownloadOptions,
+    TwoFactorClosed,
+    TwoFactorRequest,
     Toast,
     ToastKind,
     View,
@@ -154,6 +157,8 @@
   let chipTooltip = $state<ChipTooltip | null>(null);
   let bulkDownloadDialog = $state<BulkDownloadDialog | null>(null);
   let confirmationDialog = $state<ConfirmationDialog | null>(null);
+  let twoFactorQueue = $state<TwoFactorRequest[]>([]);
+  let twoFactorSubmitting = $state(false);
 
   let toastSequence = 0;
   let bulkDownloadDialogResolve: ((confirmed: boolean) => void) | null = null;
@@ -163,22 +168,42 @@
   onMount(() => {
     void loadInitial();
 
-    let unlisten: (() => void) | null = null;
+    const unlisteners: (() => void)[] = [];
     let disposed = false;
 
-    void listen<JobEvent>("dm-job-event", (event) => {
-      void handleJobEvent(event.payload);
-    }).then((cleanup) => {
-      if (disposed) {
-        cleanup();
-      } else {
-        unlisten = cleanup;
-      }
-    });
+    const register = (pending: Promise<() => void>) => {
+      void pending.then((cleanup) => {
+        if (disposed) {
+          cleanup();
+        } else {
+          unlisteners.push(cleanup);
+        }
+      });
+    };
+
+    register(
+      listen<JobEvent>("dm-job-event", (event) => {
+        void handleJobEvent(event.payload);
+      }),
+    );
+    register(
+      listen<TwoFactorRequest>("dm-two-factor-request", (event) => {
+        queueTwoFactorRequest(event.payload);
+      }),
+    );
+    register(
+      listen<TwoFactorClosed>("dm-two-factor-closed", (event) => {
+        // The job stopped waiting (timeout, cancellation, or another window answered).
+        dropTwoFactorRequest(event.payload.requestId);
+      }),
+    );
 
     return () => {
       disposed = true;
-      unlisten?.();
+
+      for (const unlisten of unlisteners) {
+        unlisten();
+      }
     };
   });
 
@@ -1574,6 +1599,63 @@
     resolve?.(confirmed);
   }
 
+  const activeTwoFactorRequest = $derived(twoFactorQueue[0] ?? null);
+
+  function queueTwoFactorRequest(request: TwoFactorRequest) {
+    // A retry for the same job replaces its earlier request rather than stacking behind it.
+    twoFactorQueue = [
+      ...twoFactorQueue.filter((queued) => queued.jobId !== request.jobId),
+      request,
+    ];
+  }
+
+  function dropTwoFactorRequest(requestId: string) {
+    twoFactorQueue = twoFactorQueue.filter((queued) => queued.requestId !== requestId);
+
+    if (twoFactorQueue.length === 0) {
+      twoFactorSubmitting = false;
+    }
+  }
+
+  async function submitTwoFactorCode(code: string) {
+    const request = activeTwoFactorRequest;
+
+    if (!request || twoFactorSubmitting) {
+      return;
+    }
+
+    twoFactorSubmitting = true;
+
+    try {
+      await invoke("submit_two_factor_code", {
+        request: { requestId: request.requestId, code },
+      });
+      dropTwoFactorRequest(request.requestId);
+    } catch (error) {
+      notifyError(errorMessage(error));
+    } finally {
+      twoFactorSubmitting = false;
+    }
+  }
+
+  async function cancelTwoFactor() {
+    const request = activeTwoFactorRequest;
+
+    if (!request) {
+      return;
+    }
+
+    dropTwoFactorRequest(request.requestId);
+
+    try {
+      await invoke("cancel_two_factor", {
+        request: { requestId: request.requestId },
+      });
+    } catch (error) {
+      notifyError(errorMessage(error));
+    }
+  }
+
   function showConfirmationDialog(dialog: ConfirmationDialog) {
     if (confirmationDialogResolve) {
       confirmationDialogResolve(false);
@@ -2702,6 +2784,13 @@
   </section>
 
   <ConfirmationDialogView dialog={confirmationDialog} onClose={closeConfirmationDialog} />
+
+  <TwoFactorDialog
+    request={activeTwoFactorRequest}
+    submitting={twoFactorSubmitting}
+    onSubmit={(code) => void submitTwoFactorCode(code)}
+    onCancel={() => void cancelTwoFactor()}
+  />
 
   {#if bulkDownloadDialog}
     <div
