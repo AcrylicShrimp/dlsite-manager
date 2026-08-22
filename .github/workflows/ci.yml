@@ -30,6 +30,8 @@ jobs:
 
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
 
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
       - name: Install Linux build dependencies
         run: |
           set -euo pipefail
@@ -46,6 +48,15 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install Rust toolchain
+        run: |
+          set -euo pipefail
+          rustup toolchain install "${RUSTUP_TOOLCHAIN}" \
+            --profile minimal --component rustfmt --component clippy
+          cargo --version
+          cargo fmt --version
+          cargo clippy --version
 
       - name: Lint
         run: mise run lint
