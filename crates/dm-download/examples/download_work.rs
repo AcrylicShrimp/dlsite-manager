@@ -100,7 +100,7 @@ async fn download_one_work(
     let mut all_sizes_known = true;
 
     for (file_index, file) in plan.files.iter().enumerate() {
-        let metadata = probe_download_file_metadata(&client, file_index, file).await?;
+        let metadata = probe_download_file_metadata(client, file_index, file).await?;
 
         match metadata.expected_size {
             Some(size) => total_size += size,

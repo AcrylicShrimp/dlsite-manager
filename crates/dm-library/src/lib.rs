@@ -944,10 +944,9 @@ impl Library {
                 preview.known_expected_bytes = preview
                     .known_expected_bytes
                     .saturating_add(work.known_expected_bytes);
-                preview.total_expected_bytes = match preview.total_expected_bytes {
-                    Some(total) => Some(total.saturating_add(content_size_bytes)),
-                    None => None,
-                };
+                preview.total_expected_bytes = preview
+                    .total_expected_bytes
+                    .map(|total| total.saturating_add(content_size_bytes));
                 preview.works.push(work);
                 request.emit(BulkWorkDownloadPreviewProgress::WorkPlanned {
                     work_id,
@@ -1417,6 +1416,7 @@ impl Library {
         Ok(report)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn download_work_inner<S>(
         &self,
         account: &Account,
@@ -4430,9 +4430,12 @@ mod tests {
 
         assert!(path_is_download_child_of_any_root(
             &root.join("RJ000001"),
-            &[root.clone()]
+            std::slice::from_ref(&root)
         ));
-        assert!(!path_is_download_child_of_any_root(&root, &[root.clone()]));
+        assert!(!path_is_download_child_of_any_root(
+            &root,
+            std::slice::from_ref(&root)
+        ));
         assert!(!path_is_download_child_of_any_root(
             &PathBuf::from("/tmp/dlsite/library-other/RJ000001"),
             &[root]

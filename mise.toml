@@ -1,0 +1,21 @@
+[tools]
+claude = "latest"  # [skip ci]
+node = "22"
+pinact = "latest"  # [skip ci]
+pnpm = "latest"
+rust = "latest"
+
+[tasks.lint]
+depends = ["lint:rustfmt", "lint:clippy", "lint:svelte-check"]
+
+[tasks."lint:rustfmt"]
+run = "cargo fmt --all --check"
+
+[tasks."lint:clippy"]
+run = "cargo clippy --workspace --all-targets -- -D warnings"
+
+[tasks."lint:svelte-check"]
+run = "pnpm run check"
+
+[tasks.test]
+run = "cargo test --workspace"

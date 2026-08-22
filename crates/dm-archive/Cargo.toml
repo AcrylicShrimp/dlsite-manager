@@ -12,3 +12,6 @@ zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 dotenvy = "0.15.7"
+
+[lints]
+workspace = true
