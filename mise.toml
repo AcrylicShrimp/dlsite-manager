@@ -15,12 +15,15 @@ cargo --version
 cargo fmt --version
 cargo clippy --version
 
-cargo fetch --frozen
+cargo fetch --locked
 pnpm install --frozen-lockfile
 """
 
 [tasks.dev]
 run = "pnpm run tauri dev"
+
+[tasks.build]
+run = "pnpm run tauri build"
 
 [tasks.format]
 depends = ["format:rustfmt", "format:clippy"]
