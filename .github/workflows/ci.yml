@@ -46,17 +46,8 @@ jobs:
             patchelf \
             file
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
       - name: Install Rust toolchain
-        run: |
-          set -euo pipefail
-          rustup toolchain install "${RUSTUP_TOOLCHAIN}" \
-            --profile minimal --component rustfmt --component clippy
-          cargo --version
-          cargo fmt --version
-          cargo clippy --version
+        run: mise run setup
 
       - name: Lint
         run: mise run lint

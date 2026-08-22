@@ -5,6 +5,32 @@ pinact = "latest"  # [skip ci]
 pnpm = "latest"
 rust = "latest"
 
+[tasks.setup]
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+rustup toolchain install "${RUSTUP_TOOLCHAIN}" \
+  --profile minimal --component rustfmt --component clippy
+cargo --version
+cargo fmt --version
+cargo clippy --version
+
+cargo fetch --frozen
+pnpm install --frozen-lockfile
+"""
+
+[tasks.dev]
+run = "pnpm run tauri dev"
+
+[tasks.format]
+depends = ["format:rustfmt", "format:clippy"]
+
+[tasks."format:rustfmt"]
+run = "cargo fmt --all"
+
+[tasks."format:clippy"]
+run = "cargo clippy --fix --allow-dirty --allow-staged --workspace --all-targets -- -D warnings"
+
 [tasks.lint]
 depends = ["lint:rustfmt", "lint:clippy", "lint:svelte-check"]
 
