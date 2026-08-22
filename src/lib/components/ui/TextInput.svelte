@@ -6,6 +6,8 @@
     id,
     type = "text",
     autocomplete = "off",
+    inputmode,
+    maxlength,
     spellcheck = false,
     disabled = false,
     placeholder,
@@ -15,6 +17,8 @@
     id?: string;
     type?: "text" | "search" | "password";
     autocomplete?: HTMLInputAttributes["autocomplete"];
+    inputmode?: HTMLInputAttributes["inputmode"];
+    maxlength?: number;
     spellcheck?: boolean;
     disabled?: boolean;
     placeholder?: string;
@@ -26,6 +30,8 @@
   {id}
   {type}
   {autocomplete}
+  {inputmode}
+  {maxlength}
   {spellcheck}
   {disabled}
   {placeholder}
@@ -45,11 +51,20 @@
     background: var(--field);
     font: inherit;
     letter-spacing: 0;
+    transition:
+      border-color 120ms ease,
+      background-color 120ms ease,
+      box-shadow 120ms ease;
   }
 
   input:focus {
     border-color: var(--accent-strong);
-    outline: 2px solid var(--accent-muted);
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  input::placeholder {
+    color: var(--text-subtle);
   }
 
   input:disabled {

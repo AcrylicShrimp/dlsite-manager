@@ -1,5 +1,10 @@
 <script lang="ts">
+  import UiButton from "$lib/components/ui/Button.svelte";
+  import Field from "$lib/components/ui/Field.svelte";
+  import TextInput from "$lib/components/ui/TextInput.svelte";
   import type { TwoFactorRequest } from "$lib/model/types";
+
+  const CODE_FIELD_ID = "two-factor-code";
 
   let {
     request,
@@ -16,10 +21,15 @@
   let code = $state("");
 
   // Clearing on each new request keeps a rejected code from being resubmitted, and keeps one
-  // account's code from leaking into another account's prompt.
+  // account's code from leaking into another account's prompt. The dialog opens on the job's
+  // schedule rather than a user gesture, so focus is moved into it as well.
   $effect(() => {
-    request?.requestId;
+    if (!request?.requestId) {
+      return;
+    }
+
     code = "";
+    document.getElementById(CODE_FIELD_ID)?.focus();
   });
 
   const trimmedCode = $derived(code.trim());
@@ -36,26 +46,30 @@
 
 {#if request}
   <div
-    class="two-factor-layer"
+    class="dialog-layer"
     role="dialog"
+    tabindex="-1"
     aria-modal="true"
     aria-labelledby="two-factor-title"
     aria-describedby="two-factor-message"
+    onkeydown={(event) => {
+      if (event.key === "Escape") onCancel();
+    }}
   >
     <button
-      class="two-factor-backdrop"
+      class="backdrop"
       type="button"
       aria-label="Cancel two-factor verification"
       onclick={onCancel}
     ></button>
-    <section class="two-factor-panel">
-      <div class="two-factor-heading">
+    <section class="panel">
+      <div class="heading">
         <div>
           <p>Two-factor authentication</p>
           <h2 id="two-factor-title">{request.accountLabel}</h2>
         </div>
         <button
-          class="dialog-button two-factor-close"
+          class="close"
           type="button"
           aria-label="Cancel two-factor verification"
           onclick={onCancel}
@@ -66,7 +80,7 @@
         </button>
       </div>
 
-      <p id="two-factor-message" class="two-factor-message">
+      <p id="two-factor-message" class="message" class:rejected={request.previousCodeRejected}>
         {#if request.previousCodeRejected}
           DLsite rejected that code. Open your authenticator app and enter the current code.
         {:else}
@@ -75,36 +89,28 @@
         {/if}
       </p>
 
-      <form class="two-factor-form" onsubmit={submit}>
-        <!-- svelte-ignore a11y_autofocus -->
-        <input
-          class="two-factor-input"
-          type="text"
-          inputmode="numeric"
-          autocomplete="one-time-code"
-          autocapitalize="off"
-          autocorrect="off"
-          spellcheck="false"
-          maxlength="16"
-          placeholder="123456"
-          aria-label="Verification code"
-          autofocus
-          disabled={submitting}
-          bind:value={code}
-        />
-
-        <div class="two-factor-actions">
-          <button
-            class="dialog-button secondary"
-            type="button"
+      <form onsubmit={submit}>
+        <Field
+          id={CODE_FIELD_ID}
+          label="Verification code"
+          help={request.attempt > 1 ? `Attempt ${request.attempt}` : undefined}
+        >
+          <TextInput
+            id={CODE_FIELD_ID}
+            autocomplete="one-time-code"
+            inputmode="numeric"
+            maxlength={16}
+            placeholder="123456"
             disabled={submitting}
-            onclick={onCancel}
-          >
-            Cancel
-          </button>
-          <button class="dialog-button" type="submit" disabled={!canSubmit}>
+            bind:value={code}
+          />
+        </Field>
+
+        <div class="actions">
+          <UiButton variant="secondary" disabled={submitting} onclick={onCancel}>Cancel</UiButton>
+          <UiButton type="submit" disabled={!canSubmit}>
             {submitting ? "Verifying…" : "Verify"}
-          </button>
+          </UiButton>
         </div>
       </form>
     </section>
@@ -112,7 +118,7 @@
 {/if}
 
 <style>
-  .two-factor-layer {
+  .dialog-layer {
     position: fixed;
     z-index: 70;
     inset: 0;
@@ -121,7 +127,7 @@
     padding: 24px;
   }
 
-  .two-factor-backdrop {
+  .backdrop {
     position: absolute;
     inset: 0;
     width: 100%;
@@ -134,106 +140,50 @@
     cursor: default;
   }
 
-  .two-factor-panel {
+  .panel {
     position: relative;
     z-index: 1;
     display: grid;
     gap: 16px;
     width: min(440px, calc(100vw - 40px));
+    max-height: calc(100vh - 48px);
     padding: 18px;
     border: 1px solid var(--border-strong);
     border-radius: 8px;
     background: var(--panel);
     box-shadow: 0 24px 64px rgb(0 0 0 / 52%);
+    overflow: auto;
   }
 
-  .two-factor-heading {
+  .heading {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 12px;
     align-items: start;
   }
 
-  .two-factor-heading p,
-  .two-factor-message {
+  .heading p,
+  .message {
     margin: 0;
   }
 
-  .two-factor-heading p {
+  .heading p {
     color: var(--muted);
     font-size: 12px;
     font-weight: 700;
     text-transform: uppercase;
   }
 
-  .two-factor-heading h2 {
+  h2 {
     margin: 2px 0 0;
-    overflow: hidden;
+    min-width: 0;
     color: var(--text-strong);
     font-size: 20px;
     line-height: 1.2;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
   }
 
-  .two-factor-message {
-    color: var(--text);
-    font-size: 14px;
-    line-height: 1.5;
-  }
-
-  .two-factor-form {
-    display: grid;
-    gap: 16px;
-  }
-
-  .two-factor-input {
-    width: 100%;
-    height: 44px;
-    padding: 0 12px;
-    border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    color: var(--text-strong);
-    font-size: 20px;
-    font-family: inherit;
-    letter-spacing: 0.28em;
-    background: var(--panel-raised);
-  }
-
-  .two-factor-input:focus {
-    border-color: var(--accent);
-    outline: none;
-  }
-
-  .two-factor-input:disabled {
-    opacity: 0.6;
-  }
-
-  .dialog-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 84px;
-    height: 38px;
-    padding: 0 13px;
-    border: 1px solid var(--accent);
-    border-radius: 6px;
-    color: #09110c;
-    background: var(--accent);
-    cursor: pointer;
-  }
-
-  .dialog-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .dialog-button.secondary {
-    border-color: var(--border-strong);
-    color: var(--text);
-    background: var(--panel-raised);
-  }
-
-  .two-factor-close {
+  .close {
     width: 34px;
     min-width: 34px;
     height: 34px;
@@ -243,12 +193,17 @@
     background: var(--panel-raised);
   }
 
-  .two-factor-close:hover {
+  .close:hover {
     border-color: var(--accent);
     color: var(--text);
   }
 
-  .two-factor-close svg {
+  .close:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .close svg {
     width: 18px;
     height: 18px;
     fill: none;
@@ -258,9 +213,47 @@
     stroke-width: 2.35;
   }
 
-  .two-factor-actions {
+  .message {
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .message.rejected {
+    padding: 10px 12px;
+    border: 1px solid rgb(248 113 113 / 36%);
+    border-radius: 8px;
+    color: #fecaca;
+    background: rgb(248 113 113 / 11%);
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  form {
+    display: grid;
+    gap: 16px;
+  }
+
+  .actions {
     display: flex;
     justify-content: flex-end;
     gap: 8px;
+  }
+
+  @media (max-width: 720px) {
+    .dialog-layer {
+      padding: 12px;
+    }
+
+    .panel {
+      width: 100%;
+      max-height: calc(100vh - 24px);
+      padding: 14px;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
   }
 </style>

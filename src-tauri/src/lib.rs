@@ -2811,7 +2811,7 @@ impl dm_library::TwoFactorPrompt for JobTwoFactorPrompt {
     async fn request_code(
         &self,
         request: dm_library::TwoFactorPromptRequest,
-    ) -> Result<Option<String>, dm_library::LibraryError> {
+    ) -> Result<dm_library::TwoFactorPromptResponse, dm_library::LibraryError> {
         let (request_id, receiver) = self.prompts.open();
 
         self.context.set_phase("waitingForTwoFactor");
@@ -2838,12 +2838,21 @@ impl dm_library::TwoFactorPrompt for JobTwoFactorPrompt {
             )));
         }
 
-        let answer = tokio::select! {
-            answer = receiver => answer.ok().flatten(),
-            () = wait_for_cancellation(self.context.cancellation_token()) => None,
+        // Cancellation and timeout stay distinct: a cancelled job finishes as Cancelled,
+        // while a prompt nobody answered is a failure the user still needs to see.
+        let response = tokio::select! {
+            answer = receiver => match answer {
+                Ok(Some(code)) => dm_library::TwoFactorPromptResponse::Code(code),
+                // `None` is the dialog's Cancel button; a dropped sender means the request
+                // was closed out from under the dialog, which the job cannot act on either.
+                Ok(None) | Err(_) => dm_library::TwoFactorPromptResponse::Cancelled,
+            },
+            () = wait_for_cancellation(self.context.cancellation_token()) => {
+                dm_library::TwoFactorPromptResponse::Cancelled
+            }
             () = tokio::time::sleep(TWO_FACTOR_PROMPT_TIMEOUT) => {
                 self.context.warn("Two-factor code was not entered in time");
-                None
+                dm_library::TwoFactorPromptResponse::TimedOut
             }
         };
 
@@ -2854,7 +2863,7 @@ impl dm_library::TwoFactorPrompt for JobTwoFactorPrompt {
             .app
             .emit(TWO_FACTOR_CLOSED_EVENT, json!({ "requestId": request_id }));
 
-        Ok(answer)
+        Ok(response)
     }
 }
 
@@ -3916,6 +3925,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(setup_app)
         .invoke_handler(tauri::generate_handler![
             get_settings,

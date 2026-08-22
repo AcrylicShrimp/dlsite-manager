@@ -21,6 +21,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use uuid::Uuid;
 
@@ -57,6 +58,8 @@ pub enum LibraryError {
     TwoFactorPromptUnavailable(String),
     #[error("two-factor verification was cancelled: {0}")]
     TwoFactorCancelled(String),
+    #[error("two-factor verification timed out: {0}")]
+    TwoFactorTimedOut(String),
     #[error("two-factor verification failed after {attempts} attempts: {account_id}")]
     TwoFactorRejected { account_id: String, attempts: u32 },
     #[error("sync was cancelled")]
@@ -89,7 +92,10 @@ impl LibraryError {
             Self::MissingLoginName(_) => "missing_login_name",
             Self::MissingPassword(_) => "missing_password",
             Self::TwoFactorPromptUnavailable(_) => "two_factor_prompt_unavailable",
-            Self::TwoFactorCancelled(_) => "two_factor_cancelled",
+            // Reported as a plain cancellation so `dm-jobs` finishes the job as Cancelled
+            // rather than Failed; `support_details` keeps the two-factor specifics.
+            Self::TwoFactorCancelled(_) => "cancelled",
+            Self::TwoFactorTimedOut(_) => "two_factor_timed_out",
             Self::TwoFactorRejected { .. } => "two_factor_rejected",
             Self::Cancelled => "cancelled",
             Self::Download(_) => "download",
@@ -122,6 +128,9 @@ impl LibraryError {
             Self::TwoFactorCancelled(account_id) => {
                 format!("Two-factor verification was cancelled for account {account_id}")
             }
+            Self::TwoFactorTimedOut(account_id) => format!(
+                "No two-factor code was entered for account {account_id} before the prompt expired"
+            ),
             Self::TwoFactorRejected {
                 account_id,
                 attempts,
@@ -187,6 +196,10 @@ impl LibraryError {
             }),
             Self::TwoFactorCancelled(account_id) => json!({
                 "failureKind": "two_factor_cancelled",
+                "accountId": account_id,
+            }),
+            Self::TwoFactorTimedOut(account_id) => json!({
+                "failureKind": "two_factor_timed_out",
                 "accountId": account_id,
             }),
             Self::TwoFactorRejected {
@@ -1435,8 +1448,14 @@ impl Library {
         request.check_cancelled()?;
         request.emit(SyncProgress::LoggingIn);
 
-        self.authenticate_account(account, request.password, request.two_factor_prompt, source)
-            .await?;
+        self.authenticate_account(
+            account,
+            request.password,
+            request.two_factor_prompt,
+            request.cancellation_token,
+            source,
+        )
+        .await?;
 
         request.check_cancelled()?;
         request.emit(SyncProgress::LoadingCount);
@@ -1508,8 +1527,14 @@ impl Library {
         request.check_cancelled()?;
         request.emit(WorkDownloadProgress::LoggingIn);
 
-        self.authenticate_account(account, request.password, request.two_factor_prompt, source)
-            .await?;
+        self.authenticate_account(
+            account,
+            request.password,
+            request.two_factor_prompt,
+            request.cancellation_token,
+            source,
+        )
+        .await?;
 
         request.check_cancelled()?;
         request.emit(WorkDownloadProgress::ResolvingPlan);
@@ -1675,13 +1700,18 @@ impl Library {
         account: &Account,
         password: Option<&str>,
         two_factor_prompt: Option<&dyn TwoFactorPrompt>,
+        cancellation_token: Option<&CancellationToken>,
         source: &S,
     ) -> Result<()>
     where
         S: DlsiteAuthSource + Sync,
     {
+        if cancellation_token.is_some_and(CancellationToken::is_cancelled) {
+            return Err(LibraryError::Cancelled);
+        }
+
         let login_lock = self.login_lock(&account.id);
-        let _login_guard = login_lock.lock().await;
+        let _login_guard = acquire_login_lock(&login_lock, cancellation_token).await?;
         let session_ref = CredentialRef::account_session(&account.id)?;
 
         if self.restore_stored_session(&session_ref, source).await? {
@@ -1709,8 +1739,17 @@ impl Library {
             }
         };
 
-        self.credentials
-            .save_password(&session_ref, &session.cookies_json)?;
+        // A session cookie grants what the password grants, so it follows the account's
+        // remember-password setting. An account that does not keep its password -- which is
+        // what an absent credential ref means -- does not keep a session either, and any
+        // session stored before that setting changed is dropped here.
+        if account.credential_ref.is_some() {
+            self.credentials
+                .save_password(&session_ref, &session.cookies_json)?;
+        } else {
+            self.credentials.delete_password(&session_ref)?;
+        }
+
         self.storage
             .record_account_login(&account.id, &now_string())
             .await?;
@@ -1765,15 +1804,24 @@ impl Library {
         let mut previous_code_rejected = false;
 
         for attempt in 1..=MAX_TWO_FACTOR_ATTEMPTS {
-            let code = prompt
+            let response = prompt
                 .request_code(TwoFactorPromptRequest {
                     account_id: account.id.clone(),
                     account_label: account.label.clone(),
                     attempt,
                     previous_code_rejected,
                 })
-                .await?
-                .ok_or_else(|| LibraryError::TwoFactorCancelled(account.id.clone()))?;
+                .await?;
+
+            let code = match response {
+                TwoFactorPromptResponse::Code(code) => code,
+                TwoFactorPromptResponse::Cancelled => {
+                    return Err(LibraryError::TwoFactorCancelled(account.id.clone()))
+                }
+                TwoFactorPromptResponse::TimedOut => {
+                    return Err(LibraryError::TwoFactorTimedOut(account.id.clone()))
+                }
+            };
 
             match source.complete_two_factor(challenge, &code).await {
                 Ok(session) => return Ok(session),
@@ -2298,10 +2346,54 @@ pub struct TwoFactorPromptRequest {
     pub previous_code_rejected: bool,
 }
 
+/// How often a task waiting on the per-account login lock re-checks its cancellation token.
+/// `CancellationToken` is a flag rather than a future, so waiting on it means polling.
+const LOGIN_LOCK_CANCELLATION_POLL: Duration = Duration::from_millis(200);
+
+/// Waits for the per-account login lock while still observing cancellation.
+///
+/// The holder may be sitting on an open two-factor dialog, so a queued job that waits here
+/// unconditionally would not react to Cancel until that dialog's own timeout expired.
+async fn acquire_login_lock<'a>(
+    lock: &'a tokio::sync::Mutex<()>,
+    cancellation_token: Option<&CancellationToken>,
+) -> Result<tokio::sync::MutexGuard<'a, ()>> {
+    let Some(cancellation_token) = cancellation_token else {
+        return Ok(lock.lock().await);
+    };
+
+    tokio::select! {
+        guard = lock.lock() => Ok(guard),
+        () = wait_for_cancellation(cancellation_token) => Err(LibraryError::Cancelled),
+    }
+}
+
+async fn wait_for_cancellation(cancellation_token: &CancellationToken) {
+    while !cancellation_token.is_cancelled() {
+        tokio::time::sleep(LOGIN_LOCK_CANCELLATION_POLL).await;
+    }
+}
+
+/// How a two-factor prompt ended.
+///
+/// Cancelling and timing out are kept apart because they mean different things to the job
+/// that asked: a cancelled job finishes as Cancelled, while a prompt nobody answered is a
+/// failure the user still needs to see.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TwoFactorPromptResponse {
+    Code(String),
+    /// The user dismissed the prompt, or the job was cancelled underneath it.
+    Cancelled,
+    /// The prompt expired before anyone answered it.
+    TimedOut,
+}
+
 #[async_trait]
 pub trait TwoFactorPrompt: Send + Sync {
-    /// Returns the code the user entered, or `None` if they declined to provide one.
-    async fn request_code(&self, request: TwoFactorPromptRequest) -> Result<Option<String>>;
+    async fn request_code(
+        &self,
+        request: TwoFactorPromptRequest,
+    ) -> Result<TwoFactorPromptResponse>;
 }
 
 #[async_trait]
@@ -3923,19 +4015,22 @@ mod tests {
     /// Prompt that hands back a scripted sequence of answers and records what it was asked.
     #[derive(Clone, Default)]
     struct ScriptedTwoFactorPrompt {
-        answers: Arc<Mutex<Vec<Option<String>>>>,
+        answers: Arc<Mutex<Vec<TwoFactorPromptResponse>>>,
         requests: Arc<Mutex<Vec<TwoFactorPromptRequest>>>,
     }
 
     impl ScriptedTwoFactorPrompt {
-        fn new(answers: impl IntoIterator<Item = Option<&'static str>>) -> Self {
+        fn new(answers: impl IntoIterator<Item = &'static str>) -> Self {
+            Self::with_responses(
+                answers
+                    .into_iter()
+                    .map(|code| TwoFactorPromptResponse::Code(code.to_owned())),
+            )
+        }
+
+        fn with_responses(answers: impl IntoIterator<Item = TwoFactorPromptResponse>) -> Self {
             Self {
-                answers: Arc::new(Mutex::new(
-                    answers
-                        .into_iter()
-                        .map(|answer| answer.map(str::to_owned))
-                        .collect(),
-                )),
+                answers: Arc::new(Mutex::new(answers.into_iter().collect())),
                 requests: Arc::new(Mutex::new(Vec::new())),
             }
         }
@@ -3947,7 +4042,10 @@ mod tests {
 
     #[async_trait]
     impl TwoFactorPrompt for ScriptedTwoFactorPrompt {
-        async fn request_code(&self, request: TwoFactorPromptRequest) -> Result<Option<String>> {
+        async fn request_code(
+            &self,
+            request: TwoFactorPromptRequest,
+        ) -> Result<TwoFactorPromptResponse> {
             self.requests.lock().expect("prompt lock").push(request);
 
             let mut answers = self.answers.lock().expect("prompt lock");
@@ -4930,7 +5028,7 @@ mod tests {
         library.save_account(save_account_request(true)).await?;
 
         let source = TwoFactorSyncSource::new();
-        let prompt = ScriptedTwoFactorPrompt::new([Some(VALID_TWO_FACTOR_CODE)]);
+        let prompt = ScriptedTwoFactorPrompt::new([VALID_TWO_FACTOR_CODE]);
         let report = library
             .sync_account_with_source(
                 AccountSyncRequest {
@@ -4959,7 +5057,7 @@ mod tests {
         library.save_account(save_account_request(true)).await?;
 
         let source = TwoFactorSyncSource::new();
-        let prompt = ScriptedTwoFactorPrompt::new([Some("000000"), Some(VALID_TWO_FACTOR_CODE)]);
+        let prompt = ScriptedTwoFactorPrompt::new(["000000", VALID_TWO_FACTOR_CODE]);
 
         library
             .sync_account_with_source(
@@ -4986,12 +5084,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancelled_two_factor_prompt_fails_sync() -> Result<()> {
+    async fn cancelled_two_factor_prompt_reports_a_cancelled_sync() -> Result<()> {
         let library = migrated_library().await?;
         library.save_account(save_account_request(true)).await?;
 
         let source = TwoFactorSyncSource::new();
-        let prompt = ScriptedTwoFactorPrompt::new([None]);
+        let prompt = ScriptedTwoFactorPrompt::with_responses([TwoFactorPromptResponse::Cancelled]);
         let result = library
             .sync_account_with_source(
                 AccountSyncRequest {
@@ -5002,11 +5100,87 @@ mod tests {
             )
             .await;
 
+        let error = result.expect_err("cancelling the prompt must not sync");
+
         assert!(matches!(
-            result,
-            Err(LibraryError::TwoFactorCancelled(account_id)) if account_id == "account-a"
+            &error,
+            LibraryError::TwoFactorCancelled(account_id) if account_id == "account-a"
         ));
+        // `dm-jobs` recognizes only this exact code as a cancellation, so the job it belongs
+        // to finishes as Cancelled rather than Failed.
+        assert_eq!(error.failure_code(), "cancelled");
+        assert_eq!(
+            error.support_details()["failureKind"],
+            "two_factor_cancelled"
+        );
         assert!(source.state().submitted_codes.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn timed_out_two_factor_prompt_fails_sync() -> Result<()> {
+        let library = migrated_library().await?;
+        library.save_account(save_account_request(true)).await?;
+
+        let source = TwoFactorSyncSource::new();
+        let prompt = ScriptedTwoFactorPrompt::with_responses([TwoFactorPromptResponse::TimedOut]);
+        let result = library
+            .sync_account_with_source(
+                AccountSyncRequest {
+                    two_factor_prompt: Some(&prompt),
+                    ..AccountSyncRequest::new("account-a")
+                },
+                &source,
+            )
+            .await;
+
+        let error = result.expect_err("an unanswered prompt must not sync");
+
+        assert!(matches!(
+            &error,
+            LibraryError::TwoFactorTimedOut(account_id) if account_id == "account-a"
+        ));
+        // Unlike cancellation, nobody chose this outcome, so it stays a visible failure.
+        assert_eq!(error.failure_code(), "two_factor_timed_out");
+        assert!(source.state().submitted_codes.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_job_waiting_on_the_login_lock_does_not_wait_for_the_dialog() -> Result<()>
+    {
+        let library = migrated_library().await?;
+        library.save_account(save_account_request(true)).await?;
+
+        // Hold the account's login lock the way a job sitting on an open dialog would.
+        let login_lock = library.login_lock("account-a");
+        let held = login_lock.lock().await;
+
+        let cancellation = CancellationToken::new();
+        let source = TwoFactorSyncSource::new();
+        let prompt = ScriptedTwoFactorPrompt::new([VALID_TWO_FACTOR_CODE]);
+        let queued = library.sync_account_with_source(
+            AccountSyncRequest {
+                two_factor_prompt: Some(&prompt),
+                cancellation_token: Some(&cancellation),
+                ..AccountSyncRequest::new("account-a")
+            },
+            &source,
+        );
+
+        let result = tokio::join!(queued, async {
+            // Let the queued sync reach the lock before cancelling it.
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            cancellation.cancel();
+        })
+        .0;
+
+        assert!(matches!(result, Err(LibraryError::Cancelled)));
+        // The lock was never released, so the queued job gave up on its own.
+        assert!(prompt.requests().is_empty());
+        drop(held);
 
         Ok(())
     }
@@ -5037,7 +5211,7 @@ mod tests {
         library.save_account(save_account_request(true)).await?;
 
         let source = TwoFactorSyncSource::new();
-        let prompt = ScriptedTwoFactorPrompt::new([Some(VALID_TWO_FACTOR_CODE)]);
+        let prompt = ScriptedTwoFactorPrompt::new([VALID_TWO_FACTOR_CODE]);
         let request = || AccountSyncRequest {
             two_factor_prompt: Some(&prompt),
             ..AccountSyncRequest::new("account-a")
@@ -5058,15 +5232,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn session_is_not_stored_when_the_account_does_not_remember_its_password() -> Result<()> {
+        let library = migrated_library().await?;
+        library.save_account(save_account_request(false)).await?;
+
+        let source = TwoFactorSyncSource::new();
+        let prompt = ScriptedTwoFactorPrompt::new([VALID_TWO_FACTOR_CODE, VALID_TWO_FACTOR_CODE]);
+        let request = || AccountSyncRequest {
+            password: Some("secret"),
+            two_factor_prompt: Some(&prompt),
+            ..AccountSyncRequest::new("account-a")
+        };
+
+        library.sync_account_with_source(request(), &source).await?;
+
+        // The session cookie is as good as the password, so an account that keeps neither
+        // leaves nothing behind for the next job to reuse.
+        let session_ref = CredentialRef::account_session("account-a")?;
+
+        assert!(library.credentials.load_password(&session_ref)?.is_none());
+
+        library.sync_account_with_source(request(), &source).await?;
+
+        assert_eq!(prompt.requests().len(), 2);
+        assert_eq!(source.state().login_count, 2);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn session_is_stored_when_the_account_remembers_its_password() -> Result<()> {
+        let library = migrated_library().await?;
+        library.save_account(save_account_request(true)).await?;
+
+        let source = TwoFactorSyncSource::new();
+        let prompt = ScriptedTwoFactorPrompt::new([VALID_TWO_FACTOR_CODE]);
+
+        library
+            .sync_account_with_source(
+                AccountSyncRequest {
+                    two_factor_prompt: Some(&prompt),
+                    ..AccountSyncRequest::new("account-a")
+                },
+                &source,
+            )
+            .await?;
+
+        let session_ref = CredentialRef::account_session("account-a")?;
+
+        assert_eq!(
+            library.credentials.load_password(&session_ref)?.as_deref(),
+            Some(TWO_FACTOR_SESSION)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn changing_the_password_forgets_the_stored_session() -> Result<()> {
         let library = migrated_library().await?;
         library.save_account(save_account_request(true)).await?;
 
         let source = TwoFactorSyncSource::new();
-        let prompt = ScriptedTwoFactorPrompt::new([
-            Some(VALID_TWO_FACTOR_CODE),
-            Some(VALID_TWO_FACTOR_CODE),
-        ]);
+        let prompt = ScriptedTwoFactorPrompt::new([VALID_TWO_FACTOR_CODE, VALID_TWO_FACTOR_CODE]);
         let request = || AccountSyncRequest {
             two_factor_prompt: Some(&prompt),
             ..AccountSyncRequest::new("account-a")
