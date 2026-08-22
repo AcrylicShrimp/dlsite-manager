@@ -92,12 +92,19 @@ jobs:
             DRAFT="true"
           fi
 
+          if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY secret is required for updater artifact signing"
+            exit 1
+          fi
+
           {
             echo "tag=${TAG}"
             echo "version=${TAG_VERSION}"
             echo "prerelease=${PRERELEASE}"
             echo "draft=${DRAFT}"
           } >> "${GITHUB_OUTPUT}"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
   build:
     name: Build ${{ matrix.label }}
@@ -166,6 +173,8 @@ jobs:
         shell: bash
         env:
           BUNDLES: ${{ matrix.bundles }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
 
@@ -179,7 +188,11 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         env:
-          APPIMAGE_PLUGIN_URL: https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
+          # Pinned to an immutable release tag instead of the mutable `continuous` one: this job
+          # runs the downloaded binary with `contents: write`, so the bytes must not be able to
+          # change under us. Bump the tag and the checksum together.
+          APPIMAGE_PLUGIN_TAG: 1-alpha-20250213-1
+          APPIMAGE_PLUGIN_SHA256: 992d502a248e14ab185448ddf6f6e7d25558cb84d4623c354c3af350c25fccb3
         run: |
           set -euo pipefail
 
@@ -188,30 +201,60 @@ jobs:
           # fails to resolve symbols such as wl_fixes_interface, and WebKitGTK aborts with
           # "Could not create default EGL display: EGL_BAD_PARAMETER" on every distribution
           # whose libwayland is newer than the build image.
-          cd target/release/bundle/appimage
+          BUNDLE_DIR="target/release/bundle/appimage"
 
-          APPDIR="$(find . -maxdepth 1 -type d -name '*.AppDir' -printf '%f\n' | head -1)"
-          APPIMAGE="$(find . -maxdepth 1 -type f -name '*.AppImage' -printf '%f\n' | head -1)"
+          APPDIR="$(find "${BUNDLE_DIR}" -maxdepth 1 -type d -name '*.AppDir' -printf '%f\n' | head -1)"
+          APPIMAGE="$(find "${BUNDLE_DIR}" -maxdepth 1 -type f -name '*.AppImage' -printf '%f\n' | head -1)"
           if [[ -z "${APPDIR}" || -z "${APPIMAGE}" ]]; then
-            echo "::error::Expected an AppDir and an AppImage in $(pwd)"
+            echo "::error::Expected an AppDir and an AppImage in ${BUNDLE_DIR}"
             exit 1
           fi
 
-          if ! compgen -G "${APPDIR}/usr/lib/libwayland-client.so.*" >/dev/null; then
+          if ! compgen -G "${BUNDLE_DIR}/${APPDIR}/usr/lib/libwayland-client.so.*" >/dev/null; then
             echo "::notice::No bundled libwayland-client found; keeping the AppImage as built"
             exit 0
           fi
-          rm -f "${APPDIR}"/usr/lib/libwayland-client.so.*
+          rm -f "${BUNDLE_DIR}/${APPDIR}"/usr/lib/libwayland-client.so.*
 
-          curl --fail --location --silent --show-error \
-            --output linuxdeploy-plugin-appimage.AppImage "${APPIMAGE_PLUGIN_URL}"
-          chmod +x linuxdeploy-plugin-appimage.AppImage
+          PLUGIN="${RUNNER_TEMP}/linuxdeploy-plugin-appimage.AppImage"
+          curl --fail --location --silent --show-error --output "${PLUGIN}" \
+            "https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/${APPIMAGE_PLUGIN_TAG}/linuxdeploy-plugin-appimage-x86_64.AppImage"
+          echo "${APPIMAGE_PLUGIN_SHA256}  ${PLUGIN}" | sha256sum --check --strict -
+          chmod +x "${PLUGIN}"
 
-          rm -f "${APPIMAGE}"
-          ARCH=x86_64 OUTPUT="${APPIMAGE}" APPIMAGE_EXTRACT_AND_RUN=1 \
-            ./linuxdeploy-plugin-appimage.AppImage --appdir "${APPDIR}"
-          rm -f linuxdeploy-plugin-appimage.AppImage
-          test -f "${APPIMAGE}"
+          rm -f "${BUNDLE_DIR}/${APPIMAGE}"
+          (
+            cd "${BUNDLE_DIR}"
+            ARCH=x86_64 OUTPUT="${APPIMAGE}" APPIMAGE_EXTRACT_AND_RUN=1 \
+              "${PLUGIN}" --appdir "${APPDIR}"
+          )
+          rm -f "${PLUGIN}"
+          test -f "${BUNDLE_DIR}/${APPIMAGE}"
+
+      # `tauri build` signs the AppImage it produces, but the repack above rewrites those bytes,
+      # so the bundler signature no longer matches the artifact that actually ships. Signing here
+      # rather than inside the repack step keeps the AppImage signed even when the repack is
+      # skipped because no bundled libwayland-client was found.
+      - name: Sign the AppImage that will be published
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          BUNDLE_DIR="target/release/bundle/appimage"
+
+          APPIMAGE="$(find "${BUNDLE_DIR}" -maxdepth 1 -type f -name '*.AppImage' -printf '%f\n' | head -1)"
+          if [[ -z "${APPIMAGE}" ]]; then
+            echo "::error::Expected an AppImage in ${BUNDLE_DIR}"
+            exit 1
+          fi
+
+          rm -f "${BUNDLE_DIR}/${APPIMAGE}.sig"
+          pnpm tauri signer sign "${BUNDLE_DIR}/${APPIMAGE}"
+          test -f "${BUNDLE_DIR}/${APPIMAGE}.sig"
 
       - name: Collect release artifacts
         shell: bash
@@ -227,7 +270,7 @@ jobs:
 
           const bundleRoot = path.join("target", "release", "bundle");
           const outputDir = path.join("dist", "release");
-          const allowedExtensions = new Set([".dmg", ".msi", ".exe", ".appimage"]);
+          const allowedExtensions = new Set([".dmg", ".msi", ".exe", ".appimage", ".sig"]);
           const allowedSuffixes = [".app.tar.gz"];
 
           function walk(directory) {
@@ -312,6 +355,71 @@ jobs:
             echo "::error::No release files were downloaded"
             exit 1
           fi
+
+          node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+
+          const releaseDir = path.join("dist", "release");
+          const repo = process.env.GH_REPO;
+          const tag = process.env.TAG;
+          const version = process.env.VERSION;
+          const files = fs.readdirSync(releaseDir).filter((entry) => {
+            return fs.statSync(path.join(releaseDir, entry)).isFile();
+          });
+
+          function assetUrl(fileName) {
+            return `https://github.com/${repo}/releases/download/${tag}/${encodeURIComponent(fileName)}`;
+          }
+
+          function signatureFor(fileName) {
+            const signatureName = `${fileName}.sig`;
+            const signaturePath = path.join(releaseDir, signatureName);
+
+            if (!fs.existsSync(signaturePath)) {
+              throw new Error(`Missing updater signature ${signatureName}`);
+            }
+
+            return fs.readFileSync(signaturePath, "utf8").trim();
+          }
+
+          function findOne(description, predicate) {
+            const matches = files.filter(predicate).sort();
+
+            if (matches.length !== 1) {
+              throw new Error(`Expected exactly one ${description}, found ${matches.length}: ${matches.join(", ")}`);
+            }
+
+            return matches[0];
+          }
+
+          const macUpdater = findOne("macOS updater artifact", (file) => file.endsWith(".app.tar.gz"));
+          const windowsUpdater = findOne("Windows NSIS updater artifact", (file) => file.endsWith("-setup.exe"));
+          const linuxUpdater = findOne("Linux AppImage updater artifact", (file) => file.endsWith(".AppImage"));
+          const latest = {
+            version,
+            notes: `dlsite-manager ${version}`,
+            pub_date: new Date().toISOString(),
+            platforms: {
+              "darwin-aarch64": {
+                signature: signatureFor(macUpdater),
+                url: assetUrl(macUpdater),
+              },
+              "windows-x86_64": {
+                signature: signatureFor(windowsUpdater),
+                url: assetUrl(windowsUpdater),
+              },
+              "linux-x86_64": {
+                signature: signatureFor(linuxUpdater),
+                url: assetUrl(linuxUpdater),
+              },
+            },
+          };
+
+          fs.writeFileSync(path.join(releaseDir, "latest.json"), `${JSON.stringify(latest, null, 2)}\n`);
+          NODE
+
+          mapfile -d "" files < <(find dist/release -type f -print0 | sort -z)
 
           flags=()
           if [[ "${PRERELEASE}" == "true" ]]; then

@@ -190,3 +190,11 @@ export function creditTextForKind(product: { creditGroups: ProductCreditGroup[] 
 export function creditTooltip(field: ProductCreditField) {
   return field.missing ? `${field.label}: Not available` : `${field.label}: ${field.value}`;
 }
+
+export function productIsLocalOnly(product: Pick<Product, "owners">) {
+  return product.owners.length === 1 && product.owners[0]?.accountId === "__local__";
+}
+
+export function localOnlyTooltip(workId: string) {
+  return `${workId} is present in the local library but is not owned by any enabled account.`;
+}

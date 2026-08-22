@@ -22,6 +22,8 @@ Get the latest build from the [GitHub releases page](https://github.com/AcrylicS
 
 Release builds cover macOS (DMG), Windows (installer), and Linux x86_64 (AppImage); releases published before a platform was added only contain the artifacts available at that time. The Linux AppImage needs the executable bit (`chmod +x`) before it can be launched.
 
+All three platforms are listed in the updater manifest, so in-app updates work on Linux as well — but only while the app is running from the AppImage, which is how the Tauri updater locates the file it has to replace.
+
 ## Main Workflows
 
 ### Library

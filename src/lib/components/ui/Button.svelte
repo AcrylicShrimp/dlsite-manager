@@ -4,24 +4,31 @@
   type ButtonType = "button" | "submit" | "reset";
   type ButtonVariant = "primary" | "secondary" | "danger";
   type ButtonSize = "normal" | "small";
+  type ButtonResponsiveWidth = "fill" | "auto";
 
   let {
     children,
     type = "button",
     variant = "primary",
     size = "normal",
+    responsiveWidth = "fill",
     disabled = false,
     title,
     ariaLabel,
+    ariaExpanded,
+    ariaControls,
     onclick,
   }: {
     children?: Snippet;
     type?: ButtonType;
     variant?: ButtonVariant;
     size?: ButtonSize;
+    responsiveWidth?: ButtonResponsiveWidth;
     disabled?: boolean;
     title?: string;
     ariaLabel?: string;
+    ariaExpanded?: boolean;
+    ariaControls?: string;
     onclick?: (event: MouseEvent) => void;
   } = $props();
 </script>
@@ -31,10 +38,13 @@
   class:secondary={variant === "secondary"}
   class:danger={variant === "danger"}
   class:small={size === "small"}
+  class:auto-width={responsiveWidth === "auto"}
   {type}
   {disabled}
   {title}
   aria-label={ariaLabel}
+  aria-expanded={ariaExpanded}
+  aria-controls={ariaControls}
   {onclick}
 >
   {@render children?.()}
@@ -55,6 +65,11 @@
     font: inherit;
     letter-spacing: 0;
     cursor: pointer;
+    transition:
+      border-color 120ms ease,
+      background-color 120ms ease,
+      color 120ms ease,
+      transform 120ms ease;
   }
 
   .button.secondary {
@@ -76,6 +91,32 @@
     font-size: 13px;
   }
 
+  .button:hover:not(:disabled) {
+    border-color: #b3d8b8;
+    background: #a8cfad;
+  }
+
+  .button.secondary:hover:not(:disabled) {
+    border-color: var(--accent-strong);
+    color: var(--text-strong);
+    background: color-mix(in srgb, var(--panel-raised) 84%, var(--accent));
+  }
+
+  .button.danger:hover:not(:disabled) {
+    border-color: #fca5a5;
+    color: #fca5a5;
+    background: rgb(248 113 113 / 16%);
+  }
+
+  .button:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  .button:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
   .button:disabled {
     cursor: default;
     opacity: 0.58;
@@ -84,6 +125,10 @@
   @media (max-width: 720px) {
     .button {
       width: 100%;
+    }
+
+    .button.auto-width {
+      width: auto;
     }
   }
 </style>

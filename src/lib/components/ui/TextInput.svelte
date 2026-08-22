@@ -45,11 +45,20 @@
     background: var(--field);
     font: inherit;
     letter-spacing: 0;
+    transition:
+      border-color 120ms ease,
+      background-color 120ms ease,
+      box-shadow 120ms ease;
   }
 
   input:focus {
     border-color: var(--accent-strong);
-    outline: 2px solid var(--accent-muted);
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  input::placeholder {
+    color: var(--text-subtle);
   }
 
   input:disabled {
