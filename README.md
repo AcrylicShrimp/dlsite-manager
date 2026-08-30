@@ -20,7 +20,9 @@ This is an unofficial project and is not affiliated with DLsite.
 
 Get the latest build from the [GitHub releases page](https://github.com/AcrylicShrimp/dlsite-manager/releases/latest).
 
-The current published binary is a macOS Apple Silicon DMG. Other platforms can be built from source until additional packaging is added.
+Release builds cover macOS (DMG), Windows (installer), and Linux x86_64 (AppImage); releases published before a platform was added only contain the artifacts available at that time. The Linux AppImage needs the executable bit (`chmod +x`) before it can be launched.
+
+All three platforms are listed in the updater manifest, so in-app updates work on Linux as well — but only while the app is running from the AppImage, which is how the Tauri updater locates the file it has to replace.
 
 ## Main Workflows
 

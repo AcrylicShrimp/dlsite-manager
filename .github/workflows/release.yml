@@ -119,6 +119,10 @@ jobs:
           - label: Windows
             os: windows-latest
             artifact-name: dlsite-manager-windows
+          - label: Linux
+            os: ubuntu-22.04
+            artifact-name: dlsite-manager-linux
+            bundles: appimage
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout release tag
@@ -127,6 +131,21 @@ jobs:
           ref: ${{ needs.prepare.outputs.tag }}
           fetch-depth: 0
           submodules: recursive
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            wget
 
       - name: Setup pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
@@ -151,10 +170,91 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build Tauri bundles
+        shell: bash
+        env:
+          BUNDLES: ${{ matrix.bundles }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${BUNDLES}" ]]; then
+            pnpm tauri build --bundles "${BUNDLES}"
+          else
+            pnpm tauri build
+          fi
+
+      - name: Repack AppImage without the bundled Wayland client library
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          # Pinned to an immutable release tag instead of the mutable `continuous` one: this job
+          # runs the downloaded binary with `contents: write`, so the bytes must not be able to
+          # change under us. Bump the tag and the checksum together.
+          APPIMAGE_PLUGIN_TAG: 1-alpha-20250213-1
+          APPIMAGE_PLUGIN_SHA256: 992d502a248e14ab185448ddf6f6e7d25558cb84d4623c354c3af350c25fccb3
+        run: |
+          set -euo pipefail
+
+          # linuxdeploy bundles libwayland-client.so.0 even though the AppImage excludelist
+          # rejects it. The host mesa EGL driver is then linked against the older bundled copy,
+          # fails to resolve symbols such as wl_fixes_interface, and WebKitGTK aborts with
+          # "Could not create default EGL display: EGL_BAD_PARAMETER" on every distribution
+          # whose libwayland is newer than the build image.
+          BUNDLE_DIR="target/release/bundle/appimage"
+
+          APPDIR="$(find "${BUNDLE_DIR}" -maxdepth 1 -type d -name '*.AppDir' -printf '%f\n' | head -1)"
+          APPIMAGE="$(find "${BUNDLE_DIR}" -maxdepth 1 -type f -name '*.AppImage' -printf '%f\n' | head -1)"
+          if [[ -z "${APPDIR}" || -z "${APPIMAGE}" ]]; then
+            echo "::error::Expected an AppDir and an AppImage in ${BUNDLE_DIR}"
+            exit 1
+          fi
+
+          if ! compgen -G "${BUNDLE_DIR}/${APPDIR}/usr/lib/libwayland-client.so.*" >/dev/null; then
+            echo "::notice::No bundled libwayland-client found; keeping the AppImage as built"
+            exit 0
+          fi
+          rm -f "${BUNDLE_DIR}/${APPDIR}"/usr/lib/libwayland-client.so.*
+
+          PLUGIN="${RUNNER_TEMP}/linuxdeploy-plugin-appimage.AppImage"
+          curl --fail --location --silent --show-error --output "${PLUGIN}" \
+            "https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/${APPIMAGE_PLUGIN_TAG}/linuxdeploy-plugin-appimage-x86_64.AppImage"
+          echo "${APPIMAGE_PLUGIN_SHA256}  ${PLUGIN}" | sha256sum --check --strict -
+          chmod +x "${PLUGIN}"
+
+          rm -f "${BUNDLE_DIR}/${APPIMAGE}"
+          (
+            cd "${BUNDLE_DIR}"
+            ARCH=x86_64 OUTPUT="${APPIMAGE}" APPIMAGE_EXTRACT_AND_RUN=1 \
+              "${PLUGIN}" --appdir "${APPDIR}"
+          )
+          rm -f "${PLUGIN}"
+          test -f "${BUNDLE_DIR}/${APPIMAGE}"
+
+      # `tauri build` signs the AppImage it produces, but the repack above rewrites those bytes,
+      # so the bundler signature no longer matches the artifact that actually ships. Signing here
+      # rather than inside the repack step keeps the AppImage signed even when the repack is
+      # skipped because no bundled libwayland-client was found.
+      - name: Sign the AppImage that will be published
+        if: runner.os == 'Linux'
+        shell: bash
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm tauri build
+        run: |
+          set -euo pipefail
+
+          BUNDLE_DIR="target/release/bundle/appimage"
+
+          APPIMAGE="$(find "${BUNDLE_DIR}" -maxdepth 1 -type f -name '*.AppImage' -printf '%f\n' | head -1)"
+          if [[ -z "${APPIMAGE}" ]]; then
+            echo "::error::Expected an AppImage in ${BUNDLE_DIR}"
+            exit 1
+          fi
+
+          rm -f "${BUNDLE_DIR}/${APPIMAGE}.sig"
+          pnpm tauri signer sign "${BUNDLE_DIR}/${APPIMAGE}"
+          test -f "${BUNDLE_DIR}/${APPIMAGE}.sig"
 
       - name: Collect release artifacts
         shell: bash
@@ -170,7 +270,7 @@ jobs:
 
           const bundleRoot = path.join("target", "release", "bundle");
           const outputDir = path.join("dist", "release");
-          const allowedExtensions = new Set([".dmg", ".msi", ".exe", ".sig"]);
+          const allowedExtensions = new Set([".dmg", ".msi", ".exe", ".appimage", ".sig"]);
           const allowedSuffixes = [".app.tar.gz"];
 
           function walk(directory) {
@@ -295,6 +395,7 @@ jobs:
 
           const macUpdater = findOne("macOS updater artifact", (file) => file.endsWith(".app.tar.gz"));
           const windowsUpdater = findOne("Windows NSIS updater artifact", (file) => file.endsWith("-setup.exe"));
+          const linuxUpdater = findOne("Linux AppImage updater artifact", (file) => file.endsWith(".AppImage"));
           const latest = {
             version,
             notes: `dlsite-manager ${version}`,
@@ -307,6 +408,10 @@ jobs:
               "windows-x86_64": {
                 signature: signatureFor(windowsUpdater),
                 url: assetUrl(windowsUpdater),
+              },
+              "linux-x86_64": {
+                signature: signatureFor(linuxUpdater),
+                url: assetUrl(linuxUpdater),
               },
             },
           };
