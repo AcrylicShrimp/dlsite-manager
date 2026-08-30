@@ -6,6 +6,8 @@
     id,
     type = "text",
     autocomplete = "off",
+    inputmode,
+    maxlength,
     spellcheck = false,
     disabled = false,
     placeholder,
@@ -15,6 +17,8 @@
     id?: string;
     type?: "text" | "search" | "password";
     autocomplete?: HTMLInputAttributes["autocomplete"];
+    inputmode?: HTMLInputAttributes["inputmode"];
+    maxlength?: number;
     spellcheck?: boolean;
     disabled?: boolean;
     placeholder?: string;
@@ -26,6 +30,8 @@
   {id}
   {type}
   {autocomplete}
+  {inputmode}
+  {maxlength}
   {spellcheck}
   {disabled}
   {placeholder}

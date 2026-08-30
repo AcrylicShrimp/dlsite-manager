@@ -1,9 +1,9 @@
 use crate::{
     raw::RawResponse, ContentCount, ContentQuery, Credentials, DmApiError, DownloadByteRange,
     DownloadFile, DownloadFileKind, DownloadPlan, DownloadResolution, DownloadStreamRequest,
-    DownloadUnavailableReason, PublicWork, Purchase, Result, SerialDownloadPage, SerialNumber,
-    SessionSnapshot, SessionStatus, SplitDownloadPage, SplitDownloadPart, Work, WorkId,
-    WorksResponse, DEFAULT_WORKS_BATCH_LIMIT,
+    DownloadUnavailableReason, LoginOutcome, PublicWork, Purchase, Result, SerialDownloadPage,
+    SerialNumber, SessionSnapshot, SessionStatus, SplitDownloadPage, SplitDownloadPart,
+    TwoFactorChallenge, Work, WorkId, WorksResponse, DEFAULT_WORKS_BATCH_LIMIT,
 };
 use bytes::Bytes;
 use cookie_store::CookieStore;
@@ -21,6 +21,11 @@ use tokio::sync::Mutex;
 use url::Url;
 
 const LOGIN_URL: &str = "https://login.dlsite.com/login";
+const LOGIN_HOST: &str = "login.dlsite.com";
+const LOGIN_TWO_FACTOR_PATH: &str = "/login/two-factor";
+/// Name of the verification-code input on the DLsite two-factor challenge form.
+const TWO_FACTOR_CODE_FIELD: &str = "otp";
+const LOGIN_PAGE_BODY_LIMIT: usize = 512 * 1024;
 const LOGIN_SKIP_URL: &str = "https://www.dlsite.com/home/login/=/skip_register/1";
 const LOGIN_FINISH_URL: &str = "https://www.dlsite.com/home/login/finish";
 const CONTENT_COUNT_URL: &str = "https://play.dlsite.com/api/v3/content/count";
@@ -68,7 +73,25 @@ impl DlsiteClient {
         })
     }
 
+    /// Logs in and returns the resulting session.
+    ///
+    /// Accounts with two-factor authentication enabled cannot complete in one step; they
+    /// fail with [`DmApiError::TwoFactorRequired`]. Use [`Self::begin_login`] together with
+    /// [`Self::complete_two_factor`] to support them.
     pub async fn login(&self, credentials: &Credentials) -> Result<SessionSnapshot> {
+        match self.begin_login(credentials).await? {
+            LoginOutcome::Authorized(session) => Ok(session),
+            LoginOutcome::TwoFactorRequired(_) => Err(DmApiError::TwoFactorRequired),
+        }
+    }
+
+    /// Submits login credentials.
+    ///
+    /// DLsite answers a two-factor-enabled account by redirecting to a challenge page rather
+    /// than by failing, so a correct password can legitimately yield
+    /// [`LoginOutcome::TwoFactorRequired`]. The returned challenge is bound to this client's
+    /// cookie jar and must be completed through the same client.
+    pub async fn begin_login(&self, credentials: &Credentials) -> Result<LoginOutcome> {
         self.http
             .get(LOGIN_URL)
             .query(&[("user", "self")])
@@ -108,6 +131,100 @@ impl DlsiteClient {
             });
         }
 
+        // A wrong password also redirects, back to the login page, so the redirect target is
+        // what distinguishes a two-factor challenge from an ordinary login result.
+        if let Some(location) = redirect_location(&auth_res)
+            .ok()
+            .filter(is_two_factor_location)
+        {
+            let challenge = self.two_factor_challenge(location).await?;
+            return Ok(LoginOutcome::TwoFactorRequired(challenge));
+        }
+
+        self.finish_login().await.map(LoginOutcome::Authorized)
+    }
+
+    /// Replays the two-factor challenge form with `code` filled in and finishes the login.
+    ///
+    /// A rejected code is reported as [`DmApiError::InvalidTwoFactorCode`] so the caller can
+    /// ask for another one instead of failing the whole operation.
+    pub async fn complete_two_factor(
+        &self,
+        challenge: &TwoFactorChallenge,
+        code: &str,
+    ) -> Result<SessionSnapshot> {
+        let mut form = challenge.fields.clone();
+        form.push((challenge.code_field.clone(), code.trim().to_owned()));
+
+        let res = self
+            .http
+            .post(challenge.action.clone())
+            .form(&form)
+            .send()
+            .await?;
+        let status = res.status();
+
+        if status.is_redirection() {
+            if redirect_location(&res).is_ok_and(|location| is_two_factor_location(&location)) {
+                return Err(DmApiError::InvalidTwoFactorCode);
+            }
+
+            return self.finish_login().await;
+        }
+
+        let endpoint = res.url().clone();
+
+        if status == StatusCode::OK {
+            let body = res.text().await?;
+
+            // A rejected code re-renders the same challenge form with an error message.
+            if parse_two_factor_challenge(&endpoint, &body).is_some() {
+                return Err(DmApiError::InvalidTwoFactorCode);
+            }
+
+            return Err(DmApiError::UnexpectedStatus {
+                endpoint,
+                status,
+                body_snippet: Some(text_snippet(&body)),
+            });
+        }
+
+        let body_snippet = response_text_snippet(res).await;
+
+        Err(DmApiError::UnexpectedStatus {
+            endpoint,
+            status,
+            body_snippet,
+        })
+    }
+
+    async fn two_factor_challenge(&self, page_url: Url) -> Result<TwoFactorChallenge> {
+        let raw = self
+            .raw_get_with_body_limit(page_url.clone(), LOGIN_PAGE_BODY_LIMIT)
+            .await?;
+
+        if !(200..=299).contains(&raw.status) {
+            return Err(DmApiError::UnexpectedStatus {
+                endpoint: raw.url,
+                status: StatusCode::from_u16(raw.status)
+                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                body_snippet: raw.body_snippet,
+            });
+        }
+
+        let body = raw.body_snippet.as_deref().unwrap_or_default();
+
+        parse_two_factor_challenge(&raw.url, body).ok_or_else(|| {
+            DmApiError::TwoFactorFormNotRecognized {
+                page: raw.url.clone(),
+                body_snippet: raw.body_snippet.as_deref().map(text_snippet),
+            }
+        })
+    }
+
+    /// Runs the post-credential redirect dance that turns an authenticated login cookie into
+    /// a usable Play session. Shared by the ordinary and two-factor login paths.
+    async fn finish_login(&self) -> Result<SessionSnapshot> {
         let login_res = self.http.get(LOGIN_URL).send().await?;
         let login_res_status = login_res.status();
         let login_res_endpoint = login_res.url().clone();
@@ -500,6 +617,38 @@ impl DlsiteClient {
         parse_serial_download_page_from_raw(location, raw)
     }
 
+    /// Submits the login form the same way [`Self::login`] does, but returns the raw
+    /// credential-POST response instead of continuing the post-login redirect chain.
+    ///
+    /// This exists so the two-factor challenge page can be observed as-is; DLsite does not
+    /// document its two-factor form, so the concrete contract has to be probed live.
+    pub async fn raw_login_probe(
+        &self,
+        credentials: &Credentials,
+        body_limit: usize,
+    ) -> Result<RawResponse> {
+        self.http
+            .get(LOGIN_URL)
+            .query(&[("user", "self")])
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let xsrf_token = self.xsrf_token()?;
+        let res = self
+            .http
+            .post(LOGIN_URL)
+            .form(&[
+                ("login_id", credentials.username.as_str()),
+                ("password", credentials.password.as_str()),
+                ("_token", xsrf_token.as_str()),
+            ])
+            .send()
+            .await?;
+
+        RawResponse::from_response_with_body_limit(res, body_limit).await
+    }
+
     pub async fn raw_download_probe(&self, work_id: &WorkId) -> Result<RawResponse> {
         self.raw_download_probe_with_body_limit(work_id, 2048).await
     }
@@ -607,6 +756,200 @@ fn parse_serial_download_page_from_raw(
         page: location,
         kind: "serial",
     })
+}
+
+fn is_two_factor_location(url: &Url) -> bool {
+    url.host_str() == Some(LOGIN_HOST) && url.path().trim_end_matches('/') == LOGIN_TWO_FACTOR_PATH
+}
+
+fn parse_two_factor_challenge(page_url: &Url, body: &str) -> Option<TwoFactorChallenge> {
+    let (open_tag, inner) = find_form_containing(body, TWO_FACTOR_CODE_FIELD)?;
+    let attributes = parse_html_attributes(open_tag);
+    let action = match html_attribute(&attributes, "action") {
+        Some(action) => page_url.join(&decode_basic_html_entities(action)).ok()?,
+        None => page_url.clone(),
+    };
+
+    Some(TwoFactorChallenge {
+        page_url: page_url.clone(),
+        action,
+        code_field: TWO_FACTOR_CODE_FIELD.to_owned(),
+        fields: parse_form_fields(inner, TWO_FACTOR_CODE_FIELD),
+    })
+}
+
+/// Returns the open tag and inner HTML of the first `<form>` holding a control named
+/// `control_name`.
+fn find_form_containing<'a>(body: &'a str, control_name: &str) -> Option<(&'a str, &'a str)> {
+    let mut rest = body;
+
+    loop {
+        let start = rest.find("<form")?;
+        rest = &rest[start..];
+
+        let open_end = rest.find('>')?;
+        let close = rest.find("</form>")?;
+
+        if close < open_end {
+            return None;
+        }
+
+        let open_tag = &rest[..=open_end];
+        let inner = &rest[open_end + 1..close];
+        let has_control = form_control_tags(inner)
+            .iter()
+            .any(|attributes| html_attribute(attributes, "name") == Some(control_name));
+
+        if has_control {
+            return Some((open_tag, inner));
+        }
+
+        rest = &rest[close + "</form>".len()..];
+    }
+}
+
+/// Collects the fields a browser would submit for this form, excluding the code field which
+/// the caller supplies. Values are kept as rendered so per-request tokens survive the replay.
+fn parse_form_fields(inner: &str, code_field: &str) -> Vec<(String, String)> {
+    let mut fields = Vec::new();
+
+    for attributes in form_control_tags(inner) {
+        let Some(name) = html_attribute(&attributes, "name") else {
+            continue;
+        };
+
+        if name.is_empty() || name == code_field {
+            continue;
+        }
+
+        let kind = html_attribute(&attributes, "type")
+            .unwrap_or("text")
+            .to_ascii_lowercase();
+
+        match kind.as_str() {
+            // Browsers only submit checked toggles, and never submit buttons or file inputs.
+            "checkbox" | "radio" if !has_html_attribute(&attributes, "checked") => continue,
+            "submit" | "button" | "reset" | "image" | "file" => continue,
+            _ => {}
+        }
+
+        let value = html_attribute(&attributes, "value").unwrap_or_default();
+
+        fields.push((name.to_owned(), decode_basic_html_entities(value)));
+    }
+
+    fields
+}
+
+/// Yields the parsed attributes of every form-control open tag, in document order.
+fn form_control_tags(inner: &str) -> Vec<Vec<(String, String)>> {
+    const CONTROL_TAGS: &[&str] = &["input", "select", "textarea"];
+
+    let mut controls = Vec::new();
+    let mut rest = inner;
+
+    while let Some(start) = rest.find('<') {
+        rest = &rest[start..];
+
+        let Some(open_end) = rest.find('>') else {
+            break;
+        };
+        let tag = &rest[..=open_end];
+        let name_end = tag[1..]
+            .find(|value: char| value.is_whitespace() || value == '>' || value == '/')
+            .map_or(tag.len(), |index| index + 1);
+        let tag_name = tag[1..name_end].to_ascii_lowercase();
+
+        if CONTROL_TAGS.contains(&tag_name.as_str()) {
+            controls.push(parse_html_attributes(tag));
+        }
+
+        rest = &rest[open_end + 1..];
+    }
+
+    controls
+}
+
+fn html_attribute<'a>(attributes: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    attributes
+        .iter()
+        .find(|(key, _)| key == name)
+        .map(|(_, value)| value.as_str())
+}
+
+fn has_html_attribute(attributes: &[(String, String)], name: &str) -> bool {
+    attributes.iter().any(|(key, _)| key == name)
+}
+
+fn parse_html_attributes(tag: &str) -> Vec<(String, String)> {
+    let chars = tag.chars().collect::<Vec<_>>();
+    let mut attributes = Vec::new();
+    let mut index = 0;
+
+    while index < chars.len() && !chars[index].is_whitespace() {
+        index += 1;
+    }
+
+    while index < chars.len() {
+        while index < chars.len() && chars[index].is_whitespace() {
+            index += 1;
+        }
+
+        if index >= chars.len() || chars[index] == '>' || chars[index] == '/' {
+            break;
+        }
+
+        let name_start = index;
+
+        while index < chars.len()
+            && !chars[index].is_whitespace()
+            && chars[index] != '='
+            && chars[index] != '>'
+        {
+            index += 1;
+        }
+
+        let name = chars[name_start..index]
+            .iter()
+            .collect::<String>()
+            .to_ascii_lowercase();
+        let mut value = String::new();
+
+        if index < chars.len() && chars[index] == '=' {
+            index += 1;
+
+            if index < chars.len() && (chars[index] == '"' || chars[index] == '\'') {
+                let quote = chars[index];
+                index += 1;
+
+                let value_start = index;
+
+                while index < chars.len() && chars[index] != quote {
+                    index += 1;
+                }
+
+                value = chars[value_start..index].iter().collect();
+
+                if index < chars.len() {
+                    index += 1;
+                }
+            } else {
+                let value_start = index;
+
+                while index < chars.len() && !chars[index].is_whitespace() && chars[index] != '>' {
+                    index += 1;
+                }
+
+                value = chars[value_start..index].iter().collect();
+            }
+        }
+
+        if !name.is_empty() {
+            attributes.push((name, value));
+        }
+    }
+
+    attributes
 }
 
 fn is_absent_optional_serial_page_status(status: u16) -> bool {
@@ -1188,6 +1531,110 @@ mod tests {
         assert_eq!(
             products[0].content_size.as_ref().and_then(Value::as_u64),
             Some(1_705_634_548)
+        );
+    }
+
+    /// Trimmed copy of the live challenge page captured with
+    /// `cargo run -p dm-api --example probe_login`.
+    const TWO_FACTOR_PAGE: &str = r#"
+        <h1>2段階認証</h1>
+        <p>認証アプリ（Google Authenticatorなど）を起動して、認証コードを入力してください。</p>
+        <form method="POST" action="https://login.dlsite.com/login/two-factor?user=self">
+            <input type="hidden" name="_token" value="2FaCsrfTokenFixtureValue0123456789abcdef" autocomplete="off">
+            <div class="loginInputBox">
+                <input type="text" autocapitalize="off" style="IME-MODE: disabled" required="required" class="formItem-text" id="form_id" name="otp" value="">
+            </div>
+            <div class="loginCheckBox">
+                <label for="form_save">
+                    <input type="checkbox" value="true" id="form_save" name="save_id" class="formItem-check">
+                </label>
+            </div>
+            <div class="formSubmitBox type-one">
+                <div class="formSubmit-btn">
+                    <button type="submit" class="btn type-clrDefault type-sizeMd"><i>認証してログイン</i></button>
+                    <input type="hidden" name="recaptcha_token" id="recaptcha_token">
+                </div>
+            </div>
+        </form>
+    "#;
+
+    #[test]
+    fn detects_two_factor_redirect_location() {
+        assert!(is_two_factor_location(
+            &Url::parse("https://login.dlsite.com/login/two-factor").unwrap()
+        ));
+        assert!(is_two_factor_location(
+            &Url::parse("https://login.dlsite.com/login/two-factor?user=self").unwrap()
+        ));
+        assert!(!is_two_factor_location(
+            &Url::parse("https://login.dlsite.com/login").unwrap()
+        ));
+        assert!(!is_two_factor_location(
+            &Url::parse("https://www.dlsite.com/login/two-factor").unwrap()
+        ));
+    }
+
+    #[test]
+    fn parses_two_factor_challenge_form() {
+        let page_url = Url::parse("https://login.dlsite.com/login/two-factor").unwrap();
+        let challenge = parse_two_factor_challenge(&page_url, TWO_FACTOR_PAGE).unwrap();
+
+        assert_eq!(
+            challenge.action.as_str(),
+            "https://login.dlsite.com/login/two-factor?user=self"
+        );
+        assert_eq!(challenge.code_field, "otp");
+        assert_eq!(
+            challenge.fields,
+            vec![
+                (
+                    "_token".to_owned(),
+                    "2FaCsrfTokenFixtureValue0123456789abcdef".to_owned()
+                ),
+                ("recaptcha_token".to_owned(), String::new()),
+            ]
+        );
+    }
+
+    #[test]
+    fn two_factor_challenge_debug_hides_field_values() {
+        let page_url = Url::parse("https://login.dlsite.com/login/two-factor").unwrap();
+        let challenge = parse_two_factor_challenge(&page_url, TWO_FACTOR_PAGE).unwrap();
+        let debug = format!("{challenge:?}");
+
+        assert!(debug.contains("_token"));
+        assert!(!debug.contains("2FaCsrfTokenFixtureValue0123456789abcdef"));
+    }
+
+    #[test]
+    fn ignores_pages_without_a_two_factor_form() {
+        let page_url = Url::parse("https://login.dlsite.com/login").unwrap();
+        let body = r#"
+            <form method="POST" action="https://login.dlsite.com/login">
+                <input type="hidden" name="_token" value="token">
+                <input type="text" name="login_id" value="">
+                <input type="password" name="password" value="">
+            </form>
+        "#;
+
+        assert!(parse_two_factor_challenge(&page_url, body).is_none());
+    }
+
+    #[test]
+    fn keeps_checked_toggles_and_drops_unchecked_ones() {
+        let inner = r#"
+            <input type="checkbox" name="unchecked" value="true">
+            <input type="checkbox" name="checked" value="true" checked>
+            <input type="submit" name="action" value="go">
+            <input type="hidden" name="token" value="a&amp;b">
+        "#;
+
+        assert_eq!(
+            parse_form_fields(inner, "otp"),
+            vec![
+                ("checked".to_owned(), "true".to_owned()),
+                ("token".to_owned(), "a&b".to_owned()),
+            ]
         );
     }
 

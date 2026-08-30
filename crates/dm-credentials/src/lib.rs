@@ -35,6 +35,15 @@ impl CredentialRef {
         Self::new(format!("account:{account_id}:password"))
     }
 
+    /// Reference for a stored DLsite session.
+    ///
+    /// Sessions are kept here rather than in the library database because a session cookie
+    /// grants the same access the password does, so it belongs at the same storage level.
+    pub fn account_session(account_id: &str) -> Result<Self> {
+        validate_identifier(account_id).map_err(CredentialsError::InvalidCredentialRef)?;
+        Self::new(format!("account:{account_id}:session"))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

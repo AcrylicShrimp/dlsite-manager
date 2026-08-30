@@ -9,6 +9,15 @@ pub enum DmApiError {
     InvalidCredentials,
     #[error("not authorized")]
     NotAuthorized,
+    #[error("two-factor verification is required")]
+    TwoFactorRequired,
+    #[error("two-factor verification code was rejected")]
+    InvalidTwoFactorCode,
+    #[error("two-factor challenge form at {page} could not be read: {body_snippet:?}")]
+    TwoFactorFormNotRecognized {
+        page: Url,
+        body_snippet: Option<String>,
+    },
     #[error("XSRF-TOKEN not found in cookie jar")]
     XsrfTokenNotFound,
     #[error("Location header not found for {endpoint}")]

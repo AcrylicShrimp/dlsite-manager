@@ -157,3 +157,11 @@ export function getAuditLogDir() {
 export function openAuditLogDir() {
   return invoke<void>("open_audit_log_dir");
 }
+
+export function submitTwoFactorCode(requestId: string, code: string) {
+  return invoke<void>("submit_two_factor_code", { request: { requestId, code } });
+}
+
+export function cancelTwoFactor(requestId: string) {
+  return invoke<void>("cancel_two_factor", { request: { requestId } });
+}
