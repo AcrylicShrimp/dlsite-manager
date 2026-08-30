@@ -136,7 +136,7 @@ After modifying code, run the most relevant validation available.
 Prefer, as applicable:
 
 - `cargo test`
-- `cargo ch[118;1:3ueck`
+- `cargo check`
 - `cargo clippy`
 - frontend typecheck
 - frontend lint
