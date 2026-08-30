@@ -6,6 +6,7 @@
   import BulkDownloadDialogView from "$lib/components/BulkDownloadDialog.svelte";
   import ConfirmationDialogView from "$lib/components/ConfirmationDialog.svelte";
   import ToastStack from "$lib/components/ToastStack.svelte";
+  import TwoFactorDialog from "$lib/components/TwoFactorDialog.svelte";
   import { JobController } from "$lib/controllers/job-controller.svelte";
   import AccountsView from "$lib/features/accounts/AccountsView.svelte";
   import ActivityView from "$lib/features/activity/ActivityView.svelte";
@@ -59,6 +60,8 @@
     ProductFilterFacets,
     ProductImagePreview,
     StartWorkDownloadOptions,
+    TwoFactorClosed,
+    TwoFactorRequest,
     Toast,
     ToastKind,
     View,
@@ -120,6 +123,8 @@
   let chipTooltip = $state<ChipTooltip | null>(null);
   let bulkDownloadDialog = $state<BulkDownloadDialog | null>(null);
   let confirmationDialog = $state<ConfirmationDialog | null>(null);
+  let twoFactorQueue = $state<TwoFactorRequest[]>([]);
+  let twoFactorSubmitting = $state(false);
 
   let toastSequence = 0;
   let bulkDownloadDialogResolve: ((confirmed: boolean) => void) | null = null;
@@ -129,20 +134,34 @@
   onMount(() => {
     void loadInitial();
 
-    let unlisten: (() => void) | null = null;
+    const unlisteners: (() => void)[] = [];
     let disposed = false;
 
-    void jobController.listen(handleJobEvent).then((cleanup) => {
-      if (disposed) {
-        cleanup();
-      } else {
-        unlisten = cleanup;
-      }
-    });
+    const register = (pending: Promise<() => void>) => {
+      void pending.then((cleanup) => {
+        if (disposed) {
+          cleanup();
+        } else {
+          unlisteners.push(cleanup);
+        }
+      });
+    };
+
+    register(jobController.listen(handleJobEvent));
+    register(native.listenToTwoFactorRequests(queueTwoFactorRequest));
+    register(
+      native.listenToTwoFactorClosures((closed) => {
+        // The job stopped waiting (timeout, cancellation, or another window answered).
+        dropTwoFactorRequest(closed.requestId);
+      }),
+    );
 
     return () => {
       disposed = true;
-      unlisten?.();
+
+      for (const unlisten of unlisteners) {
+        unlisten();
+      }
     };
   });
 
@@ -1482,6 +1501,59 @@
     resolve?.(confirmed);
   }
 
+  const activeTwoFactorRequest = $derived(twoFactorQueue[0] ?? null);
+
+  function queueTwoFactorRequest(request: TwoFactorRequest) {
+    // A retry for the same job replaces its earlier request rather than stacking behind it.
+    twoFactorQueue = [
+      ...twoFactorQueue.filter((queued) => queued.jobId !== request.jobId),
+      request,
+    ];
+  }
+
+  function dropTwoFactorRequest(requestId: string) {
+    twoFactorQueue = twoFactorQueue.filter((queued) => queued.requestId !== requestId);
+
+    if (twoFactorQueue.length === 0) {
+      twoFactorSubmitting = false;
+    }
+  }
+
+  async function submitTwoFactorCode(code: string) {
+    const request = activeTwoFactorRequest;
+
+    if (!request || twoFactorSubmitting) {
+      return;
+    }
+
+    twoFactorSubmitting = true;
+
+    try {
+      await commands.submitTwoFactorCode(request.requestId, code);
+      dropTwoFactorRequest(request.requestId);
+    } catch (error) {
+      notifyError(errorMessage(error));
+    } finally {
+      twoFactorSubmitting = false;
+    }
+  }
+
+  async function cancelTwoFactor() {
+    const request = activeTwoFactorRequest;
+
+    if (!request) {
+      return;
+    }
+
+    dropTwoFactorRequest(request.requestId);
+
+    try {
+      await commands.cancelTwoFactor(request.requestId);
+    } catch (error) {
+      notifyError(errorMessage(error));
+    }
+  }
+
   function showConfirmationDialog(dialog: ConfirmationDialog) {
     if (confirmationDialogResolve) {
       confirmationDialogResolve(false);
@@ -1755,6 +1827,13 @@
     {/if}
 
   <ConfirmationDialogView dialog={confirmationDialog} onClose={closeConfirmationDialog} />
+
+  <TwoFactorDialog
+    request={activeTwoFactorRequest}
+    submitting={twoFactorSubmitting}
+    onSubmit={(code) => void submitTwoFactorCode(code)}
+    onCancel={() => void cancelTwoFactor()}
+  />
   <BulkDownloadDialogView dialog={bulkDownloadDialog} onClose={closeBulkDownloadDialog} />
   <ProductDetailDialog
     detail={productDetail}

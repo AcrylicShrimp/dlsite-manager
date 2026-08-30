@@ -5,7 +5,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
-import type { AppInfo, JobEvent } from "$lib/model/types";
+import type { AppInfo, JobEvent, TwoFactorClosed, TwoFactorRequest } from "$lib/model/types";
 
 export type AppUpdateProgress = {
   phase: "downloading" | "installing";
@@ -98,4 +98,12 @@ export function relaunchApp() {
 
 export function listenToJobEvents(handler: (event: JobEvent) => void) {
   return listen<JobEvent>("dm-job-event", (event) => handler(event.payload));
+}
+
+export function listenToTwoFactorRequests(handler: (request: TwoFactorRequest) => void) {
+  return listen<TwoFactorRequest>("dm-two-factor-request", (event) => handler(event.payload));
+}
+
+export function listenToTwoFactorClosures(handler: (closed: TwoFactorClosed) => void) {
+  return listen<TwoFactorClosed>("dm-two-factor-closed", (event) => handler(event.payload));
 }

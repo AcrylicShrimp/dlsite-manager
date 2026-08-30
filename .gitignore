@@ -6,6 +6,7 @@ node_modules
 /storybook-static
 /target
 /.dlsite-downloads/
+/.dlsite-probe/
 .env
 .env.*
 !.env.example
