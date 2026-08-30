@@ -21,3 +21,6 @@ uuid = { version = "1.23.1", features = ["v4"] }
 [dev-dependencies]
 tokio = { version = "1.52.2", features = ["macros", "rt-multi-thread"] }
 url = "2.5.8"
+
+[lints]
+workspace = true

@@ -837,7 +837,7 @@ mod tests {
 
     #[test]
     fn aggregates_known_multi_file_progress() {
-        let metadata = vec![
+        let metadata = [
             download_metadata(0, DownloadFileKind::SplitPart { number: 1 }, Some(100)),
             download_metadata(1, DownloadFileKind::SplitPart { number: 2 }, Some(250)),
         ];
@@ -863,7 +863,7 @@ mod tests {
 
     #[test]
     fn omits_aggregate_total_when_any_file_size_is_unknown() {
-        let metadata = vec![
+        let metadata = [
             download_metadata(0, DownloadFileKind::SplitPart { number: 1 }, Some(100)),
             download_metadata(1, DownloadFileKind::SplitPart { number: 2 }, None),
         ];

@@ -98,18 +98,21 @@ Browser-reader-only workflows, including manga download behavior, still need sep
 
 Prerequisites:
 
-- Rust stable
-- Node.js and pnpm
-- Tauri 2 system prerequisites for your platform
+- [mise](https://mise.jdx.dev/)
+- [Tauri 2 system prerequisites for your platform](https://v2.tauri.app/ja/start/prerequisites/)
 
 Common commands:
 
 ```sh
-pnpm install
-pnpm check
-cargo test --workspace
-pnpm tauri dev
-pnpm tauri build
+mise install
+mise run setup
+
+mise run format
+mise run lint
+mise run test
+
+mise run dev
+mise run build
 ```
 
 Live DLsite API/download tests are env-gated. Use the `.env.example` files in the relevant crates when validating those surfaces:

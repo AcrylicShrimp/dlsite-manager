@@ -1558,6 +1558,7 @@ impl WriteTransaction<'_> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn insert_sync_run(
         &mut self,
         sync_run_id: &str,

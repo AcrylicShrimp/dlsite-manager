@@ -37,3 +37,6 @@ tauri-plugin-dialog = "2"
 tracing = "0"
 tracing-appender = "0"
 tracing-subscriber = { version = "0", features = ["env-filter", "fmt", "json"] }
+
+[lints]
+workspace = true
