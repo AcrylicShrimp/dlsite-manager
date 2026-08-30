@@ -1,0 +1,50 @@
+[tools]
+claude = "latest"  # [skip ci]
+node = "22"
+pinact = "latest"  # [skip ci]
+pnpm = "latest"
+rust = "latest"
+
+[tasks.setup]
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+rustup toolchain install "${RUSTUP_TOOLCHAIN}" \
+  --profile minimal --component rustfmt --component clippy
+cargo --version
+cargo fmt --version
+cargo clippy --version
+
+cargo fetch --locked
+pnpm install --frozen-lockfile
+"""
+
+[tasks.dev]
+run = "pnpm run tauri dev"
+
+[tasks.build]
+run = "pnpm run tauri build"
+
+[tasks.format]
+depends = ["format:rustfmt", "format:clippy"]
+
+[tasks."format:rustfmt"]
+run = "cargo fmt --all"
+
+[tasks."format:clippy"]
+run = "cargo clippy --fix --allow-dirty --allow-staged --workspace --all-targets -- -D warnings"
+
+[tasks.lint]
+depends = ["lint:rustfmt", "lint:clippy", "lint:svelte-check"]
+
+[tasks."lint:rustfmt"]
+run = "cargo fmt --all --check"
+
+[tasks."lint:clippy"]
+run = "cargo clippy --workspace --all-targets -- -D warnings"
+
+[tasks."lint:svelte-check"]
+run = "pnpm run check"
+
+[tasks.test]
+run = "cargo test --workspace"

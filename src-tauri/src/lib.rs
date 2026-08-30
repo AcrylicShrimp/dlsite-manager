@@ -913,7 +913,7 @@ async fn start_bulk_work_download(
     state: State<'_, AppState>,
     request: BulkWorkDownloadCommandRequest,
 ) -> Result<StartJobResponse, String> {
-    let query = match request.into_query() {
+    let query = match request.to_query() {
         Ok(query) => query,
         Err(error) => {
             record_audit(
@@ -1144,7 +1144,7 @@ async fn preview_bulk_work_download(
     state: State<'_, AppState>,
     request: BulkWorkDownloadCommandRequest,
 ) -> Result<BulkWorkDownloadPreviewDto, String> {
-    let query = match request.into_query() {
+    let query = match request.to_query() {
         Ok(query) => query,
         Err(error) => {
             record_audit(
@@ -2538,7 +2538,7 @@ struct BulkWorkDownloadCommandRequest {
 }
 
 impl BulkWorkDownloadCommandRequest {
-    fn into_query(&self) -> Result<ProductListQuery, String> {
+    fn to_query(&self) -> Result<ProductListQuery, String> {
         Ok(ProductListQuery {
             search: normalize_optional_string(self.search.clone())?,
             account_id: normalize_optional_id(self.account_id.clone())?,
@@ -3578,6 +3578,46 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .setup(setup_app)
+        .invoke_handler(tauri::generate_handler![
+            get_settings,
+            save_settings,
+            list_accounts,
+            save_account,
+            set_account_enabled,
+            remove_account,
+            list_products,
+            list_product_filter_facets,
+            get_product_detail,
+            set_product_custom_tags,
+            start_account_sync,
+            start_work_download,
+            start_bulk_work_download,
+            preview_bulk_work_download,
+            open_work_download,
+            delete_work_download,
+            mark_work_downloaded,
+            scan_local_work_downloads,
+            list_jobs,
+            get_job,
+            cancel_job,
+            get_job_logs,
+            clear_finished_jobs,
+            list_audit_events,
+            get_audit_log_dir,
+            open_audit_log_dir,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3696,44 +3736,4 @@ mod tests {
         assert_eq!(split.reserved, vec!["RJ000001".to_owned()]);
         assert_eq!(split.available, vec!["RJ000002".to_owned()]);
     }
-}
-
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .setup(setup_app)
-        .invoke_handler(tauri::generate_handler![
-            get_settings,
-            save_settings,
-            list_accounts,
-            save_account,
-            set_account_enabled,
-            remove_account,
-            list_products,
-            list_product_filter_facets,
-            get_product_detail,
-            set_product_custom_tags,
-            start_account_sync,
-            start_work_download,
-            start_bulk_work_download,
-            preview_bulk_work_download,
-            open_work_download,
-            delete_work_download,
-            mark_work_downloaded,
-            scan_local_work_downloads,
-            list_jobs,
-            get_job,
-            cancel_job,
-            get_job_logs,
-            clear_finished_jobs,
-            list_audit_events,
-            get_audit_log_dir,
-            open_audit_log_dir,
-        ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
 }

@@ -11,3 +11,6 @@ members = [
     "src-tauri",
 ]
 resolver = "3"
+
+[workspace.lints.clippy]
+result_large_err = "allow"
