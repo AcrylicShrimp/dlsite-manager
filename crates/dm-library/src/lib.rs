@@ -33,8 +33,12 @@ const DOWNLOAD_CANCELLATION_POLL_INTERVAL: std::time::Duration =
 const SERIAL_INFORMATION_FILE_NAME: &str = "dlsite-manager-serial.txt";
 const SERIAL_INFORMATION_NUMBERED_PREFIX: &str = "dlsite-manager-serial-";
 const SERIAL_INFORMATION_MARKER: &str = "# dlsite-manager serial information";
-/// How many verification codes a user may get wrong before the operation gives up.
-const MAX_TWO_FACTOR_ATTEMPTS: u32 = 3;
+mod auth;
+mod finalization;
+use auth::acquire_login_lock;
+pub use auth::{
+    DlsiteAuthSource, TwoFactorPrompt, TwoFactorPromptRequest, TwoFactorPromptResponse,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum LibraryError {
@@ -64,6 +68,12 @@ pub enum LibraryError {
     TwoFactorRejected { account_id: String, attempts: u32 },
     #[error("sync was cancelled")]
     Cancelled,
+    #[error("bulk download interrupted: {cause}")]
+    BulkInterrupted {
+        cause: Box<LibraryError>,
+        report: Box<BulkWorkDownloadReport>,
+        interrupted_work: Option<String>,
+    },
     #[error("download error")]
     Download(#[from] dm_download::DownloadError),
     #[error("work is not owned by an enabled account: {0}")]
@@ -74,6 +84,13 @@ pub enum LibraryError {
     DownloadPathOutsideRoots(PathBuf),
     #[error("download path is not a directory: {0}")]
     DownloadPathNotDirectory(PathBuf),
+    #[error("download recovery required: {0}")]
+    RecoveryRequired(String),
+    #[error("download attempt left recoverable data at {retained_path}")]
+    RetainedDownload {
+        source: Box<LibraryError>,
+        retained_path: PathBuf,
+    },
     #[error("I/O error")]
     Io(#[from] std::io::Error),
     #[error("json error")]
@@ -81,8 +98,25 @@ pub enum LibraryError {
 }
 
 impl LibraryError {
-    pub fn failure_code(&self) -> &'static str {
+    pub fn is_cancelled(&self) -> bool {
         match self {
+            Self::Cancelled
+            | Self::TwoFactorCancelled(_)
+            | Self::Download(dm_download::DownloadError::Cancelled) => true,
+            Self::BulkInterrupted { cause, .. } => cause.is_cancelled(),
+            Self::RetainedDownload { source, .. } => source.is_cancelled(),
+            _ => false,
+        }
+    }
+
+    pub fn failure_code(&self) -> &'static str {
+        if self.is_cancelled() {
+            return "cancelled";
+        }
+        match self {
+            Self::BulkInterrupted { cause, .. } => cause.failure_code(),
+            Self::RetainedDownload { source, .. } => source.failure_code(),
+            Self::RecoveryRequired(_) => "download_recovery_required",
             Self::Storage(_) => "storage",
             Self::Credentials(_) => "credentials",
             Self::Api(_) => "api",
@@ -110,6 +144,9 @@ impl LibraryError {
 
     pub fn support_message(&self) -> String {
         match self {
+            Self::BulkInterrupted { cause, .. } => cause.support_message(),
+            Self::RetainedDownload { source, retained_path } => format!("{}; recoverable data retained at {}", source.support_message(), retained_path.display()),
+            Self::RecoveryRequired(message) => message.clone(),
             Self::Storage(error) => format!("Storage error: {error}"),
             Self::Credentials(error) => format!("Credential error: {error}"),
             Self::Api(error) => dm_api_error_support_message(error),
@@ -161,6 +198,18 @@ impl LibraryError {
 
     pub fn support_details(&self) -> Value {
         match self {
+            Self::BulkInterrupted { cause, .. } => cause.support_details(),
+            Self::RetainedDownload {
+                source,
+                retained_path,
+            } => {
+                let mut details = value_object(source.support_details());
+                details.insert("retainedPath".to_owned(), json!(retained_path));
+                Value::Object(details)
+            }
+            Self::RecoveryRequired(message) => {
+                json!({ "failureKind": "download_recovery_required", "message": message })
+            }
             Self::Storage(error) => json!({
                 "failureKind": "storage",
                 "message": error.to_string(),
@@ -673,6 +722,7 @@ pub struct Library {
     /// own two-factor prompt. Serializing lets the first login store a session the others can
     /// then reuse.
     login_locks: Arc<std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    work_locks: Arc<std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
 }
 
 impl Library {
@@ -681,6 +731,7 @@ impl Library {
             storage,
             credentials,
             login_locks: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            work_locks: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -688,11 +739,46 @@ impl Library {
         &self.storage
     }
 
+    fn work_lock(&self, work_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.work_locks
+            .lock()
+            .expect("work lock registry")
+            .entry(work_id.to_owned())
+            .or_default()
+            .clone()
+    }
+
+    async fn recover_download(&self, work_id: &str, roots: &[&Path]) -> Result<()> {
+        let Some(record) = self.storage.download_finalization(work_id).await? else {
+            return Ok(());
+        };
+        let installation = finalization::Installation { record };
+        installation
+            .validate(roots)
+            .map_err(|error| installation.required(&error.support_message()))?;
+        let result = if installation.record.committed {
+            installation.cleanup().await
+        } else {
+            installation.rollback().await
+        };
+        result.map_err(|error| installation.required(&error.support_message()))?;
+        self.storage
+            .clear_download_finalization(work_id, &installation.record.operation_id)
+            .await?;
+        Ok(())
+    }
+
     pub async fn accounts(&self) -> Result<Vec<Account>> {
         Ok(self.storage.accounts().await?)
     }
 
     pub async fn save_account(&self, request: SaveAccountRequest) -> Result<Account> {
+        let account_id = request
+            .id
+            .clone()
+            .unwrap_or_else(|| format!("account-{}", Uuid::new_v4()));
+        let lock = self.login_lock(&account_id);
+        let _guard = lock.lock().await;
         let existing_account = match request.id.as_deref() {
             Some(account_id) => match self.find_account(account_id).await {
                 Ok(account) => Some(account),
@@ -701,9 +787,6 @@ impl Library {
             },
             None => None,
         };
-        let account_id = request
-            .id
-            .unwrap_or_else(|| format!("account-{}", Uuid::new_v4()));
         let credential_ref = self.save_account_credential(
             &account_id,
             request.password.as_deref(),
@@ -730,7 +813,7 @@ impl Library {
                 .as_ref()
                 .is_none_or(|existing| existing.login_name != account.login_name);
 
-        if identity_changed {
+        if identity_changed || !request.remember_password {
             self.forget_account_session(&account_id)?;
         }
 
@@ -739,6 +822,8 @@ impl Library {
     }
 
     pub async fn set_account_enabled(&self, account_id: &str, enabled: bool) -> Result<()> {
+        let lock = self.login_lock(account_id);
+        let _guard = lock.lock().await;
         Ok(self
             .storage
             .set_account_enabled(account_id, enabled)
@@ -746,6 +831,8 @@ impl Library {
     }
 
     pub async fn remove_account(&self, account_id: &str) -> Result<AccountRemovalReport> {
+        let lock = self.login_lock(account_id);
+        let _guard = lock.lock().await;
         let account = self.find_account(account_id).await?;
         let credential_ref = account
             .credential_ref
@@ -809,6 +896,32 @@ impl Library {
     where
         S: WorkDownloadSource + Sync,
     {
+        let lock = self.work_lock(request.work_id);
+        let _guard = acquire_login_lock(&lock, request.cancellation_token).await?;
+        self.recover_download(
+            request.work_id,
+            &[request.library_root, request.download_root],
+        )
+        .await?;
+        let previous = self.storage.work_download_state(request.work_id).await?;
+        let preserve_previous = previous.status == WorkDownloadStatus::Downloaded;
+        let (staging_dir, final_dir) =
+            finalization::paths(request.work_id, request.library_root, request.download_root)?;
+        if let Some(old) = previous
+            .local_path
+            .as_deref()
+            .map(Path::new)
+            .filter(|p| p.exists())
+        {
+            if std::fs::symlink_metadata(old)?.file_type().is_symlink() {
+                return Err(LibraryError::DownloadPathOutsideRoots(old.to_owned()));
+            }
+            let old = old.canonicalize()?;
+            finalization::checked_child(&old, &[request.library_root, request.download_root])?;
+            if old.starts_with(&staging_dir) || staging_dir.starts_with(&old) {
+                return Err(LibraryError::DownloadPathOutsideRoots(old));
+            }
+        }
         let account = self
             .storage
             .download_account_for_work(request.work_id, request.account_id)
@@ -821,8 +934,6 @@ impl Library {
             })?;
         let started_at = now_string();
         let work_id = WorkId::from(request.work_id.to_owned());
-        let staging_dir = request.download_root.join(request.work_id);
-        let final_dir = request.library_root.join(request.work_id);
         let unpack_policy = request.unpack_policy;
         let result = self
             .download_work_inner(
@@ -837,12 +948,11 @@ impl Library {
             .await;
 
         if let Err(error) = &result {
+            if preserve_previous {
+                return result;
+            }
             let completed_at = now_string();
-            let status = if matches!(error, LibraryError::Cancelled)
-                || matches!(
-                    error,
-                    LibraryError::Download(dm_download::DownloadError::Cancelled)
-                ) {
+            let status = if error.is_cancelled() {
                 WorkDownloadStatus::Cancelled
             } else {
                 WorkDownloadStatus::Failed
@@ -907,7 +1017,13 @@ impl Library {
         };
 
         for (index, item) in selection.items.into_iter().enumerate() {
-            request.check_cancelled()?;
+            if let Err(cause) = request.check_cancelled() {
+                return Err(LibraryError::BulkInterrupted {
+                    cause: Box::new(cause),
+                    report: Box::new(report),
+                    interrupted_work: None,
+                });
+            }
             let current = index + 1;
             let work_id = item.work_id;
 
@@ -943,6 +1059,7 @@ impl Library {
                         local_path: report_item.local_path,
                         file_count: report_item.file_count,
                         archive_extracted: report_item.archive_extracted,
+                        warnings: report_item.warnings,
                     });
                     request.emit(BulkWorkDownloadProgress::WorkCompleted {
                         work_id,
@@ -950,14 +1067,12 @@ impl Library {
                         total: requested_count,
                     });
                 }
-                Err(error)
-                    if matches!(error, LibraryError::Cancelled)
-                        || matches!(
-                            error,
-                            LibraryError::Download(dm_download::DownloadError::Cancelled)
-                        ) =>
-                {
-                    return Err(error);
+                Err(error) if error.is_cancelled() => {
+                    return Err(LibraryError::BulkInterrupted {
+                        cause: Box::new(error),
+                        report: Box::new(report),
+                        interrupted_work: Some(work_id),
+                    });
                 }
                 Err(error) => {
                     let error_code = error.failure_code().to_owned();
@@ -1086,6 +1201,13 @@ impl Library {
         &self,
         request: WorkDownloadRemovalRequest<'_>,
     ) -> Result<WorkDownloadState> {
+        let lock = self.work_lock(request.work_id);
+        let _guard = lock.lock().await;
+        self.recover_download(
+            request.work_id,
+            &[request.library_root, request.download_root],
+        )
+        .await?;
         let state = self.storage.work_download_state(request.work_id).await?;
         let allowed_roots = [request.library_root, request.download_root];
 
@@ -1099,6 +1221,10 @@ impl Library {
         &self,
         request: WorkDownloadMarkRequest<'_>,
     ) -> Result<WorkDownloadState> {
+        let lock = self.work_lock(request.work_id);
+        let _guard = lock.lock().await;
+        self.recover_download(request.work_id, &[request.library_root])
+            .await?;
         let canonical_path = canonicalize_existing_directory(request.local_path)?;
         let canonical_root = request.library_root.canonicalize()?;
 
@@ -1166,6 +1292,7 @@ impl Library {
         let mut skipped_ambiguous = 0;
         let mut skipped_non_utf8 = 0;
         let mut skipped_existing = 0;
+        let mut recovery_errors = Vec::new();
 
         while let Some(entry) = entries.next_entry().await? {
             let file_type = entry.file_type().await?;
@@ -1184,6 +1311,9 @@ impl Library {
                 }
             };
             let detected = detect_work_ids_in_text(&folder_name);
+            if folder_name.starts_with(finalization::PREFIX) {
+                continue;
+            }
 
             if detected.is_empty() {
                 skipped_no_id += 1;
@@ -1197,6 +1327,15 @@ impl Library {
 
             let work_id = detected[0].clone();
             let work_id_string = work_id.as_ref().to_owned();
+            let lock = self.work_lock(&work_id_string);
+            let _guard = lock.lock().await;
+            if let Err(error) = self
+                .recover_download(&work_id_string, &[&library_root])
+                .await
+            {
+                recovery_errors.push(error.support_message());
+                continue;
+            }
             if self
                 .storage
                 .work_download_state(&work_id_string)
@@ -1270,8 +1409,36 @@ impl Library {
 
         let metadata_works = metadata_by_id.values().cloned().collect::<Vec<_>>();
 
+        imported_works.clear();
+        for import in imports {
+            let work_id = &import.work.work_id;
+            let lock = self.work_lock(work_id);
+            let _guard = lock.lock().await;
+            if let Err(error) = self.recover_download(work_id, &[&library_root]).await {
+                recovery_errors.push(error.support_message());
+                continue;
+            }
+            if self.storage.work_download_state(work_id).await?.status
+                != WorkDownloadStatus::NotDownloaded
+            {
+                skipped_existing += 1;
+                continue;
+            }
+            let local_path =
+                PathBuf::from(import.download.local_path.as_ref().expect("import path"));
+            if !local_path.is_dir() {
+                continue;
+            }
+            self.storage
+                .import_local_work_downloads_with_metadata(std::slice::from_ref(&import), &[])
+                .await?;
+            imported_works.push(LocalWorkImportItem {
+                work_id: work_id.clone(),
+                local_path,
+            });
+        }
         self.storage
-            .import_local_work_downloads_with_metadata(&imports, &metadata_works)
+            .import_local_work_downloads_with_metadata(&[], &metadata_works)
             .await?;
 
         Ok(LocalWorkImportReport {
@@ -1285,6 +1452,7 @@ impl Library {
             metadata_updated_count: metadata_by_id.len(),
             metadata_missing_count: metadata_candidate_count.saturating_sub(metadata_by_id.len()),
             metadata_error,
+            recovery_errors,
             imported_works,
         })
     }
@@ -1311,7 +1479,7 @@ impl Library {
 
         if let Err(error) = &result {
             let completed_at = now_string();
-            if matches!(error, LibraryError::Cancelled) {
+            if error.is_cancelled() {
                 let _ = self
                     .storage
                     .record_sync_cancellation(&SyncCancellation {
@@ -1541,22 +1709,25 @@ impl Library {
         let plan = source.download_plan(work_id).await?;
 
         request.check_cancelled()?;
-        self.storage
-            .save_work_download(&WorkDownloadUpdate {
-                work_id: request.work_id.to_owned(),
-                status: WorkDownloadStatus::Downloading,
-                local_path: Some(final_dir.to_string_lossy().into_owned()),
-                staging_path: Some(staging_dir.to_string_lossy().into_owned()),
-                unpack_policy: unpack_policy_storage_value(request.unpack_policy).to_owned(),
-                bytes_received: 0,
-                bytes_total: None,
-                error_code: None,
-                error_message: None,
-                started_at: Some(started_at.to_owned()),
-                completed_at: None,
-                updated_at: now_string(),
-            })
-            .await?;
+        let previous = self.storage.work_download_state(request.work_id).await?;
+        if previous.status != WorkDownloadStatus::Downloaded {
+            self.storage
+                .save_work_download(&WorkDownloadUpdate {
+                    work_id: request.work_id.to_owned(),
+                    status: WorkDownloadStatus::Downloading,
+                    local_path: Some(final_dir.to_string_lossy().into_owned()),
+                    staging_path: Some(staging_dir.to_string_lossy().into_owned()),
+                    unpack_policy: unpack_policy_storage_value(request.unpack_policy).to_owned(),
+                    bytes_received: 0,
+                    bytes_total: None,
+                    error_code: None,
+                    error_message: None,
+                    started_at: Some(started_at.to_owned()),
+                    completed_at: None,
+                    updated_at: now_string(),
+                })
+                .await?;
+        }
 
         if request.replace_existing {
             remove_existing_download_path(staging_dir, &[request.download_root]).await?;
@@ -1590,11 +1761,6 @@ impl Library {
         )
         .await?;
 
-        if request.replace_existing {
-            remove_existing_download_path(final_dir, &[request.library_root]).await?;
-        }
-        move_downloaded_work_dir(staging_dir, final_dir).await?;
-
         let completed_at = now_string();
         let bytes_received = downloaded
             .files
@@ -1602,22 +1768,95 @@ impl Library {
             .map(|file| file.bytes_written)
             .sum::<u64>();
 
+        let update = WorkDownloadUpdate {
+            work_id: request.work_id.to_owned(),
+            status: WorkDownloadStatus::Downloaded,
+            local_path: Some(final_dir.to_string_lossy().into_owned()),
+            staging_path: Some(staging_dir.to_string_lossy().into_owned()),
+            unpack_policy: unpack_policy_storage_value(request.unpack_policy).to_owned(),
+            bytes_received,
+            bytes_total: Some(bytes_received),
+            error_code: None,
+            error_message: None,
+            started_at: Some(started_at.to_owned()),
+            completed_at: Some(completed_at.clone()),
+            updated_at: completed_at,
+        };
+        let old_path = previous
+            .local_path
+            .as_deref()
+            .map(Path::new)
+            .filter(|p| p.is_dir())
+            .map(std::fs::canonicalize)
+            .transpose()?;
+        let installation = finalization::Installation::new(
+            request.work_id,
+            staging_dir,
+            final_dir,
+            old_path.as_deref(),
+            request.replace_existing,
+        )?;
+        installation.validate(&[request.library_root, request.download_root])?;
         self.storage
-            .save_work_download(&WorkDownloadUpdate {
-                work_id: request.work_id.to_owned(),
-                status: WorkDownloadStatus::Downloaded,
-                local_path: Some(final_dir.to_string_lossy().into_owned()),
-                staging_path: Some(staging_dir.to_string_lossy().into_owned()),
-                unpack_policy: unpack_policy_storage_value(request.unpack_policy).to_owned(),
-                bytes_received,
-                bytes_total: Some(bytes_received),
-                error_code: None,
-                error_message: None,
-                started_at: Some(started_at.to_owned()),
-                completed_at: Some(completed_at.clone()),
-                updated_at: completed_at,
-            })
+            .begin_download_finalization(&installation.record)
             .await?;
+        let result = async {
+            installation.prepare().await?;
+            request.check_cancelled()?;
+            // Once swapping starts, finish installation/commit or rollback before cancellation.
+            installation.install().await?;
+            self.storage
+                .commit_download_finalization(&installation.record.operation_id, &update)
+                .await?;
+            Ok::<(), LibraryError>(())
+        }
+        .await;
+        if let Err(error) = result {
+            // A commit error may have an uncertain outcome. Inspect the durable marker
+            // before deciding whether it is safe to undo filesystem installation.
+            match self.storage.download_finalization(request.work_id).await {
+                Ok(Some(record)) if record.committed => {}
+                Ok(Some(_)) => {
+                    if let Err(recovery) = self
+                        .recover_download(
+                            request.work_id,
+                            &[request.library_root, request.download_root],
+                        )
+                        .await
+                    {
+                        return Err(installation.required(&format!(
+                            "{}; rollback: {}",
+                            error.support_message(),
+                            recovery.support_message()
+                        )));
+                    }
+                    if Path::new(&installation.record.temporary_path).exists() {
+                        return Err(LibraryError::RetainedDownload {
+                            source: Box::new(error),
+                            retained_path: PathBuf::from(&installation.record.temporary_path),
+                        });
+                    }
+                    return Err(error);
+                }
+                _ => {
+                    return Err(installation.required(&format!(
+                        "{}; commit outcome unavailable",
+                        error.support_message()
+                    )))
+                }
+            }
+        }
+        let mut warnings = Vec::new();
+        if let Err(error) = self
+            .recover_download(
+                request.work_id,
+                &[request.library_root, request.download_root],
+            )
+            .await
+        {
+            request.emit(WorkDownloadProgress::Warning(error.support_message()));
+            warnings.push(error.support_message());
+        }
 
         request.emit(WorkDownloadProgress::Completed);
 
@@ -1627,7 +1866,8 @@ impl Library {
             local_path: final_dir.to_path_buf(),
             file_count: downloaded.files.len(),
             archive_extracted: downloaded.archive_extraction.is_some(),
-            download_state: self.storage.work_download_state(request.work_id).await?,
+            download_state: update.into(),
+            warnings,
         })
     }
 
@@ -1638,214 +1878,6 @@ impl Library {
             .into_iter()
             .find(|account| account.id == account_id)
             .ok_or_else(|| LibraryError::AccountNotFound(account_id.to_owned()))
-    }
-
-    fn save_account_credential(
-        &self,
-        account_id: &str,
-        password: Option<&str>,
-        remember_password: bool,
-        existing_credential_ref: Option<CredentialRef>,
-    ) -> Result<Option<CredentialRef>> {
-        let credential_ref =
-            existing_credential_ref.or(Some(CredentialRef::account_password(account_id)?));
-
-        if remember_password {
-            let credential_ref = credential_ref.ok_or_else(|| {
-                LibraryError::Credentials(CredentialsError::InvalidCredentialRef(
-                    "invalid account id",
-                ))
-            })?;
-
-            if let Some(password) = password {
-                self.credentials.save_password(&credential_ref, password)?;
-            } else if self.credentials.load_password(&credential_ref)?.is_none() {
-                return Err(LibraryError::MissingPassword(account_id.to_owned()));
-            }
-
-            Ok(Some(credential_ref))
-        } else {
-            if let Some(credential_ref) = credential_ref {
-                self.credentials.delete_password(&credential_ref)?;
-            }
-
-            Ok(None)
-        }
-    }
-
-    fn password_for_account(&self, account: &Account, password: Option<&str>) -> Result<String> {
-        if let Some(password) = password {
-            return Ok(password.to_owned());
-        }
-
-        let credential_ref = account
-            .credential_ref
-            .as_deref()
-            .ok_or_else(|| LibraryError::MissingPassword(account.id.clone()))
-            .and_then(|value| CredentialRef::new(value.to_owned()).map_err(Into::into))?;
-
-        self.credentials
-            .load_password(&credential_ref)?
-            .ok_or_else(|| LibraryError::MissingPassword(account.id.clone()))
-    }
-
-    /// Brings `source` to an authorized state for `account`.
-    ///
-    /// A stored session is tried first so that two-factor accounts are not asked for a code
-    /// on every job — TOTP codes are single-use, and login happens once per sync and once
-    /// per download. Only when no usable session exists does this fall back to a password
-    /// login, and only a two-factor-enabled account reaches `prompt`.
-    async fn authenticate_account<S>(
-        &self,
-        account: &Account,
-        password: Option<&str>,
-        two_factor_prompt: Option<&dyn TwoFactorPrompt>,
-        cancellation_token: Option<&CancellationToken>,
-        source: &S,
-    ) -> Result<()>
-    where
-        S: DlsiteAuthSource + Sync,
-    {
-        if cancellation_token.is_some_and(CancellationToken::is_cancelled) {
-            return Err(LibraryError::Cancelled);
-        }
-
-        let login_lock = self.login_lock(&account.id);
-        let _login_guard = acquire_login_lock(&login_lock, cancellation_token).await?;
-        let session_ref = CredentialRef::account_session(&account.id)?;
-
-        if self.restore_stored_session(&session_ref, source).await? {
-            self.storage
-                .record_account_login(&account.id, &now_string())
-                .await?;
-            return Ok(());
-        }
-
-        let login_name = account
-            .login_name
-            .as_deref()
-            .ok_or_else(|| LibraryError::MissingLoginName(account.id.clone()))?;
-        let password = self.password_for_account(account, password)?;
-        let credentials = Credentials::new(login_name, password);
-
-        let session = match source.begin_login(&credentials).await? {
-            LoginOutcome::Authorized(session) => session,
-            LoginOutcome::TwoFactorRequired(challenge) => {
-                let prompt = two_factor_prompt
-                    .ok_or_else(|| LibraryError::TwoFactorPromptUnavailable(account.id.clone()))?;
-
-                self.complete_two_factor_login(account, &challenge, prompt, source)
-                    .await?
-            }
-        };
-
-        // A session cookie grants what the password grants, so it follows the account's
-        // remember-password setting. An account that does not keep its password -- which is
-        // what an absent credential ref means -- does not keep a session either, and any
-        // session stored before that setting changed is dropped here.
-        if account.credential_ref.is_some() {
-            self.credentials
-                .save_password(&session_ref, &session.cookies_json)?;
-        } else {
-            self.credentials.delete_password(&session_ref)?;
-        }
-
-        self.storage
-            .record_account_login(&account.id, &now_string())
-            .await?;
-
-        Ok(())
-    }
-
-    fn login_lock(&self, account_id: &str) -> Arc<tokio::sync::Mutex<()>> {
-        self.login_locks
-            .lock()
-            .expect("login lock registry is poisoned")
-            .entry(account_id.to_owned())
-            .or_default()
-            .clone()
-    }
-
-    /// Returns whether a stored session was restored and is still authorized. A session that
-    /// no longer works is discarded so the next attempt does not retry it.
-    async fn restore_stored_session<S>(
-        &self,
-        session_ref: &CredentialRef,
-        source: &S,
-    ) -> Result<bool>
-    where
-        S: DlsiteAuthSource + Sync,
-    {
-        let Some(cookies_json) = self.credentials.load_password(session_ref)? else {
-            return Ok(false);
-        };
-
-        let session = SessionSnapshot { cookies_json };
-
-        if source.restore_session(&session).await.is_ok() && source.validate_session().await? {
-            return Ok(true);
-        }
-
-        self.credentials.delete_password(session_ref)?;
-
-        Ok(false)
-    }
-
-    async fn complete_two_factor_login<S>(
-        &self,
-        account: &Account,
-        challenge: &TwoFactorChallenge,
-        prompt: &dyn TwoFactorPrompt,
-        source: &S,
-    ) -> Result<SessionSnapshot>
-    where
-        S: DlsiteAuthSource + Sync,
-    {
-        let mut previous_code_rejected = false;
-
-        for attempt in 1..=MAX_TWO_FACTOR_ATTEMPTS {
-            let response = prompt
-                .request_code(TwoFactorPromptRequest {
-                    account_id: account.id.clone(),
-                    account_label: account.label.clone(),
-                    attempt,
-                    previous_code_rejected,
-                })
-                .await?;
-
-            let code = match response {
-                TwoFactorPromptResponse::Code(code) => code,
-                TwoFactorPromptResponse::Cancelled => {
-                    return Err(LibraryError::TwoFactorCancelled(account.id.clone()))
-                }
-                TwoFactorPromptResponse::TimedOut => {
-                    return Err(LibraryError::TwoFactorTimedOut(account.id.clone()))
-                }
-            };
-
-            match source.complete_two_factor(challenge, &code).await {
-                Ok(session) => return Ok(session),
-                Err(LibraryError::Api(DmApiError::InvalidTwoFactorCode)) => {
-                    previous_code_rejected = true;
-                }
-                Err(error) => return Err(error),
-            }
-        }
-
-        Err(LibraryError::TwoFactorRejected {
-            account_id: account.id.clone(),
-            attempts: MAX_TWO_FACTOR_ATTEMPTS,
-        })
-    }
-
-    /// Drops any stored session for an account, so a removed or re-credentialed account does
-    /// not leave a usable session behind.
-    fn forget_account_session(&self, account_id: &str) -> Result<()> {
-        let session_ref = CredentialRef::account_session(account_id)?;
-
-        self.credentials.delete_password(&session_ref)?;
-
-        Ok(())
     }
 }
 
@@ -2047,6 +2079,7 @@ impl<'a> LocalWorkImportRequest<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalWorkImportReport {
+    pub recovery_errors: Vec<String>,
     pub scanned_directories: usize,
     pub imported_count: usize,
     pub skipped_no_id: usize,
@@ -2075,6 +2108,7 @@ pub struct AccountRemovalReport {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkDownloadReport {
+    pub warnings: Vec<String>,
     pub work_id: String,
     pub account_id: String,
     pub local_path: PathBuf,
@@ -2085,6 +2119,7 @@ pub struct WorkDownloadReport {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkDownloadProgress {
+    Warning(String),
     LoggingIn,
     ResolvingPlan,
     Download(DownloadProgress),
@@ -2168,6 +2203,7 @@ pub struct BulkWorkDownloadReport {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BulkWorkDownloadSuccess {
+    pub warnings: Vec<String>,
     pub work_id: String,
     pub local_path: PathBuf,
     pub file_count: usize,
@@ -2315,85 +2351,6 @@ pub struct BulkWorkDownloadPreviewFile {
     pub file_index: usize,
     pub file_name: String,
     pub expected_size: Option<u64>,
-}
-
-/// Authentication surface shared by every source that talks to DLsite on behalf of an
-/// account.
-///
-/// It is split from the feature traits because logging in is identical for sync and
-/// download, and because two-factor login is a multi-step conversation: the caller has to be
-/// able to restore a stored session, notice it is stale, and resume a challenge with a code
-/// obtained from the user.
-#[async_trait]
-pub trait DlsiteAuthSource {
-    async fn restore_session(&self, session: &SessionSnapshot) -> Result<()>;
-    async fn validate_session(&self) -> Result<bool>;
-    async fn begin_login(&self, credentials: &Credentials) -> Result<LoginOutcome>;
-    async fn complete_two_factor(
-        &self,
-        challenge: &TwoFactorChallenge,
-        code: &str,
-    ) -> Result<SessionSnapshot>;
-}
-
-/// Context handed to the UI when a two-factor code is needed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TwoFactorPromptRequest {
-    pub account_id: String,
-    pub account_label: String,
-    /// 1 for the first prompt of this login.
-    pub attempt: u32,
-    pub previous_code_rejected: bool,
-}
-
-/// How often a task waiting on the per-account login lock re-checks its cancellation token.
-/// `CancellationToken` is a flag rather than a future, so waiting on it means polling.
-const LOGIN_LOCK_CANCELLATION_POLL: Duration = Duration::from_millis(200);
-
-/// Waits for the per-account login lock while still observing cancellation.
-///
-/// The holder may be sitting on an open two-factor dialog, so a queued job that waits here
-/// unconditionally would not react to Cancel until that dialog's own timeout expired.
-async fn acquire_login_lock<'a>(
-    lock: &'a tokio::sync::Mutex<()>,
-    cancellation_token: Option<&CancellationToken>,
-) -> Result<tokio::sync::MutexGuard<'a, ()>> {
-    let Some(cancellation_token) = cancellation_token else {
-        return Ok(lock.lock().await);
-    };
-
-    tokio::select! {
-        guard = lock.lock() => Ok(guard),
-        () = wait_for_cancellation(cancellation_token) => Err(LibraryError::Cancelled),
-    }
-}
-
-async fn wait_for_cancellation(cancellation_token: &CancellationToken) {
-    while !cancellation_token.is_cancelled() {
-        tokio::time::sleep(LOGIN_LOCK_CANCELLATION_POLL).await;
-    }
-}
-
-/// How a two-factor prompt ended.
-///
-/// Cancelling and timing out are kept apart because they mean different things to the job
-/// that asked: a cancelled job finishes as Cancelled, while a prompt nobody answered is a
-/// failure the user still needs to see.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TwoFactorPromptResponse {
-    Code(String),
-    /// The user dismissed the prompt, or the job was cancelled underneath it.
-    Cancelled,
-    /// The prompt expired before anyone answered it.
-    TimedOut,
-}
-
-#[async_trait]
-pub trait TwoFactorPrompt: Send + Sync {
-    async fn request_code(
-        &self,
-        request: TwoFactorPromptRequest,
-    ) -> Result<TwoFactorPromptResponse>;
 }
 
 #[async_trait]
@@ -3184,61 +3141,6 @@ fn path_is_download_child_of_any_root(path: &Path, roots: &[PathBuf]) -> bool {
         .any(|root| path != root.as_path() && path.starts_with(root))
 }
 
-async fn move_downloaded_work_dir(source: &Path, destination: &Path) -> Result<()> {
-    if destination.try_exists()? {
-        return Err(LibraryError::DownloadTargetExists(
-            destination.to_path_buf(),
-        ));
-    }
-
-    if let Some(parent) = destination.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-
-    match tokio::fs::rename(source, destination).await {
-        Ok(()) => Ok(()),
-        Err(rename_error) => {
-            let source = source.to_path_buf();
-            let destination = destination.to_path_buf();
-            tokio::task::spawn_blocking(move || {
-                copy_dir_recursively(&source, &destination)?;
-                std::fs::remove_dir_all(&source)?;
-                Ok::<(), std::io::Error>(())
-            })
-            .await
-            .map_err(|err| LibraryError::Io(std::io::Error::other(err)))??;
-            drop(rename_error);
-            Ok(())
-        }
-    }
-}
-
-fn copy_dir_recursively(source: &Path, destination: &Path) -> std::io::Result<()> {
-    if destination.exists() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            format!("destination already exists: {}", destination.display()),
-        ));
-    }
-
-    std::fs::create_dir_all(destination)?;
-
-    for entry in std::fs::read_dir(source)? {
-        let entry = entry?;
-        let entry_source = entry.path();
-        let entry_destination = destination.join(entry.file_name());
-        let file_type = entry.file_type()?;
-
-        if file_type.is_dir() {
-            copy_dir_recursively(&entry_source, &entry_destination)?;
-        } else if file_type.is_file() {
-            std::fs::copy(&entry_source, &entry_destination)?;
-        }
-    }
-
-    Ok(())
-}
-
 pub const DL_SITE_WORK_ID_PREFIXES: &[&str] = &["RJ", "VJ", "BJ"];
 const WORK_ID_MIN_DIGITS: usize = 6;
 const WORK_ID_MAX_DIGITS: usize = 8;
@@ -3998,6 +3900,33 @@ mod tests {
     }
 
     #[async_trait]
+    impl WorkDownloadSource for TwoFactorSyncSource {
+        async fn download_plan(&self, work_id: &WorkId) -> Result<DownloadPlan> {
+            FakeDownloadSource.download_plan(work_id).await
+        }
+
+        async fn download_file_metadata(
+            &self,
+            index: usize,
+            file: &DownloadFile,
+        ) -> Result<DownloadFileMetadata> {
+            FakeDownloadSource.download_file_metadata(index, file).await
+        }
+
+        async fn download_files(
+            &self,
+            job: &DownloadJobRequest,
+            plan: &DownloadPlan,
+            cancellation: &dm_download::CancellationToken,
+            sink: &mut (dyn FnMut(DownloadProgress) + Send),
+        ) -> Result<DownloadedWork> {
+            FakeDownloadSource
+                .download_files(job, plan, cancellation, sink)
+                .await
+        }
+    }
+
+    #[async_trait]
     impl AccountSyncSource for TwoFactorSyncSource {
         async fn content_count(&self) -> Result<ContentCount> {
             self.inner.content_count().await
@@ -4299,7 +4228,13 @@ mod tests {
         assert_eq!(product.download.status, WorkDownloadStatus::Downloaded);
         assert_eq!(
             product.download.local_path,
-            Some(library_root.join("RJ000001").to_string_lossy().into_owned())
+            Some(
+                library_root
+                    .join("RJ000001")
+                    .canonicalize()?
+                    .to_string_lossy()
+                    .into_owned()
+            )
         );
         assert!(matches!(
             events.first(),
@@ -5026,6 +4961,498 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancelled_two_factor_download_records_cancellation_and_stops_bulk() -> Result<()> {
+        let library = migrated_library().await?;
+        library.save_account(save_account_request(true)).await?;
+        library
+            .sync_account_with_source(AccountSyncRequest::new("account-a"), &sync_source())
+            .await?;
+        let root = test_dir("two-factor-cancel-download");
+        let source = TwoFactorSyncSource::new();
+        let prompt = ScriptedTwoFactorPrompt::with_responses([TwoFactorPromptResponse::Cancelled]);
+        let error = library
+            .download_products_with_source(
+                BulkWorkDownloadRequest {
+                    two_factor_prompt: Some(&prompt),
+                    ..BulkWorkDownloadRequest::new(
+                        ProductListQuery::default(),
+                        &root.join("library"),
+                        &root.join("staging"),
+                    )
+                },
+                &source,
+            )
+            .await
+            .expect_err("cancelled bulk must stop");
+        assert_eq!(error.failure_code(), "cancelled");
+        assert_eq!(prompt.requests().len(), 1);
+        let page = library.list_products(&ProductListQuery::default()).await?;
+        assert_eq!(
+            page.products
+                .iter()
+                .filter(|p| p.download.status == WorkDownloadStatus::Cancelled)
+                .count(),
+            1
+        );
+        assert_eq!(
+            page.products
+                .iter()
+                .filter(|p| p.download.status == WorkDownloadStatus::NotDownloaded)
+                .count(),
+            1
+        );
+        assert_eq!(std::fs::read_dir(root.join("library"))?.count(), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn authentication_http_waits_cancel_and_release_account_lock() -> Result<()> {
+        struct PendingSource {
+            phase: &'static str,
+            entered: tokio::sync::Notify,
+        }
+        impl PendingSource {
+            async fn wait(&self, phase: &str) {
+                if self.phase == phase {
+                    self.entered.notify_one();
+                    std::future::pending::<()>().await;
+                }
+            }
+        }
+        #[async_trait]
+        impl DlsiteAuthSource for PendingSource {
+            async fn restore_session(&self, _: &SessionSnapshot) -> Result<()> {
+                self.wait("restore").await;
+                Ok(())
+            }
+            async fn validate_session(&self) -> Result<bool> {
+                self.wait("validate").await;
+                Ok(false)
+            }
+            async fn begin_login(&self, _: &Credentials) -> Result<LoginOutcome> {
+                self.wait("login").await;
+                Ok(LoginOutcome::TwoFactorRequired(
+                    TwoFactorSyncSource::challenge(),
+                ))
+            }
+            async fn complete_two_factor(
+                &self,
+                _: &TwoFactorChallenge,
+                _: &str,
+            ) -> Result<SessionSnapshot> {
+                self.wait("submit").await;
+                panic!("unexpected code submission")
+            }
+        }
+        for phase in ["restore", "validate", "login", "submit"] {
+            let library = migrated_library().await?;
+            let account = library.save_account(save_account_request(true)).await?;
+            let session_ref = CredentialRef::account_session(&account.id)?;
+            library
+                .credentials
+                .save_password(&session_ref, "old-session")?;
+            let token = CancellationToken::new();
+            let source = PendingSource {
+                phase,
+                entered: tokio::sync::Notify::new(),
+            };
+            let prompt = ScriptedTwoFactorPrompt::new([VALID_TWO_FACTOR_CODE]);
+            let result = tokio::time::timeout(Duration::from_secs(2), async {
+                tokio::join!(
+                    library.authenticate_account(
+                        &account,
+                        None,
+                        Some(&prompt),
+                        Some(&token),
+                        &source
+                    ),
+                    async {
+                        source.entered.notified().await;
+                        token.cancel();
+                    }
+                )
+                .0
+            })
+            .await
+            .expect("authentication must observe cancellation");
+            assert!(result
+                .expect_err("pending request must cancel")
+                .is_cancelled());
+            assert!(library.login_lock(&account.id).try_lock().is_ok());
+            assert!(prompt.requests().len() <= 1);
+            if matches!(phase, "restore" | "validate") {
+                assert_eq!(
+                    library.credentials.load_password(&session_ref)?.as_deref(),
+                    Some("old-session")
+                );
+            } else {
+                assert!(library.credentials.load_password(&session_ref)?.is_none());
+            }
+            library
+                .authenticate_account(&account, None, None, None, &sync_source())
+                .await?;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bulk_token_cancellation_keeps_completed_report() -> Result<()> {
+        struct CancelAfterFirst(CancellationToken);
+        impl BulkWorkDownloadProgressSink for CancelAfterFirst {
+            fn emit(&self, progress: BulkWorkDownloadProgress) {
+                if matches!(progress, BulkWorkDownloadProgress::WorkCompleted { .. }) {
+                    self.0.cancel();
+                }
+            }
+        }
+        let library = migrated_library().await?;
+        library.save_account(save_account_request(true)).await?;
+        library
+            .sync_account_with_source(AccountSyncRequest::new("account-a"), &sync_source())
+            .await?;
+        let root = test_dir("bulk-partial-cancel");
+        let token = CancellationToken::new();
+        let sink = CancelAfterFirst(token.clone());
+        let result = library
+            .download_products_with_source(
+                BulkWorkDownloadRequest {
+                    cancellation_token: Some(&token),
+                    progress_sink: Some(&sink),
+                    ..BulkWorkDownloadRequest::new(
+                        ProductListQuery::default(),
+                        &root.join("library"),
+                        &root.join("staging"),
+                    )
+                },
+                &FakeDownloadSource,
+            )
+            .await;
+        let LibraryError::BulkInterrupted {
+            report,
+            interrupted_work,
+            ..
+        } = result.unwrap_err()
+        else {
+            panic!("partial report required")
+        };
+        assert_eq!(report.succeeded_count, 1);
+        assert_eq!(report.failed_count, 0);
+        assert!(interrupted_work.is_none());
+        assert!(report.succeeded_works[0].local_path.is_dir());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn replacement_db_failure_restores_old_bytes_and_complete_record() -> Result<()> {
+        let library = migrated_library().await?;
+        library.save_account(save_account_request(true)).await?;
+        library
+            .sync_account_with_source(AccountSyncRequest::new("account-a"), &sync_source())
+            .await?;
+        let root = test_dir("replacement-db-rollback");
+        let library_root = root.join("library");
+        let staging_root = root.join("staging");
+        library
+            .download_work_with_source(
+                WorkDownloadRequest::new("RJ000001", &library_root, &staging_root),
+                &FakeDownloadSource,
+            )
+            .await?;
+        tokio::fs::write(library_root.join("RJ000001/RJ000001.txt"), b"old bytes!").await?;
+        let previous = library.storage.work_download_state("RJ000001").await?;
+        let mut tx = library.storage.begin_write().await?;
+        tx.execute("CREATE TRIGGER reject_download BEFORE UPDATE ON work_downloads BEGIN SELECT RAISE(ABORT, 'injected DB failure'); END").await?;
+        tx.commit().await?;
+        let error = library
+            .download_work_with_source(
+                WorkDownloadRequest {
+                    replace_existing: true,
+                    ..WorkDownloadRequest::new("RJ000001", &library_root, &staging_root)
+                },
+                &FakeDownloadSource,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.failure_code(), "storage");
+        assert_eq!(
+            library.storage.work_download_state("RJ000001").await?,
+            previous
+        );
+        assert_eq!(
+            tokio::fs::read(library_root.join("RJ000001/RJ000001.txt")).await?,
+            b"old bytes!"
+        );
+        assert!(staging_root.join("RJ000001/RJ000001.txt").is_file());
+        assert!(library
+            .storage
+            .download_finalization("RJ000001")
+            .await?
+            .is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn replacement_prompt_cancel_preserves_download_and_concurrent_consumers_share_login(
+    ) -> Result<()> {
+        let library = migrated_library().await?;
+        library.save_account(save_account_request(true)).await?;
+        library
+            .sync_account_with_source(AccountSyncRequest::new("account-a"), &sync_source())
+            .await?;
+        let root = test_dir("replacement-auth-cancel");
+        let library_root = root.join("library");
+        let staging = root.join("staging");
+        library
+            .download_work_with_source(
+                WorkDownloadRequest::new("RJ000001", &library_root, &staging),
+                &FakeDownloadSource,
+            )
+            .await?;
+        let previous = library.storage.work_download_state("RJ000001").await?;
+        let source = TwoFactorSyncSource::new();
+        let cancel = ScriptedTwoFactorPrompt::with_responses([TwoFactorPromptResponse::Cancelled]);
+        let result = library
+            .download_work_with_source(
+                WorkDownloadRequest {
+                    replace_existing: true,
+                    two_factor_prompt: Some(&cancel),
+                    ..WorkDownloadRequest::new("RJ000001", &library_root, &staging)
+                },
+                &source,
+            )
+            .await;
+        assert!(result.unwrap_err().is_cancelled());
+        assert_eq!(
+            library.storage.work_download_state("RJ000001").await?,
+            previous
+        );
+        assert_eq!(
+            std::fs::read(library_root.join("RJ000001/RJ000001.txt"))?,
+            b"downloaded"
+        );
+
+        let prompt = ScriptedTwoFactorPrompt::new([VALID_TWO_FACTOR_CODE]);
+        let source = TwoFactorSyncSource::new();
+        let (sync, download) = tokio::join!(
+            library.sync_account_with_source(
+                AccountSyncRequest {
+                    two_factor_prompt: Some(&prompt),
+                    ..AccountSyncRequest::new("account-a")
+                },
+                &source
+            ),
+            library.download_work_with_source(
+                WorkDownloadRequest {
+                    two_factor_prompt: Some(&prompt),
+                    ..WorkDownloadRequest::new("RJ000002", &library_root, &staging)
+                },
+                &source
+            )
+        );
+        sync?;
+        download?;
+        assert_eq!(source.state().login_count, 1);
+        assert_eq!(prompt.requests().len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn exhausted_two_factor_retries_remain_failed() -> Result<()> {
+        let library = migrated_library().await?;
+        library.save_account(save_account_request(true)).await?;
+        let source = TwoFactorSyncSource::new();
+        let prompt = ScriptedTwoFactorPrompt::new(["000000", "000000", "000000"]);
+        let error = library
+            .sync_account_with_source(
+                AccountSyncRequest {
+                    two_factor_prompt: Some(&prompt),
+                    ..AccountSyncRequest::new("account-a")
+                },
+                &source,
+            )
+            .await
+            .unwrap_err();
+        assert!(!error.is_cancelled());
+        assert_eq!(error.failure_code(), "two_factor_rejected");
+        assert_eq!(
+            library.storage.sync_runs_for_account("account-a").await?[0].status,
+            dm_storage::SyncRunStatus::Failed
+        );
+        assert_eq!(prompt.requests().len(), 3);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn replacement_rejects_staging_overlap_with_manual_content_before_deletion() -> Result<()>
+    {
+        let library = migrated_library().await?;
+        library.save_account(save_account_request(true)).await?;
+        library
+            .sync_account_with_source(AccountSyncRequest::new("account-a"), &sync_source())
+            .await?;
+        let root = test_dir("manual-staging-overlap");
+        let library_root = root.join("library");
+        let staging = library_root.join("staging");
+        let old = staging.join("RJ000001");
+        std::fs::create_dir_all(&old)?;
+        std::fs::write(old.join("content"), b"keep")?;
+        library
+            .mark_work_downloaded(WorkDownloadMarkRequest::new(
+                "RJ000001",
+                &library_root,
+                &old,
+            ))
+            .await?;
+        let previous = library.storage.work_download_state("RJ000001").await?;
+        let result = library
+            .download_work_with_source(
+                WorkDownloadRequest {
+                    replace_existing: true,
+                    ..WorkDownloadRequest::new("RJ000001", &library_root, &staging)
+                },
+                &FakeDownloadSource,
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(LibraryError::DownloadPathOutsideRoots(_))
+        ));
+        assert_eq!(std::fs::read(old.join("content"))?, b"keep");
+        assert_eq!(
+            library.storage.work_download_state("RJ000001").await?,
+            previous
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelling_replacement_during_transfer_or_preparation_keeps_old_state() -> Result<()> {
+        struct CancelProgress {
+            token: CancellationToken,
+            at_finalization: bool,
+        }
+        impl WorkDownloadProgressSink for CancelProgress {
+            fn emit(&self, progress: WorkDownloadProgress) {
+                if (self.at_finalization && matches!(progress, WorkDownloadProgress::Finalizing))
+                    || (!self.at_finalization
+                        && matches!(progress, WorkDownloadProgress::Download(_)))
+                {
+                    self.token.cancel();
+                }
+            }
+        }
+        for at_finalization in [false, true] {
+            let library = migrated_library().await?;
+            library.save_account(save_account_request(true)).await?;
+            library
+                .sync_account_with_source(AccountSyncRequest::new("account-a"), &sync_source())
+                .await?;
+            let root = test_dir("replacement-cancel-boundary");
+            let library_root = root.join("library");
+            let staging = root.join("staging");
+            library
+                .download_work_with_source(
+                    WorkDownloadRequest::new("RJ000001", &library_root, &staging),
+                    &FakeDownloadSource,
+                )
+                .await?;
+            std::fs::write(library_root.join("RJ000001/RJ000001.txt"), b"old content")?;
+            let old = library.storage.work_download_state("RJ000001").await?;
+            let token = CancellationToken::new();
+            let sink = CancelProgress {
+                token: token.clone(),
+                at_finalization,
+            };
+            let error = library
+                .download_work_with_source(
+                    WorkDownloadRequest {
+                        replace_existing: true,
+                        cancellation_token: Some(&token),
+                        progress_sink: Some(&sink),
+                        ..WorkDownloadRequest::new("RJ000001", &library_root, &staging)
+                    },
+                    &FakeDownloadSource,
+                )
+                .await
+                .unwrap_err();
+            assert!(error.is_cancelled());
+            assert_eq!(library.storage.work_download_state("RJ000001").await?, old);
+            assert_eq!(
+                std::fs::read(library_root.join("RJ000001/RJ000001.txt"))?,
+                b"old content"
+            );
+            assert!(staging.join("RJ000001/RJ000001.txt").is_file());
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn session_restore_distinguishes_invalid_data_from_validation_network_errors(
+    ) -> Result<()> {
+        struct Probe {
+            outcome: &'static str,
+            logins: std::sync::atomic::AtomicUsize,
+        }
+        #[async_trait]
+        impl DlsiteAuthSource for Probe {
+            async fn restore_session(&self, _: &SessionSnapshot) -> Result<()> {
+                if self.outcome == "malformed" {
+                    return Err(LibraryError::Json(
+                        serde_json::from_str::<Value>("invalid").unwrap_err(),
+                    ));
+                }
+                Ok(())
+            }
+            async fn validate_session(&self) -> Result<bool> {
+                if self.outcome == "network" {
+                    return Err(LibraryError::SyncSource("offline".to_owned()));
+                }
+                Ok(self.outcome == "valid")
+            }
+            async fn begin_login(&self, _: &Credentials) -> Result<LoginOutcome> {
+                self.logins
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(LoginOutcome::Authorized(SessionSnapshot {
+                    cookies_json: "fresh".to_owned(),
+                }))
+            }
+            async fn complete_two_factor(
+                &self,
+                _: &TwoFactorChallenge,
+                _: &str,
+            ) -> Result<SessionSnapshot> {
+                unreachable!()
+            }
+        }
+        for outcome in ["valid", "expired", "malformed", "network"] {
+            let library = migrated_library().await?;
+            let account = library.save_account(save_account_request(true)).await?;
+            let session_ref = CredentialRef::account_session(&account.id)?;
+            library.credentials.save_password(&session_ref, "stored")?;
+            // New Library instance, same durable stores; no process-local auth state reused.
+            let library = Library::new(library.storage.clone(), library.credentials.clone());
+            let source = Probe {
+                outcome,
+                logins: std::sync::atomic::AtomicUsize::new(0),
+            };
+            let result = library
+                .authenticate_account(&account, None, None, None, &source)
+                .await;
+            let should_login = matches!(outcome, "expired" | "malformed");
+            assert_eq!(result.is_err(), outcome == "network");
+            assert_eq!(
+                source.logins.load(std::sync::atomic::Ordering::SeqCst),
+                usize::from(should_login)
+            );
+            assert_eq!(
+                library.credentials.load_password(&session_ref)?.as_deref(),
+                Some(if should_login { "fresh" } else { "stored" })
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn two_factor_sync_completes_with_a_prompted_code() -> Result<()> {
         let library = migrated_library().await?;
         library.save_account(save_account_request(true)).await?;
@@ -5117,6 +5544,9 @@ mod tests {
             "two_factor_cancelled"
         );
         assert!(source.state().submitted_codes.is_empty());
+
+        let runs = library.storage().sync_runs_for_account("account-a").await?;
+        assert_eq!(runs[0].status, dm_storage::SyncRunStatus::Cancelled);
 
         Ok(())
     }

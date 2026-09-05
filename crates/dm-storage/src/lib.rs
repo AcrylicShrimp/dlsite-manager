@@ -1,4 +1,6 @@
 use serde::Deserialize;
+mod finalization;
+pub use finalization::DownloadFinalization;
 use sqlx::{
     migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteQueryResult},
@@ -116,6 +118,24 @@ pub struct WorkDownloadUpdate {
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
     pub updated_at: String,
+}
+
+impl From<WorkDownloadUpdate> for WorkDownloadState {
+    fn from(update: WorkDownloadUpdate) -> Self {
+        Self {
+            status: update.status,
+            local_path: update.local_path,
+            staging_path: update.staging_path,
+            unpack_policy: Some(update.unpack_policy),
+            bytes_received: update.bytes_received,
+            bytes_total: update.bytes_total,
+            error_code: update.error_code,
+            error_message: update.error_message,
+            started_at: update.started_at,
+            completed_at: update.completed_at,
+            updated_at: Some(update.updated_at),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2702,7 +2722,7 @@ mod tests {
             .fetch_one(&storage.pool)
             .await?;
 
-        assert_eq!(migration_count, 5);
+        assert_eq!(migration_count, 6);
 
         Ok(())
     }

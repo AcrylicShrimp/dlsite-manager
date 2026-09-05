@@ -54,3 +54,6 @@ jobs:
 
       - name: Test
         run: mise run test
+
+      - name: Frontend lifecycle tests
+        run: pnpm test

@@ -8,6 +8,8 @@
   import ToastStack from "$lib/components/ToastStack.svelte";
   import TwoFactorDialog from "$lib/components/TwoFactorDialog.svelte";
   import { JobController } from "$lib/controllers/job-controller.svelte";
+  import { LibraryQueryController, RequestGeneration } from "$lib/controllers/library-query-controller";
+  import { TwoFactorController } from "$lib/controllers/two-factor-controller.svelte";
   import AccountsView from "$lib/features/accounts/AccountsView.svelte";
   import ActivityView from "$lib/features/activity/ActivityView.svelte";
   import DownloadsView from "$lib/features/downloads/DownloadsView.svelte";
@@ -25,13 +27,11 @@
   } from "$lib/utils/format";
   import {
     activeJobDetail,
-    bulkDownloadResult,
     isActiveJob,
     isDownloadQueueJob,
     isTerminalJob,
     jobAccountId,
     jobLabel,
-    jobOutputBoolean,
     jobOutputNumber,
     jobOutputString,
     jobWorkId,
@@ -60,8 +60,6 @@
     ProductFilterFacets,
     ProductImagePreview,
     StartWorkDownloadOptions,
-    TwoFactorClosed,
-    TwoFactorRequest,
     Toast,
     ToastKind,
     View,
@@ -123,8 +121,14 @@
   let chipTooltip = $state<ChipTooltip | null>(null);
   let bulkDownloadDialog = $state<BulkDownloadDialog | null>(null);
   let confirmationDialog = $state<ConfirmationDialog | null>(null);
-  let twoFactorQueue = $state<TwoFactorRequest[]>([]);
-  let twoFactorSubmitting = $state(false);
+  const twoFactor = new TwoFactorController(error => notifyError(errorMessage(error)));
+  const detailGeneration = new RequestGeneration();
+  const libraryQuery = new LibraryQueryController(commands, {
+    loading: value => { productsLoading = value; },
+    page: (page, index) => { products = page.products; totalProducts = page.totalCount; productPageIndex = index; },
+    facets: value => { productFilterFacets = value; },
+    error: error => notifyError(errorMessage(error)),
+  });
 
   let toastSequence = 0;
   let bulkDownloadDialogResolve: ((confirmed: boolean) => void) | null = null;
@@ -148,16 +152,18 @@
     };
 
     register(jobController.listen(handleJobEvent));
-    register(native.listenToTwoFactorRequests(queueTwoFactorRequest));
+    register(native.listenToTwoFactorRequests(request => twoFactor.enqueue(request)));
     register(
       native.listenToTwoFactorClosures((closed) => {
         // The job stopped waiting (timeout, cancellation, or another window answered).
-        dropTwoFactorRequest(closed.requestId);
+        twoFactor.close(closed.requestId);
       }),
     );
 
     return () => {
       disposed = true;
+      twoFactor.dispose();
+      invalidateLibrary();
 
       for (const unlisten of unlisteners) {
         unlisten();
@@ -414,41 +420,22 @@
   }
 
   async function loadProducts(options: ProductLoadOptions = {}) {
-    if (options.resetPage) {
-      productPageIndex = 0;
-    }
-
-    productsLoading = true;
-
-    try {
-      let request = productListRequest();
-      let page = await commands.listProducts(request);
-
-      if (options.clampInvalidPage) {
-        const pageIndex = clampedProductPageIndex(page.totalCount);
-
-        if (pageIndex !== productPageIndex) {
-          productPageIndex = pageIndex;
-
-          if (page.totalCount > 0) {
-            request = productListRequest();
-            page = await commands.listProducts(request);
-          }
-        }
-      }
-
-      products = page.products;
-      totalProducts = page.totalCount;
-      await loadProductFilterFacets(request);
-    } catch (err) {
-      notifyError(errorMessage(err));
-    } finally {
-      productsLoading = false;
-    }
+    if (options.resetPage) productPageIndex = 0;
+    await libraryQuery.load(productListRequest(), options.clampInvalidPage);
   }
 
-  async function loadProductFilterFacets(request = productListRequest()) {
-    productFilterFacets = await commands.listProductFilterFacets(request);
+  function invalidateLibrary() {
+    libraryQuery.invalidate();
+    detailGeneration.invalidate();
+  }
+
+  async function refreshLibraryAfterMutation() {
+    invalidateLibrary();
+    const detailId = productDetailLoadingWorkId ?? productDetail?.workId;
+    await Promise.all([
+      loadProducts({ clampInvalidPage: true }),
+      detailId ? loadProductDetail(detailId) : Promise.resolve(),
+    ]);
   }
 
   function productListRequest(): commands.ProductListRequest {
@@ -675,7 +662,7 @@
     if (event.kind === "accountSync" && isTerminalJob(event.snapshot)) {
       await Promise.all([
         loadAccounts(),
-        loadProducts({ clampInvalidPage: true }),
+        refreshLibraryAfterMutation(),
         loadAuditEvents(),
       ]);
     }
@@ -684,104 +671,13 @@
       (event.kind === "workDownload" || event.kind === "bulkWorkDownload") &&
       isTerminalJob(event.snapshot)
     ) {
-      applyDownloadJobResult(event.snapshot);
-      await loadAuditEvents();
+      await Promise.all([refreshLibraryAfterMutation(), loadAuditEvents()]);
     }
   }
 
-  function applyDownloadJobResult(job: JobSnapshot) {
-    if (job.kind === "workDownload") {
-      applySingleDownloadJobResult(job);
-      return;
-    }
-
-    if (job.kind === "bulkWorkDownload") {
-      applyBulkDownloadJobResult(job);
-    }
-  }
-
-  function applySingleDownloadJobResult(job: JobSnapshot) {
-    if (jobOutputBoolean(job, "skippedQueued")) {
-      return;
-    }
-
-    const workId = jobWorkId(job) ?? jobOutputString(job, "workId");
-
-    if (!workId) {
-      return;
-    }
-
-    if (job.status === "succeeded") {
-      patchProductDownload(workId, {
-        status: "downloaded",
-        localPath: jobOutputString(job, "localPath"),
-        errorCode: null,
-        errorMessage: null,
-        completedAt: job.finishedAt,
-        updatedAt: job.finishedAt ?? new Date().toISOString(),
-      });
-      return;
-    }
-
-    patchProductDownload(workId, {
-      status: job.status === "cancelled" ? "cancelled" : "failed",
-      errorCode: job.error?.code ?? null,
-      errorMessage: job.error?.message ?? null,
-      updatedAt: job.finishedAt ?? new Date().toISOString(),
-    });
-  }
-
-  function applyBulkDownloadJobResult(job: JobSnapshot) {
-    const result = bulkDownloadResult(job);
-
-    for (const success of result.succeededWorks) {
-      patchProductDownload(success.workId, {
-        status: "downloaded",
-        localPath: success.localPath,
-        errorCode: null,
-        errorMessage: null,
-        completedAt: job.finishedAt,
-        updatedAt: job.finishedAt ?? new Date().toISOString(),
-      });
-    }
-
-    for (const failure of result.failedWorks) {
-      patchProductDownload(failure.workId, {
-        status: job.status === "cancelled" ? "cancelled" : "failed",
-        errorCode: failure.errorCode ?? job.error?.code ?? null,
-        errorMessage: failure.errorMessage ?? job.error?.message ?? null,
-        updatedAt: job.finishedAt ?? new Date().toISOString(),
-      });
-    }
-  }
-
-  function patchProductDownload(workId: string, patch: Partial<ProductDownload>) {
-    products = products.map((product) => {
-      if (product.workId !== workId) {
-        return product;
-      }
-
-      return {
-        ...product,
-        download: {
-          ...product.download,
-          ...patch,
-        },
-      };
-    });
-
-    if (productDetail?.workId === workId) {
-      productDetail = {
-        ...productDetail,
-        download: {
-          ...productDetail.download,
-          ...patch,
-        },
-      };
-    }
-  }
 
   function setProductDownload(workId: string, download: ProductDownload) {
+    invalidateLibrary();
     products = products.map((product) =>
       product.workId === workId
         ? {
@@ -841,8 +737,9 @@
   async function saveProductCustomTags(workId: string, names: string[]) {
     const customTags = await commands.setProductCustomTags(workId, names);
 
+    invalidateLibrary();
     patchProductCustomTags(workId, customTags);
-    await loadProductFilterFacets();
+    await refreshLibraryAfterMutation();
 
     return customTags;
   }
@@ -859,12 +756,13 @@
     }
 
     const nextNames = [...productDetail.customTags.map((tag) => tag.name), ...additions];
+    const workId = productDetail.workId;
 
     try {
-      const customTags = await saveProductCustomTags(productDetail.workId, nextNames);
-      customTagInput = "";
+      const customTags = await saveProductCustomTags(workId, nextNames);
+      if (productDetail?.workId === workId) customTagInput = "";
       notifySuccess(
-        `Saved ${customTags.length} custom tag${customTags.length === 1 ? "" : "s"} for ${productDetail.workId}`,
+        `Saved ${customTags.length} custom tag${customTags.length === 1 ? "" : "s"} for ${workId}`,
       );
     } catch (err) {
       notifyError(errorMessage(err));
@@ -879,10 +777,11 @@
     const nextNames = productDetail.customTags
       .map((tag) => tag.name)
       .filter((name) => name !== tagName);
+    const workId = productDetail.workId;
 
     try {
-      await saveProductCustomTags(productDetail.workId, nextNames);
-      notifySuccess(`Removed custom tag ${tagName} from ${productDetail.workId}`);
+      await saveProductCustomTags(workId, nextNames);
+      notifySuccess(`Removed custom tag ${tagName} from ${workId}`);
     } catch (err) {
       notifyError(errorMessage(err));
     }
@@ -931,18 +830,26 @@
 
   async function openProductDetail(product: Product) {
     closeProductActionMenu();
-    productDetailLoadingWorkId = product.workId;
+    await loadProductDetail(product.workId);
+  }
+
+  async function loadProductDetail(workId: string) {
+    const generation = detailGeneration.invalidate();
+    productDetailLoadingWorkId = workId;
 
     try {
-      productDetail = await commands.getProductDetail(product.workId);
+      const detail = await commands.getProductDetail(workId);
+      if (detailGeneration.current(generation)) productDetail = detail;
     } catch (err) {
-      notifyError(errorMessage(err));
+      if (detailGeneration.current(generation)) notifyError(errorMessage(err));
     } finally {
-      productDetailLoadingWorkId = null;
+      if (detailGeneration.current(generation)) productDetailLoadingWorkId = null;
     }
   }
 
   function closeProductDetail() {
+    detailGeneration.invalidate();
+    productDetailLoadingWorkId = null;
     productDetail = null;
     customTagInput = "";
   }
@@ -1173,6 +1080,7 @@
       const download = await commands.deleteWorkDownload(product.workId);
       notifySuccess(`Deleted download for ${product.workId}`);
       setProductDownload(product.workId, download);
+      await refreshLibraryAfterMutation();
     } catch (err) {
       notifyError(errorMessage(err));
     }
@@ -1196,6 +1104,7 @@
       const download = await commands.markWorkDownloaded(product.workId, selected);
       notifySuccess(`Marked ${product.workId} as downloaded`);
       setProductDownload(product.workId, download);
+      await refreshLibraryAfterMutation();
     } catch (err) {
       notifyError(errorMessage(err));
     }
@@ -1501,58 +1410,6 @@
     resolve?.(confirmed);
   }
 
-  const activeTwoFactorRequest = $derived(twoFactorQueue[0] ?? null);
-
-  function queueTwoFactorRequest(request: TwoFactorRequest) {
-    // A retry for the same job replaces its earlier request rather than stacking behind it.
-    twoFactorQueue = [
-      ...twoFactorQueue.filter((queued) => queued.jobId !== request.jobId),
-      request,
-    ];
-  }
-
-  function dropTwoFactorRequest(requestId: string) {
-    twoFactorQueue = twoFactorQueue.filter((queued) => queued.requestId !== requestId);
-
-    if (twoFactorQueue.length === 0) {
-      twoFactorSubmitting = false;
-    }
-  }
-
-  async function submitTwoFactorCode(code: string) {
-    const request = activeTwoFactorRequest;
-
-    if (!request || twoFactorSubmitting) {
-      return;
-    }
-
-    twoFactorSubmitting = true;
-
-    try {
-      await commands.submitTwoFactorCode(request.requestId, code);
-      dropTwoFactorRequest(request.requestId);
-    } catch (error) {
-      notifyError(errorMessage(error));
-    } finally {
-      twoFactorSubmitting = false;
-    }
-  }
-
-  async function cancelTwoFactor() {
-    const request = activeTwoFactorRequest;
-
-    if (!request) {
-      return;
-    }
-
-    dropTwoFactorRequest(request.requestId);
-
-    try {
-      await commands.cancelTwoFactor(request.requestId);
-    } catch (error) {
-      notifyError(errorMessage(error));
-    }
-  }
 
   function showConfirmationDialog(dialog: ConfirmationDialog) {
     if (confirmationDialogResolve) {
@@ -1829,10 +1686,10 @@
   <ConfirmationDialogView dialog={confirmationDialog} onClose={closeConfirmationDialog} />
 
   <TwoFactorDialog
-    request={activeTwoFactorRequest}
-    submitting={twoFactorSubmitting}
-    onSubmit={(code) => void submitTwoFactorCode(code)}
-    onCancel={() => void cancelTwoFactor()}
+    request={twoFactor.active}
+    submitting={twoFactor.submitting}
+    onSubmit={(code) => void twoFactor.submit(code)}
+    onCancel={() => void twoFactor.cancel()}
   />
   <BulkDownloadDialogView dialog={bulkDownloadDialog} onClose={closeBulkDownloadDialog} />
   <ProductDetailDialog
