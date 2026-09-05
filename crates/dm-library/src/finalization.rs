@@ -180,10 +180,63 @@ impl Installation {
     }
 
     fn owned(&self) -> Result<()> {
-        if std::fs::read_to_string(self.temporary().join("owner"))? != self.record.operation_id {
+        let marker = self.temporary().join("owner");
+        if !std::fs::symlink_metadata(&marker)?.file_type().is_file()
+            || std::fs::read_to_string(marker)? != self.record.operation_id
+        {
             return Err(self.required("recovery ownership marker does not match"));
         }
         Ok(())
+    }
+
+    fn marker_missing(&self) -> Result<bool> {
+        match std::fs::symlink_metadata(self.temporary().join("owner")) {
+            Ok(_) => Ok(false),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn check_rollback_complete(&self) -> Result<()> {
+        if !Path::new(&self.record.staging_path).is_dir()
+            || self
+                .record
+                .old_path
+                .as_ref()
+                .is_some_and(|p| !Path::new(p).is_dir())
+            || (self.record.old_path.as_deref() != Some(&self.record.final_path)
+                && Path::new(&self.record.final_path).try_exists()?)
+        {
+            return Err(self.required("missing or unexpected recovery material"));
+        }
+        Ok(())
+    }
+
+    async fn remove_incomplete_initialization(&self) -> Result<bool> {
+        if self.record.committed {
+            return Ok(false);
+        }
+        let marker = self.temporary().join("owner");
+        if !std::fs::symlink_metadata(&marker)?.file_type().is_file() {
+            return Ok(false);
+        }
+        let contents = std::fs::read(&marker)?;
+        let operation_id = self.record.operation_id.as_bytes();
+        if contents.len() >= operation_id.len() || !operation_id.starts_with(&contents) {
+            return Ok(false);
+        }
+        // Preparation cannot move/copy payload until the full marker write succeeds.
+        // A strict prefix alone is insufficient: require intact pre-install paths and
+        // only this regular marker in the validated recorded temporary directory.
+        self.check_rollback_complete()?;
+        for entry in std::fs::read_dir(self.temporary())? {
+            if entry?.file_name() != "owner" {
+                return Err(self.required("incomplete owner beside unexpected recovery material"));
+            }
+        }
+        tokio::fs::remove_file(marker).await?;
+        tokio::fs::remove_dir(self.temporary()).await?;
+        Ok(true)
     }
 
     fn check_temporary_entries(&self) -> Result<()> {
@@ -200,16 +253,17 @@ impl Installation {
     /// cross-device copy is retained under the owned temporary path for inspection.
     pub async fn rollback(&self) -> Result<()> {
         if !self.temporary().try_exists()? {
-            // Intent persisted before preparation began. No rename may have occurred.
-            if !Path::new(&self.record.staging_path).is_dir()
-                || self
-                    .record
-                    .old_path
-                    .as_ref()
-                    .is_some_and(|p| !Path::new(p).is_dir())
-            {
-                return Err(self.required("missing recovery material"));
-            }
+            self.check_rollback_complete()?;
+            return Ok(());
+        }
+        if self.marker_missing()? {
+            // The validated recorded directory can be empty before marker creation or
+            // after retirement. Never recursively remove unowned contents.
+            self.check_rollback_complete()?;
+            tokio::fs::remove_dir(self.temporary()).await?;
+            return Ok(());
+        }
+        if self.remove_incomplete_initialization().await? {
             return Ok(());
         }
         self.owned()?;
@@ -259,7 +313,16 @@ impl Installation {
     }
 
     pub async fn cleanup(&self) -> Result<()> {
-        if !self.temporary().try_exists()? {
+        let temporary_exists = self.temporary().try_exists()?;
+        if !temporary_exists || self.marker_missing()? {
+            if !Path::new(&self.record.final_path).is_dir()
+                || Path::new(&self.record.staging_path).try_exists()?
+            {
+                return Err(self.required("committed cleanup is not complete"));
+            }
+            if temporary_exists {
+                tokio::fs::remove_dir(self.temporary()).await?;
+            }
             return Ok(());
         }
         self.owned()?;
@@ -394,6 +457,12 @@ mod tests {
                 )
                 .await
         }
+
+        fn recovered_old(&self) -> WorkDownloadState {
+            let mut old = self.old.clone();
+            old.staging_path = Some(self.installation.record.staging_path.clone());
+            old
+        }
     }
 
     impl Drop for Fixture {
@@ -433,7 +502,7 @@ mod tests {
                 tokio::fs::read(Path::new(&f.installation.record.final_path).join("content"))
                     .await?;
             if boundary < 4 {
-                assert_eq!(state, f.old, "boundary {boundary}");
+                assert_eq!(state, f.recovered_old(), "boundary {boundary}");
                 assert_eq!(bytes, b"old");
             } else {
                 assert_eq!(state.completed_at.as_deref(), Some("new"));
@@ -477,7 +546,7 @@ mod tests {
         g.recover().await?;
         assert_eq!(
             g.library.storage.work_download_state("RJ000001").await?,
-            g.old
+            g.recovered_old()
         );
         Ok(())
     }
@@ -516,6 +585,448 @@ mod tests {
             .await?;
         assert_eq!(state.status, WorkDownloadStatus::NotDownloaded);
         assert!(!f.installation.backup().exists());
+        assert!(!Path::new(&f.installation.record.final_path).exists());
+        assert!(!Path::new(&f.installation.record.staging_path).exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn restart_with_empty_missing_marker_at_initialization_and_retirement() -> Result<()> {
+        for boundary in 0..3 {
+            let mut f = Fixture::new().await?;
+            if boundary == 0 {
+                // Process stopped between create_dir and the initial marker write.
+                std::fs::create_dir(f.installation.temporary())?;
+            } else {
+                f.installation.prepare().await?;
+                if boundary == 1 {
+                    // Rollback returned the payload, then removed its marker.
+                    tokio::fs::rename(
+                        f.installation.payload(),
+                        &f.installation.record.staging_path,
+                    )
+                    .await?;
+                } else {
+                    f.installation.install().await?;
+                    f.library
+                        .storage
+                        .commit_download_finalization(
+                            &f.installation.record.operation_id,
+                            &f.update,
+                        )
+                        .await?;
+                    std::fs::remove_dir_all(f.installation.backup())?;
+                }
+                std::fs::remove_file(f.installation.temporary().join("owner"))?;
+            }
+            // Recover filesystem state, then restart before intent can be cleared.
+            if boundary == 2 {
+                f.installation.cleanup().await?;
+            } else {
+                f.installation.rollback().await?;
+            }
+            for _ in 0..2 {
+                f.reopen().await?;
+                f.recover().await?;
+                let state = f.library.storage.work_download_state("RJ000001").await?;
+                assert_eq!(
+                    state,
+                    if boundary == 2 {
+                        f.update.clone().into()
+                    } else {
+                        f.recovered_old()
+                    }
+                );
+                assert_eq!(
+                    std::fs::read(Path::new(&f.installation.record.final_path).join("content"))?,
+                    if boundary == 2 { b"new" } else { b"old" }
+                );
+                assert!(!f.installation.temporary().exists());
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn restart_recovers_every_strict_initial_owner_prefix() -> Result<()> {
+        for prefix_len in 0..Uuid::nil().to_string().len() {
+            let mut f = Fixture::new().await?;
+            std::fs::create_dir(f.installation.temporary())?;
+            std::fs::write(
+                f.installation.temporary().join("owner"),
+                &f.installation.record.operation_id[..prefix_len],
+            )?;
+            for _ in 0..2 {
+                f.reopen().await?;
+                f.recover().await?;
+                assert!(!f.installation.temporary().exists(), "prefix {prefix_len}");
+                assert_eq!(
+                    f.library.storage.work_download_state("RJ000001").await?,
+                    f.recovered_old()
+                );
+                assert_eq!(
+                    std::fs::read(Path::new(&f.installation.record.final_path).join("content"))?,
+                    b"old"
+                );
+                assert_eq!(
+                    std::fs::read(Path::new(&f.installation.record.staging_path).join("content"))?,
+                    b"new"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn missing_or_incomplete_marker_with_ambiguous_material_stays_blocked() -> Result<()> {
+        for case in 0..11 {
+            let mut f = Fixture::new().await?;
+            std::fs::create_dir(f.installation.temporary())?;
+            let marker = f.installation.temporary().join("owner");
+            if [0, 1, 4, 5, 6, 10].contains(&case) {
+                std::fs::write(&marker, &f.installation.record.operation_id[..8])?;
+            }
+            match case {
+                0 => std::fs::create_dir(f.installation.payload())?,
+                1 => std::fs::create_dir(f.installation.backup())?,
+                2 => std::fs::write(f.installation.temporary().join("owner"), b"wrong-operation")?,
+                3 => std::fs::create_dir(f.installation.payload())?,
+                4 => std::fs::write(f.installation.temporary().join("unexpected"), b"retain")?,
+                5 => std::fs::rename(
+                    &f.installation.record.staging_path,
+                    f.root.join("retained-staging"),
+                )?,
+                6 => std::fs::rename(
+                    &f.installation.record.final_path,
+                    f.root.join("retained-old"),
+                )?,
+                7 => std::fs::write(
+                    &marker,
+                    format!("{}extra", f.installation.record.operation_id),
+                )?,
+                8 => std::fs::create_dir(&marker)?,
+                9 => std::fs::write(f.installation.temporary().join("unexpected"), b"retain")?,
+                10 => {
+                    // A fresh operation requires an absent final path before installation.
+                    f.library
+                        .storage
+                        .clear_download_finalization(
+                            "RJ000001",
+                            &f.installation.record.operation_id,
+                        )
+                        .await?;
+                    f.installation.record.old_path = None;
+                    f.library
+                        .storage
+                        .begin_download_finalization(&f.installation.record)
+                        .await?;
+                }
+                _ => unreachable!(),
+            }
+            for _ in 0..2 {
+                f.reopen().await?;
+                assert!(matches!(
+                    f.recover().await,
+                    Err(LibraryError::RecoveryRequired(_))
+                ));
+                assert!(f.installation.temporary().is_dir());
+                if [0, 1, 4, 5, 6, 10].contains(&case) {
+                    assert_eq!(
+                        std::fs::read_to_string(&marker)?,
+                        &f.installation.record.operation_id[..8]
+                    );
+                }
+                assert!(f
+                    .library
+                    .storage
+                    .download_finalization("RJ000001")
+                    .await?
+                    .is_some());
+                assert_eq!(
+                    f.library.storage.work_download_state("RJ000001").await?,
+                    f.old
+                );
+                let old = if case == 6 {
+                    f.root.join("retained-old")
+                } else {
+                    PathBuf::from(&f.installation.record.final_path)
+                };
+                assert_eq!(std::fs::read(old.join("content"))?, b"old");
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn committed_incomplete_owner_is_never_treated_as_initialization() -> Result<()> {
+        for prefix_len in [0, 8, 35] {
+            let mut f = Fixture::new().await?;
+            f.installation.prepare().await?;
+            f.installation.install().await?;
+            f.library
+                .storage
+                .commit_download_finalization(&f.installation.record.operation_id, &f.update)
+                .await?;
+            let marker = f.installation.temporary().join("owner");
+            std::fs::write(&marker, &f.installation.record.operation_id[..prefix_len])?;
+            for _ in 0..2 {
+                f.reopen().await?;
+                assert!(matches!(
+                    f.recover().await,
+                    Err(LibraryError::RecoveryRequired(_))
+                ));
+                assert_eq!(
+                    std::fs::read_to_string(&marker)?,
+                    &f.installation.record.operation_id[..prefix_len]
+                );
+                assert_eq!(
+                    std::fs::read(f.installation.backup().join("content"))?,
+                    b"old"
+                );
+                assert_eq!(
+                    std::fs::read(Path::new(&f.installation.record.final_path).join("content"))?,
+                    b"new"
+                );
+                assert!(
+                    f.library
+                        .storage
+                        .download_finalization("RJ000001")
+                        .await?
+                        .unwrap()
+                        .committed
+                );
+                assert_eq!(
+                    f.library.storage.work_download_state("RJ000001").await?,
+                    f.update.clone().into()
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn incomplete_owner_symlink_is_retained() -> Result<()> {
+        let mut f = Fixture::new().await?;
+        std::fs::create_dir(f.installation.temporary())?;
+        let target = f.root.join("external-marker");
+        let marker = f.installation.temporary().join("owner");
+        std::fs::write(&target, &f.installation.record.operation_id[..8])?;
+        std::os::unix::fs::symlink(&target, &marker)?;
+        for _ in 0..2 {
+            f.reopen().await?;
+            assert!(matches!(
+                f.recover().await,
+                Err(LibraryError::RecoveryRequired(_))
+            ));
+            assert!(std::fs::symlink_metadata(&marker)?.file_type().is_symlink());
+            assert_eq!(
+                std::fs::read_to_string(&target)?,
+                &f.installation.record.operation_id[..8]
+            );
+            assert_eq!(
+                f.library.storage.work_download_state("RJ000001").await?,
+                f.old
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn normal_rollback_then_restart_and_delete_removes_restored_staging() -> Result<()> {
+        let mut f = Fixture::new().await?;
+        assert!(f.old.staging_path.is_none());
+        f.installation.prepare().await?;
+        f.installation.install().await?;
+        f.recover().await?;
+        f.reopen().await?;
+        f.library
+            .remove_work_download(WorkDownloadRemovalRequest::new(
+                "RJ000001",
+                &f.root.join("library"),
+                &f.root.join("staging"),
+            ))
+            .await?;
+        assert!(!Path::new(&f.installation.record.staging_path).exists());
+        assert!(!Path::new(&f.installation.record.final_path).exists());
+        assert!(f
+            .library
+            .storage
+            .download_finalization("RJ000001")
+            .await?
+            .is_none());
+        assert_eq!(
+            f.library
+                .storage
+                .work_download_state("RJ000001")
+                .await?
+                .status,
+            WorkDownloadStatus::NotDownloaded
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn recovery_keeps_intent_until_restored_staging_is_durably_tracked() -> Result<()> {
+        for removing in [false, true] {
+            for boundary in 0..4 {
+                let mut f = Fixture::new().await?;
+                assert!(f.old.staging_path.is_none());
+                f.installation.prepare().await?;
+                f.installation.install().await?;
+                if boundary < 2 {
+                    let mut tx = f.library.storage.begin_write().await?;
+                    tx.execute(if boundary == 0 {
+                    "CREATE TRIGGER reject_handoff BEFORE UPDATE ON work_downloads BEGIN SELECT RAISE(ABORT, 'injected tracking failure'); END"
+                } else {
+                    "CREATE TRIGGER reject_handoff BEFORE DELETE ON download_finalizations BEGIN SELECT RAISE(ABORT, 'injected intent clearing failure'); END"
+                }).await?;
+                    tx.commit().await?;
+                }
+                f.reopen().await?;
+                let roots: [&Path; 2] = [&f.root.join("library"), &f.root.join("staging")];
+                // Stop after the handoff, before deleting either tracked content path.
+                let result = f
+                    .library
+                    .recover_download_inner("RJ000001", &roots, removing)
+                    .await;
+                assert_eq!(result.is_err(), boundary < 2);
+                let mut expected = f.old.clone();
+                if boundary > 0 {
+                    expected.staging_path = Some(f.installation.record.staging_path.clone());
+                }
+                assert_eq!(
+                    f.library.storage.work_download_state("RJ000001").await?,
+                    expected
+                );
+                assert_eq!(
+                    f.library
+                        .storage
+                        .download_finalization("RJ000001")
+                        .await?
+                        .is_some(),
+                    boundary < 2
+                );
+                assert_eq!(
+                    std::fs::read(Path::new(&f.installation.record.staging_path).join("content"))?,
+                    b"new"
+                );
+                assert_eq!(
+                    std::fs::read(Path::new(&f.installation.record.final_path).join("content"))?,
+                    b"old"
+                );
+                if boundary == 3 {
+                    // Delete stopped after removing local content but before staging.
+                    std::fs::remove_dir_all(&f.installation.record.final_path)?;
+                }
+
+                f.reopen().await?;
+                if boundary < 2 {
+                    // Repeated failed recovery must remain safe with the original intent.
+                    assert!(f
+                        .library
+                        .recover_download_inner("RJ000001", &roots, removing)
+                        .await
+                        .is_err());
+                    let mut tx = f.library.storage.begin_write().await?;
+                    tx.execute("DROP TRIGGER reject_handoff").await?;
+                    tx.commit().await?;
+                }
+                for _ in 0..2 {
+                    f.reopen().await?;
+                    let state = f
+                        .library
+                        .remove_work_download(WorkDownloadRemovalRequest::new(
+                            "RJ000001", roots[0], roots[1],
+                        ))
+                        .await?;
+                    assert_eq!(state.status, WorkDownloadStatus::NotDownloaded);
+                    assert!(!Path::new(&f.installation.record.staging_path).exists());
+                    assert!(!Path::new(&f.installation.record.final_path).exists());
+                    assert!(f
+                        .library
+                        .storage
+                        .download_finalization("RJ000001")
+                        .await?
+                        .is_none());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn removal_handoff_accounts_for_a_different_previously_tracked_staging_path() -> Result<()>
+    {
+        let mut f = Fixture::new().await?;
+        let previous_staging = f.root.join("staging/previous");
+        std::fs::create_dir(&previous_staging)?;
+        std::fs::write(previous_staging.join("content"), b"previous staging")?;
+        let mut previous_update = f.update.clone();
+        previous_update.staging_path = Some(previous_staging.to_string_lossy().into_owned());
+        f.library
+            .storage
+            .save_work_download(&previous_update)
+            .await?;
+        f.installation.prepare().await?;
+        f.installation.install().await?;
+        let mut tx = f.library.storage.begin_write().await?;
+        tx.execute("CREATE TRIGGER reject_tracking BEFORE UPDATE ON work_downloads BEGIN SELECT RAISE(ABORT, 'injected tracking failure'); END").await?;
+        tx.commit().await?;
+        f.reopen().await?;
+        let roots: [&Path; 2] = [&f.root.join("library"), &f.root.join("staging")];
+        for _ in 0..2 {
+            assert!(matches!(
+                f.recover().await,
+                Err(LibraryError::RecoveryRequired(_))
+            ));
+            assert_eq!(
+                std::fs::read(previous_staging.join("content"))?,
+                b"previous staging"
+            );
+            assert_eq!(
+                f.library.storage.work_download_state("RJ000001").await?,
+                previous_update.clone().into()
+            );
+            assert!(f
+                .library
+                .storage
+                .download_finalization("RJ000001")
+                .await?
+                .is_some());
+            f.reopen().await?;
+        }
+        assert!(f
+            .library
+            .recover_download_inner("RJ000001", &roots, true)
+            .await
+            .is_err());
+        assert!(!previous_staging.exists());
+        assert_eq!(
+            f.library.storage.work_download_state("RJ000001").await?,
+            previous_update.into()
+        );
+        assert!(f
+            .library
+            .storage
+            .download_finalization("RJ000001")
+            .await?
+            .is_some());
+        f.reopen().await?;
+        let mut tx = f.library.storage.begin_write().await?;
+        tx.execute("DROP TRIGGER reject_tracking").await?;
+        tx.commit().await?;
+        f.library
+            .recover_download_inner("RJ000001", &roots, true)
+            .await?;
+        assert!(!previous_staging.exists());
+        f.reopen().await?;
+        f.library
+            .remove_work_download(WorkDownloadRemovalRequest::new(
+                "RJ000001", roots[0], roots[1],
+            ))
+            .await?;
+        assert!(!Path::new(&f.installation.record.staging_path).exists());
         assert!(!Path::new(&f.installation.record.final_path).exists());
         Ok(())
     }
@@ -687,7 +1198,7 @@ mod tests {
         f.recover().await?;
         assert_eq!(
             f.library.storage.work_download_state("RJ000001").await?,
-            f.old
+            f.recovered_old()
         );
         assert_eq!(
             std::fs::read(Path::new(&f.installation.record.final_path).join("content"))?,

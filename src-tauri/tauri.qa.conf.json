@@ -1,0 +1,21 @@
+{
+  "productName": "dlsite-manager QA",
+  "identifier": "dev.ashrimp.dlsite-manager.qa",
+  "app": {
+    "windows": [
+      {
+        "title": "dlsite-manager QA — Test data only",
+        "width": 1000,
+        "height": 750
+      }
+    ]
+  },
+  "bundle": {
+    "createUpdaterArtifacts": false
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": []
+    }
+  }
+}

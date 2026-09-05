@@ -749,6 +749,15 @@ impl Library {
     }
 
     async fn recover_download(&self, work_id: &str, roots: &[&Path]) -> Result<()> {
+        self.recover_download_inner(work_id, roots, false).await
+    }
+
+    async fn recover_download_inner(
+        &self,
+        work_id: &str,
+        roots: &[&Path],
+        remove_previous_staging: bool,
+    ) -> Result<()> {
         let Some(record) = self.storage.download_finalization(work_id).await? else {
             return Ok(());
         };
@@ -762,8 +771,85 @@ impl Library {
             installation.rollback().await
         };
         result.map_err(|error| installation.required(&error.support_message()))?;
+        if Path::new(&installation.record.staging_path).try_exists()? {
+            let state = self.storage.work_download_state(work_id).await?;
+            if state.status == WorkDownloadStatus::NotDownloaded {
+                return Err(installation.required("missing download row for staging removal"));
+            }
+            if state.staging_path.as_deref() != Some(&installation.record.staging_path) {
+                // Keep intent until the row durably tracks restored staging. Only deletion
+                // may remove a different staging path before replacing its reference.
+                if let Some(previous) = state.staging_path.as_deref().map(Path::new) {
+                    if previous.try_exists()? {
+                        let previous =
+                            finalization::checked_child(&previous.canonicalize()?, roots)?;
+                        let staging = Path::new(&installation.record.staging_path);
+                        if previous != staging {
+                            if !remove_previous_staging {
+                                return Err(installation.required(&format!(
+                                    "previous staging still exists at {}; deletion with root authority is required",
+                                    previous.display()
+                                )));
+                            }
+                            for path in [
+                                Some(staging),
+                                Some(Path::new(&installation.record.final_path)),
+                                Some(Path::new(&installation.record.temporary_path)),
+                                installation.record.old_path.as_deref().map(Path::new),
+                            ]
+                            .into_iter()
+                            .flatten()
+                            {
+                                if previous.starts_with(path) || path.starts_with(&previous) {
+                                    return Err(installation
+                                        .required("previous staging overlaps recovery material"));
+                                }
+                            }
+                            remove_existing_download_path(&previous, roots).await?;
+                        }
+                    }
+                }
+                self.save_download_staging(
+                    work_id,
+                    &state,
+                    Path::new(&installation.record.staging_path),
+                )
+                .await?;
+            }
+        }
         self.storage
             .clear_download_finalization(work_id, &installation.record.operation_id)
+            .await?;
+        Ok(())
+    }
+
+    async fn save_download_staging(
+        &self,
+        work_id: &str,
+        state: &WorkDownloadState,
+        staging: &Path,
+    ) -> Result<()> {
+        let incomplete = || {
+            LibraryError::RecoveryRequired(format!(
+                "incomplete download row for {work_id}; retained staging: {}",
+                staging.display()
+            ))
+        };
+        self.storage
+            .save_work_download(&WorkDownloadUpdate {
+                work_id: work_id.to_owned(),
+                status: state.status,
+                local_path: state.local_path.clone(),
+                staging_path: Some(staging.to_string_lossy().into_owned()),
+                unpack_policy: state.unpack_policy.clone().ok_or_else(incomplete)?,
+                bytes_received: state.bytes_received,
+                bytes_total: state.bytes_total,
+                error_code: state.error_code.clone(),
+                error_message: state.error_message.clone(),
+                started_at: state.started_at.clone(),
+                completed_at: state.completed_at.clone(),
+                updated_at: state.updated_at.clone().ok_or_else(incomplete)?,
+            })
             .await?;
         Ok(())
     }
@@ -804,7 +890,9 @@ impl Library {
             label: request.label,
             login_name: request.login_name,
             credential_ref: credential_ref.map(|value| value.to_string()),
-            enabled: request.enabled,
+            enabled: existing_account
+                .as_ref()
+                .map_or(request.enabled, |account| account.enabled),
         };
 
         // Changed sign-in details invalidate whatever session was stored for this account.
@@ -1203,9 +1291,10 @@ impl Library {
     ) -> Result<WorkDownloadState> {
         let lock = self.work_lock(request.work_id);
         let _guard = lock.lock().await;
-        self.recover_download(
+        self.recover_download_inner(
             request.work_id,
             &[request.library_root, request.download_root],
+            true,
         )
         .await?;
         let state = self.storage.work_download_state(request.work_id).await?;
@@ -1727,6 +1816,19 @@ impl Library {
                     updated_at: now_string(),
                 })
                 .await?;
+        } else if previous.staging_path.as_deref() != staging_dir.to_str() {
+            // Track operational staging before any transfer writes, without changing
+            // the usable content's status, paths, bytes, policy, errors, or timestamps.
+            if let Some(path) = previous.staging_path.as_deref().map(Path::new) {
+                if path.try_exists()? && path.canonicalize()? != staging_dir {
+                    return Err(LibraryError::RecoveryRequired(format!(
+                        "previous staging still exists at {}; retain it before starting staging at {}",
+                        path.display(), staging_dir.display()
+                    )));
+                }
+            }
+            self.save_download_staging(request.work_id, &previous, staging_dir)
+                .await?;
         }
 
         if request.replace_existing {
@@ -1888,6 +1990,7 @@ pub struct SaveAccountRequest {
     pub login_name: Option<String>,
     pub password: Option<String>,
     pub remember_password: bool,
+    /// Initial state for new accounts. Existing accounts use `set_account_enabled`.
     pub enabled: bool,
 }
 
@@ -4114,6 +4217,118 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn save_account_preserves_enabled_state_for_existing_accounts() -> Result<()> {
+        let library = migrated_library().await?;
+        library.save_account(save_account_request(true)).await?;
+        library.set_account_enabled("account-a", false).await?;
+
+        let account = library.save_account(save_account_request(true)).await?;
+        assert!(
+            !account.enabled,
+            "saving details must not re-enable an account"
+        );
+
+        library.set_account_enabled("account-a", true).await?;
+        let mut request = save_account_request(true);
+        request.enabled = false;
+        let account = library.save_account(request).await?;
+        assert!(
+            account.enabled,
+            "only the dedicated toggle changes existing state"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn save_account_uses_initial_enabled_state_for_new_accounts() -> Result<()> {
+        let library = migrated_library().await?;
+        let account = library
+            .save_account(SaveAccountRequest::new("New account"))
+            .await?;
+        assert!(account.enabled);
+
+        let mut request = SaveAccountRequest::new("Initially disabled");
+        request.enabled = false;
+        assert!(!library.save_account(request).await?.enabled);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn save_account_queued_after_disable_during_auth_keeps_account_disabled() -> Result<()> {
+        use std::future::Future;
+        use std::task::Poll;
+
+        #[derive(Default)]
+        struct GatedPrompt {
+            entered: tokio::sync::Notify,
+            release: tokio::sync::Notify,
+        }
+
+        #[async_trait]
+        impl TwoFactorPrompt for GatedPrompt {
+            async fn request_code(
+                &self,
+                _: TwoFactorPromptRequest,
+            ) -> Result<TwoFactorPromptResponse> {
+                self.entered.notify_one();
+                self.release.notified().await;
+                Ok(TwoFactorPromptResponse::Code(
+                    VALID_TWO_FACTOR_CODE.to_owned(),
+                ))
+            }
+        }
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let library = migrated_library().await?;
+            let account = library.save_account(save_account_request(true)).await?;
+            let source = TwoFactorSyncSource::new();
+            let prompt = GatedPrompt::default();
+            let mut authentication = Box::pin(library.authenticate_account(
+                &account,
+                None,
+                Some(&prompt),
+                None,
+                &source,
+            ));
+            tokio::select! {
+                result = &mut authentication => panic!("authentication finished before gate: {result:?}"),
+                () = prompt.entered.notified() => {}
+            }
+
+            // Poll each mutation once while auth holds the lock, establishing FIFO order
+            // without sleeps or assumptions about task scheduling.
+            let mut disable = Box::pin(library.set_account_enabled(&account.id, false));
+            std::future::poll_fn(|cx| {
+                assert!(disable.as_mut().poll(cx).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+            let mut request = save_account_request(true);
+            request.password = None;
+            request.label = "Updated label".to_owned();
+            assert!(request.enabled); // The adapter's creation default, not current state.
+            let mut save = Box::pin(library.save_account(request));
+            std::future::poll_fn(|cx| {
+                assert!(save.as_mut().poll(cx).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+
+            prompt.release.notify_one();
+            authentication.await?;
+            let (disabled, saved) = tokio::join!(disable, save);
+            disabled?;
+            let saved = saved?;
+            assert_eq!(saved.label, "Updated label");
+            assert!(!saved.enabled, "queued save undid the completed disable");
+            assert!(!library.find_account(&account.id).await?.enabled);
+            Ok(())
+        })
+        .await
+        .expect("gated account mutations must finish")
+    }
+
+    #[tokio::test]
     async fn removes_account_and_saved_credential() -> Result<()> {
         let storage = Storage::open_in_memory().await?;
         storage.run_migrations().await?;
@@ -5322,6 +5537,111 @@ mod tests {
             library.storage.work_download_state("RJ000001").await?,
             previous
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn manual_replacement_interrupted_before_intent_tracks_staging_for_later_delete(
+    ) -> Result<()> {
+        struct InterruptedTransfer {
+            cancel: bool,
+        }
+        impl_fake_auth_source!(InterruptedTransfer);
+        #[async_trait]
+        impl WorkDownloadSource for InterruptedTransfer {
+            async fn download_plan(&self, id: &WorkId) -> Result<DownloadPlan> {
+                FakeDownloadSource.download_plan(id).await
+            }
+            async fn download_file_metadata(
+                &self,
+                index: usize,
+                file: &DownloadFile,
+            ) -> Result<DownloadFileMetadata> {
+                FakeDownloadSource.download_file_metadata(index, file).await
+            }
+            async fn download_files(
+                &self,
+                job: &DownloadJobRequest,
+                plan: &DownloadPlan,
+                cancellation: &dm_download::CancellationToken,
+                sink: &mut (dyn FnMut(DownloadProgress) + Send),
+            ) -> Result<DownloadedWork> {
+                FakeDownloadSource
+                    .download_files(job, plan, cancellation, sink)
+                    .await?;
+                if self.cancel {
+                    Err(LibraryError::Download(
+                        dm_download::DownloadError::Cancelled,
+                    ))
+                } else {
+                    Err(LibraryError::SyncSource(
+                        "injected transfer failure".to_owned(),
+                    ))
+                }
+            }
+        }
+        for cancel in [false, true] {
+            let root = test_dir("manual-transfer-staging");
+            std::fs::create_dir_all(&root)?;
+            let storage_path = root.join("library.sqlite");
+            let storage = Storage::open(&storage_path).await?;
+            storage.run_migrations().await?;
+            let library = Library::new(storage, Arc::new(InMemoryCredentialStore::new()));
+            library.save_account(save_account_request(true)).await?;
+            library
+                .sync_account_with_source(AccountSyncRequest::new("account-a"), &sync_source())
+                .await?;
+            let library_root = root.join("library");
+            let staging_root = root.join("staging");
+            let old = library_root.join("RJ000001");
+            std::fs::create_dir_all(&old)?;
+            std::fs::write(old.join("content"), b"manual old")?;
+            let mut previous = library
+                .mark_work_downloaded(WorkDownloadMarkRequest::new(
+                    "RJ000001",
+                    &library_root,
+                    &old,
+                ))
+                .await?;
+            assert!(previous.staging_path.is_none());
+            let error = library
+                .download_work_with_source(
+                    WorkDownloadRequest {
+                        replace_existing: true,
+                        ..WorkDownloadRequest::new("RJ000001", &library_root, &staging_root)
+                    },
+                    &InterruptedTransfer { cancel },
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(error.is_cancelled(), cancel);
+            assert!(library
+                .storage
+                .download_finalization("RJ000001")
+                .await?
+                .is_none());
+            assert_eq!(std::fs::read(old.join("content"))?, b"manual old");
+            let staging = staging_root.join("RJ000001").canonicalize()?;
+            previous.staging_path = Some(staging.to_string_lossy().into_owned());
+            assert_eq!(
+                library.storage.work_download_state("RJ000001").await?,
+                previous
+            );
+            drop(library);
+            let reopened = Library::new(
+                Storage::open(&storage_path).await?,
+                Arc::new(InMemoryCredentialStore::new()),
+            );
+            reopened
+                .remove_work_download(WorkDownloadRemovalRequest::new(
+                    "RJ000001",
+                    &library_root,
+                    &staging_root,
+                ))
+                .await?;
+            assert!(!staging.exists());
+            assert!(!old.exists());
+        }
         Ok(())
     }
 
