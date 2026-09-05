@@ -149,6 +149,7 @@ export type BulkWorkDownloadPreview = {
 };
 
 export type LocalWorkImportReport = {
+  recoveryErrors: string[];
   scannedDirectories: number;
   importedCount: number;
   skippedNoId: number;

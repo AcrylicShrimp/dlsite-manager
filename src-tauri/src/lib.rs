@@ -32,6 +32,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::broadcast::error::RecvError;
 
+mod two_factor;
+use two_factor::{JobTwoFactorPrompt, TwoFactorPrompts};
+
 struct AppState {
     storage: Storage,
     library: Library,
@@ -45,63 +48,6 @@ struct AppState {
 const WORK_DOWNLOAD_PROGRESS_EVENT_INTERVAL: Duration = Duration::from_secs(1);
 const BULK_DOWNLOAD_PAGE_LIMIT: u32 = 500;
 const DOWNLOAD_RESERVATION_METADATA_KEY: &str = "downloadReservationId";
-const TWO_FACTOR_REQUEST_EVENT: &str = "dm-two-factor-request";
-const TWO_FACTOR_CLOSED_EVENT: &str = "dm-two-factor-closed";
-/// How long a two-factor dialog stays open before the job gives up waiting.
-const TWO_FACTOR_PROMPT_TIMEOUT: Duration = Duration::from_secs(300);
-
-/// Open two-factor dialogs, keyed by request ID.
-///
-/// A job parks on the receiver while the UI shows the dialog; `submit_two_factor_code` and
-/// `cancel_two_factor` complete it from the command side.
-#[derive(Clone, Default)]
-struct TwoFactorPrompts {
-    inner: Arc<Mutex<TwoFactorPromptsInner>>,
-}
-
-#[derive(Default)]
-struct TwoFactorPromptsInner {
-    next_id: u64,
-    pending: BTreeMap<String, tokio::sync::oneshot::Sender<Option<String>>>,
-}
-
-impl TwoFactorPrompts {
-    fn open(&self) -> (String, tokio::sync::oneshot::Receiver<Option<String>>) {
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-        let mut inner = self.inner.lock().expect("two-factor prompt lock");
-
-        inner.next_id += 1;
-
-        let request_id = format!("two-factor-{}", inner.next_id);
-
-        inner.pending.insert(request_id.clone(), sender);
-
-        (request_id, receiver)
-    }
-
-    /// Answers an open dialog. Returns whether the request was still open.
-    fn answer(&self, request_id: &str, code: Option<String>) -> bool {
-        let sender = self
-            .inner
-            .lock()
-            .expect("two-factor prompt lock")
-            .pending
-            .remove(request_id);
-
-        match sender {
-            Some(sender) => sender.send(code).is_ok(),
-            None => false,
-        }
-    }
-
-    fn close(&self, request_id: &str) {
-        self.inner
-            .lock()
-            .expect("two-factor prompt lock")
-            .pending
-            .remove(request_id);
-    }
-}
 
 #[derive(Clone, Default)]
 struct DownloadReservations {
@@ -736,6 +682,9 @@ async fn start_account_sync(
                                 ));
                             }
 
+                            for error in &report.recovery_errors {
+                                context.warn(error);
+                            }
                             let mut details = local_work_import_report_details(&report);
                             if let Value::Object(ref mut object) = details {
                                 object.insert("status".to_owned(), json!("succeeded"));
@@ -1012,6 +961,7 @@ async fn start_work_download(
                 json!(report.local_path.to_string_lossy().to_string()),
             );
             output.insert("fileCount".to_owned(), json!(report.file_count));
+            output.insert("warnings".to_owned(), json!(report.warnings));
             output.insert(
                 "archiveExtracted".to_owned(),
                 json!(report.archive_extracted),
@@ -1235,7 +1185,16 @@ async fn start_bulk_work_download(
                     &source,
                 )
                 .await
-                .map_err(work_download_failure)?;
+                .map_err(|error| {
+                    let mut failure = work_download_failure(error);
+                    if let Some(Value::Object(output)) = failure.details.get_mut("bulkDownload") {
+                        output.insert("skippedQueuedCount".to_owned(), json!(skipped_queued_count));
+                    }
+                    failure
+                })?;
+            for work in &report.succeeded_works {
+                for warning in &work.warnings { context.warn(warning); }
+            }
             let output = bulk_download_output(&report, skipped_queued_count);
 
             context.info(format!(
@@ -2523,6 +2482,7 @@ impl From<WorkDownloadStatus> for WorkDownloadStatusDto {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LocalWorkImportReportDto {
+    recovery_errors: Vec<String>,
     scanned_directories: usize,
     imported_count: usize,
     skipped_no_id: usize,
@@ -2539,6 +2499,7 @@ struct LocalWorkImportReportDto {
 impl From<LocalWorkImportReport> for LocalWorkImportReportDto {
     fn from(report: LocalWorkImportReport) -> Self {
         Self {
+            recovery_errors: report.recovery_errors,
             scanned_directories: report.scanned_directories,
             imported_count: report.imported_count,
             skipped_no_id: report.skipped_no_id,
@@ -2789,90 +2750,6 @@ struct AuditLogDirDto {
     path: String,
 }
 
-/// Two-factor prompt that runs a dialog in the app window on behalf of a background job.
-struct JobTwoFactorPrompt {
-    app: AppHandle,
-    prompts: TwoFactorPrompts,
-    context: JobContext,
-}
-
-impl JobTwoFactorPrompt {
-    fn new(app: AppHandle, prompts: TwoFactorPrompts, context: JobContext) -> Self {
-        Self {
-            app,
-            prompts,
-            context,
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl dm_library::TwoFactorPrompt for JobTwoFactorPrompt {
-    async fn request_code(
-        &self,
-        request: dm_library::TwoFactorPromptRequest,
-    ) -> Result<dm_library::TwoFactorPromptResponse, dm_library::LibraryError> {
-        let (request_id, receiver) = self.prompts.open();
-
-        self.context.set_phase("waitingForTwoFactor");
-        self.context.clear_progress();
-        self.context.info(format!(
-            "Waiting for a two-factor code for account {}",
-            request.account_id
-        ));
-
-        if let Err(error) = self.app.emit(
-            TWO_FACTOR_REQUEST_EVENT,
-            json!({
-                "requestId": request_id,
-                "accountId": request.account_id,
-                "accountLabel": request.account_label,
-                "attempt": request.attempt,
-                "previousCodeRejected": request.previous_code_rejected,
-                "jobId": self.context.job_id().as_str(),
-            }),
-        ) {
-            self.prompts.close(&request_id);
-            return Err(dm_library::LibraryError::SyncSource(format!(
-                "could not show the two-factor dialog: {error}"
-            )));
-        }
-
-        // Cancellation and timeout stay distinct: a cancelled job finishes as Cancelled,
-        // while a prompt nobody answered is a failure the user still needs to see.
-        let response = tokio::select! {
-            answer = receiver => match answer {
-                Ok(Some(code)) => dm_library::TwoFactorPromptResponse::Code(code),
-                // `None` is the dialog's Cancel button; a dropped sender means the request
-                // was closed out from under the dialog, which the job cannot act on either.
-                Ok(None) | Err(_) => dm_library::TwoFactorPromptResponse::Cancelled,
-            },
-            () = wait_for_cancellation(self.context.cancellation_token()) => {
-                dm_library::TwoFactorPromptResponse::Cancelled
-            }
-            () = tokio::time::sleep(TWO_FACTOR_PROMPT_TIMEOUT) => {
-                self.context.warn("Two-factor code was not entered in time");
-                dm_library::TwoFactorPromptResponse::TimedOut
-            }
-        };
-
-        // The dialog must come down whether it was answered, timed out, or the job was
-        // cancelled underneath it.
-        self.prompts.close(&request_id);
-        let _ = self
-            .app
-            .emit(TWO_FACTOR_CLOSED_EVENT, json!({ "requestId": request_id }));
-
-        Ok(response)
-    }
-}
-
-async fn wait_for_cancellation(cancellation: &dm_library::CancellationToken) {
-    while !cancellation.is_cancelled() {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
-}
-
 struct JobSyncProgressSink {
     context: JobContext,
 }
@@ -2994,6 +2871,9 @@ impl WorkDownloadProgressThrottle {
 impl WorkDownloadProgressSink for JobWorkDownloadProgressSink {
     fn emit(&self, progress: WorkDownloadProgress) {
         match progress {
+            WorkDownloadProgress::Warning(message) => {
+                self.context.warn(message);
+            }
             WorkDownloadProgress::LoggingIn => {
                 self.context.set_phase("loggingIn");
                 self.context.clear_progress();
@@ -3384,23 +3264,10 @@ fn normalize_secret(value: Option<String>) -> Result<Option<String>, String> {
 }
 
 fn account_sync_failure(error: dm_library::LibraryError) -> JobFailure {
-    if matches!(error, dm_library::LibraryError::Cancelled) {
-        return JobFailure::cancelled();
-    }
-
     library_job_failure(error)
 }
 
 fn work_download_failure(error: dm_library::LibraryError) -> JobFailure {
-    if matches!(error, dm_library::LibraryError::Cancelled)
-        || matches!(
-            error,
-            dm_library::LibraryError::Download(dm_download::DownloadError::Cancelled)
-        )
-    {
-        return JobFailure::cancelled();
-    }
-
     library_job_failure(error)
 }
 
@@ -3409,7 +3276,19 @@ fn library_job_failure(error: dm_library::LibraryError) -> JobFailure {
     let message = error.support_message();
     let details = error.support_details();
 
-    job_failure_with_details(code, message, details)
+    let failure = job_failure_with_details(code, message, details);
+    if let dm_library::LibraryError::BulkInterrupted {
+        report,
+        interrupted_work,
+        ..
+    } = error
+    {
+        let mut output = bulk_download_output(&report, 0);
+        output.insert("interruptedWorkId".to_owned(), json!(interrupted_work));
+        failure.with_detail("bulkDownload", json!(output))
+    } else {
+        failure
+    }
 }
 
 fn job_failure_with_details(
@@ -3449,6 +3328,7 @@ fn local_work_import_report_details(report: &LocalWorkImportReport) -> Value {
         "metadataUpdatedCount": report.metadata_updated_count,
         "metadataMissingCount": report.metadata_missing_count,
         "metadataError": report.metadata_error.as_deref(),
+        "recoveryErrors": report.recovery_errors,
     })
 }
 
@@ -3596,6 +3476,7 @@ fn bulk_download_output(
                     "localPath": success.local_path.to_string_lossy().to_string(),
                     "fileCount": success.file_count,
                     "archiveExtracted": success.archive_extracted,
+                    "warnings": success.warnings,
                 })
             })
             .collect::<Vec<_>>()),

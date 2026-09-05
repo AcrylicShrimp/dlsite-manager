@@ -4,6 +4,7 @@
   "description": "Desktop manager for DLsite works and libraries.",
   "type": "module",
   "scripts": {
+    "test": "vitest run",
     "dev": "vite dev",
     "build": "vite build",
     "storybook": "storybook dev -p 6006 --no-open",
@@ -33,6 +34,7 @@
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
     "typescript": "~5.6.2",
-    "vite": "^6.0.3"
+    "vite": "^6.0.3",
+    "vitest": "^3.2.7"
   }
 }
