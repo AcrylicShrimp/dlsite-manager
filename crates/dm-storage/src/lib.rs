@@ -2728,6 +2728,119 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn upgrades_v3_2_2_database_without_changing_existing_library() -> Result<()> {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let path = temp_dir.path().join("upgrade.sqlite");
+        let storage = Storage::open(&path).await?;
+        // These five embedded migrations are unchanged from the v3.2.2 release.
+        // Run the actual SQLx migration runner to retain real checksums/history.
+        let legacy = Migrator::with_migrations(
+            MIGRATOR
+                .iter()
+                .filter(|migration| migration.version <= 20260512000000)
+                .cloned()
+                .collect(),
+        );
+        assert_eq!(legacy.iter().count(), 5);
+        legacy.run(&storage.pool).await?;
+        let legacy_history: Vec<(i64, Vec<u8>)> =
+            sqlx::query_as("SELECT version, checksum FROM _sqlx_migrations ORDER BY version")
+                .fetch_all(&storage.pool)
+                .await?;
+        let recovery_table_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'download_finalizations'",
+        )
+        .fetch_one(&storage.pool)
+        .await?;
+        assert_eq!(recovery_table_count, 0);
+
+        let settings = AppSettings {
+            library_root: Some("/fixture/library".to_owned()),
+            download_root: Some("/fixture/staging".to_owned()),
+        };
+        storage.save_app_settings(&settings).await?;
+        storage.save_account(&account("upgrade", "Upgrade")).await?;
+        storage
+            .commit_account_sync(&sync_commit(
+                "upgrade",
+                "upgrade-sync",
+                vec![work("RJ000001", "既存の作品", "Maker", "2026-05-01")],
+                vec![account_work("RJ000001", "2026-05-02")],
+            ))
+            .await?;
+        storage
+            .save_work_download(&WorkDownloadUpdate {
+                work_id: "RJ000001".to_owned(),
+                status: WorkDownloadStatus::Downloaded,
+                local_path: Some("/fixture/library/手動フォルダー".to_owned()),
+                staging_path: None,
+                unpack_policy: "manual".to_owned(),
+                bytes_received: 2048,
+                bytes_total: Some(2048),
+                error_code: None,
+                error_message: None,
+                started_at: Some("2026-05-26T00:00:00Z".to_owned()),
+                completed_at: Some("2026-05-26T00:01:00Z".to_owned()),
+                updated_at: "2026-05-26T00:01:00Z".to_owned(),
+            })
+            .await?;
+        storage
+            .set_work_custom_tags("RJ000001", &["保存済み".to_owned(), "Favorite".to_owned()])
+            .await?;
+        let accounts = storage.accounts().await?;
+        let detail = storage.product_detail("RJ000001").await?;
+        let sync_runs = storage.sync_runs_for_account("upgrade").await?;
+        storage.pool.close().await;
+
+        // Reopen as the new app would, migrate twice, and reopen again to check persistence.
+        let storage = Storage::open(&path).await?;
+        storage.run_migrations().await?;
+        storage.run_migrations().await?;
+        storage.pool.close().await;
+        let storage = Storage::open(&path).await?;
+        assert_eq!(storage.app_settings().await?, settings);
+        assert_eq!(storage.accounts().await?, accounts);
+        assert_eq!(storage.product_detail("RJ000001").await?, detail);
+        assert_eq!(storage.sync_runs_for_account("upgrade").await?, sync_runs);
+        let upgraded_history: Vec<(i64, Vec<u8>)> = sqlx::query_as(
+            "SELECT version, checksum FROM _sqlx_migrations WHERE version <= 20260512000000 ORDER BY version",
+        )
+        .fetch_all(&storage.pool)
+        .await?;
+        assert_eq!(upgraded_history, legacy_history);
+        assert_eq!(storage.download_finalization("RJ000001").await?, None);
+        let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
+            .fetch_one(&storage.pool)
+            .await?;
+        assert_eq!(integrity, "ok");
+        let violations = sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&storage.pool)
+            .await?;
+        assert!(violations.is_empty());
+
+        let recovery = DownloadFinalization {
+            work_id: "RJ000001".to_owned(),
+            operation_id: "upgrade-recovery".to_owned(),
+            staging_path: "/fixture/staging/RJ000001".to_owned(),
+            final_path: "/fixture/library/RJ000001".to_owned(),
+            old_path: detail.download.local_path,
+            temporary_path: "/fixture/library/.dm-finalize-upgrade".to_owned(),
+            committed: false,
+        };
+        storage.begin_download_finalization(&recovery).await?;
+        assert_eq!(
+            storage.download_finalization("RJ000001").await?,
+            Some(recovery.clone())
+        );
+        storage
+            .clear_download_finalization(&recovery.work_id, &recovery.operation_id)
+            .await?;
+        assert_eq!(storage.download_finalization("RJ000001").await?, None);
+        storage.pool.close().await;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn commits_write_transaction() -> Result<()> {
         let storage = migrated_storage().await?;
 
