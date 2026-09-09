@@ -15,10 +15,10 @@ name = "dlsite_manager_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
-async-trait = "0.1.89"
+async-trait = "0.1.92"
 dm-api = { path = "../crates/dm-api" }
 dm-audit = { path = "../crates/dm-audit" }
 dm-credentials = { path = "../crates/dm-credentials" }
@@ -26,17 +26,17 @@ dm-download = { path = "../crates/dm-download" }
 dm-jobs = { path = "../crates/dm-jobs" }
 dm-library = { path = "../crates/dm-library" }
 dm-storage = { path = "../crates/dm-storage" }
-tauri = { version = "2", features = [] }
-tauri-plugin-opener = "2"
-tauri-plugin-process = "2"
-tauri-plugin-updater = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1", features = ["macros", "sync", "time"] }
-tauri-plugin-dialog = "2"
-tracing = "0"
-tracing-appender = "0"
-tracing-subscriber = { version = "0", features = ["env-filter", "fmt", "json"] }
+tauri = { version = "2.11.5", features = [] }
+tauri-plugin-opener = "2.5.5"
+tauri-plugin-process = "2.3.1"
+tauri-plugin-updater = "2.11.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["macros", "sync", "time"] }
+tauri-plugin-dialog = "2.7.3"
+tracing = "0.1.44"
+tracing-appender = "0.2.5"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }
 
 [lints]
 workspace = true

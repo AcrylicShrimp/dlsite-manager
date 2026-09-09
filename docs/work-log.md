@@ -252,3 +252,42 @@
 - Final focused independent re-review confirmed closure of the marker and staging findings (including normal rollback → restart → deletion), with no remaining P1/P2 in the reviewed scope. QA override/upgrade fixture review found no P1/P2 either. Parent validation passed: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --quiet` with all four documented live gates set to 0 (190 unit tests, plus 7 gated live/fixture cases that self-skipped); Node 22/pnpm 10 `pnpm check` (0 errors/warnings) and `pnpm test` (10 passed). The QA command's frontend production build passed; native bundling is still running. This does not establish live 2FA or native manual acceptance.
 - Built the macOS QA bundle with Node 22/pnpm 10 `pnpm tauri build --bundles app --config src-tauri/tauri.qa.conf.json`. Output: `target/release/bundle/macos/dlsite-manager QA.app`. Verified `CFBundleIdentifier = dev.ashrimp.dlsite-manager.qa` and `codesign --verify --deep --strict --verbose=2` passed. This uses local ad-hoc signing; bundler skipped Apple notarization because no Apple signing/notarization credentials were supplied, and updater artifacts are deliberately disabled for QA. The normal app's identifier/version/release workflow is unchanged. Re-fetched origin and confirmed main had not diverged before preparing the follow-up commit.
 - Launched the QA bundle after rechecking that its app-data profile did not exist. Verified the running bundle process and, with read-only SQLite queries against only the new QA database, six applied migrations plus the recovery table. Did not read account rows, the credential vault, or authentication logs. The production app/database/content was not opened or copied. QA folders are `/private/tmp/dlsite-manager-qa.s6YoMP/library` and `/private/tmp/dlsite-manager-qa.s6YoMP/staging`; interactive/live acceptance is handed to the user. No release tag, release-branch change, or publication was performed.
+
+## 2026-09-09
+
+- Refreshed all direct Rust/npm dependency requirements to stable releases and regenerated
+  both lockfiles. Major changes: ZIP 2.4.2 → 8.6.0, SQLx 0.9.0-alpha.1 → 0.9.0,
+  Vite 6 → 8, Svelte Vite plugin 5 → 7, Vitest 3 → 5, and TypeScript 5 → 7;
+  also updated Tauri and plugins, SvelteKit/Svelte, Storybook, and transitive dependencies.
+  Registry checks found all direct Rust requirements current. npm's only remaining
+  outdated entry is the intentional TypeScript 6 compiler-API dependency described below.
+- Resolved TypeScript 7's startup failure in svelte-check by following its documented
+  dual installation: `typescript` 6.0.3 supplies the JS compiler API and
+  `@typescript/native` aliases stable TypeScript 7.0.2; check/watch use `--tsgo`.
+  Replaced the removed Svelte plugin `hot` option with `compilerOptions.hmr`.
+  Pinned pnpm 12.3.4 across package.json/mise/release CI, declared the Node engine
+  requirements, removed pnpm's obsolete `onlyBuiltDependencies` setting, and updated
+  mise-action 4.3.0 / pnpm action-setup 6.1.0 to verified release commit SHAs.
+  Other pinned GitHub Actions were already current. Updated storage/workbench design notes.
+- Added an independent Python-generated Deflate/UTF-8 ZIP fixture and extraction
+  regression in `dm-archive`; previous ZIP fixtures only exercised Stored entries.
+  Validation so far: `cargo check --workspace --all-targets`, existing workspace tests
+  (190 unit cases; 7 gated live/fixture cases self-skipped), workspace clippy with
+  `-D warnings`, rustfmt, `pnpm check` (0 errors/warnings), `pnpm test` (10 passed),
+  `pnpm build`, `pnpm build-storybook`, and frozen install with strict peer checks passed.
+  Live gates used: `DMSITE_API_TEST_LIVE=0 DMSITE_API_PUBLIC_PRODUCT_TEST_LIVE=0
+  DMSITE_DOWNLOAD_TEST_LIVE=0 DMSITE_ARCHIVE_TEST_LEGACY_SPLIT_RAR=0`.
+  The SQLx run includes the file-backed v3.2.2 upgrade/checksum/data-preservation test;
+  no migrations were changed. Storybook retains its non-fatal chunk-size warning.
+  Used Node 22.23.2/pnpm 12.3.4 via npx because pnpm/mise are absent from shell PATH.
+  The added ZIP regression and native release build are being validated separately.
+- Completed the additional validation: `DMSITE_ARCHIVE_TEST_LEGACY_SPLIT_RAR=0
+  cargo test -p dm-archive` passed all 15 unit tests, including the new independent
+  Deflate/UTF-8 fixture (191 Rust unit cases validated overall). The gated external
+  RAR fixture case self-skipped. `pnpm tauri build --no-bundle` succeeded and produced
+  `target/release/dlsite-manager`; no app launch or installer/updater signing was done.
+  `pnpm audit` reports one low-severity development-only transitive `cookie` advisory
+  from SvelteKit's upstream `^0.6.0` requirement. Recorded it and the intentional TS6
+  API dependency in the dependency-refresh TODO without adding a forced override or
+  suppression. Windows/Linux and live/manual release acceptance remain pending.
+- Final checks: `pnpm audit --prod --json` reported zero advisories; `cargo fmt --all --check` and `git diff --check` passed.

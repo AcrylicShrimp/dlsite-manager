@@ -2,7 +2,7 @@
 claude = "latest"  # [skip ci]
 node = "22"
 pinact = "latest"  # [skip ci]
-pnpm = "latest"
+pnpm = "12.3.4"
 rust = "latest"
 
 [tasks.setup]

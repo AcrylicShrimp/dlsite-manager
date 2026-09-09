@@ -475,6 +475,30 @@ mod tests {
     }
 
     #[test]
+    fn extracts_deflated_zip_with_utf8_paths() {
+        let dir = test_dir("deflated-utf8");
+        let archive = dir.join("RJ123456.zip");
+        // Created by Python's zipfile so the reader is tested independently of zip's writer.
+        std::fs::write(
+            &archive,
+            include_bytes!("../tests/fixtures/deflated-utf8.zip"),
+        )
+        .unwrap();
+
+        let extraction =
+            extract_single_zip(&archive, &dir, ArchiveExtractOptions::default()).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dir.join("音声/説明.txt")).unwrap(),
+            "日本語のファイル名とDeflate圧縮。\n".repeat(32)
+        );
+        assert_eq!(extraction.extracted_paths, vec![dir.join("音声")]);
+        assert_eq!(extraction.removed_sources, vec![archive.clone()]);
+        assert!(!archive.exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn can_preserve_single_root_directory() {
         let dir = test_dir("preserve-root");
         let archive = dir.join("RJ123456.zip");

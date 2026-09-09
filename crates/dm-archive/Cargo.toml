@@ -6,9 +6,9 @@ license = "MIT"
 publish = false
 
 [dependencies]
-thiserror = "2.0.18"
-unrar-ng = "0.7.6"
-zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
+thiserror = "2.0.20"
+unrar-ng = "0.7.7"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 dotenvy = "0.15.7"
