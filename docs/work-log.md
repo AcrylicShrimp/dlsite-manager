@@ -317,3 +317,17 @@
   the candidate. Next: fast-forward the remote release branch and push `v3.3.0-rc.1`
   to start macOS/Windows/Linux artifact builds. The existing workflow publishes RCs
   as prereleases; the stable updater endpoint continues to resolve the stable release.
+
+- Diagnosed Windows failure in release run `34462503175`: Rust/frontend compilation
+  succeeded, but WiX rejected `3.3.0-rc.1` because its prerelease identifier is not
+  numeric-only. macOS/Linux jobs succeeded; publication was skipped. Updated the
+  workflow to select NSIS only for Windows prereleases, preserving stable MSI/NSIS
+  builds and the existing NSIS updater format. Documented the packaging constraint
+  and workflow-only retry procedure in the updater design.
+- Validation: parsed release YAML and exercised the extracted build shell step with
+  a stub pnpm for all six OS × RC/stable combinations; every command matched the
+  intended bundle selection. `git diff --check` passed. No application code/version
+  changed, so application tests were not repeated. The same immutable RC tag will be
+  built via workflow_dispatch using the corrected workflow on `release`; actual
+  Windows NSIS packaging/signing still requires the runner result. Merge this release
+  workflow fix back into main before preparing a later release from main.
