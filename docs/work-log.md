@@ -348,3 +348,78 @@
   related-version replacement, but native install/update acceptance is still pending.
   Build/publication results are pending; merge the final release workflow fix into
   main before the next release. This supersedes the preceding NSIS-only handoff.
+
+
+## 2026-09-10
+
+- Started the user-requested release from `69cc077` (latest main CI `34316175494`
+  passed), comparing all changes since published `v3.2.2`. Selected minor `3.3.0`
+  for pagination, TOTP login, and Linux AppImage support, with `3.3.0-rc.1` as the
+  first candidate because live/native acceptance remains pending. Updated both app
+  JSON versions, all nine Rust package manifests, and only their Cargo.lock entries.
+- Added `docs/releases/3.3.0-rc.1.md` with changes, version rationale, upgrade behavior,
+  and explicit live-auth/native/signing/#47 limitations. Updated the release-candidate
+  and dependency-refresh trackers. The new release request supersedes the previous
+  session's hold on starting an RC; stable publication still needs the recorded
+  acceptance checks. Used a separate `codex/release-3.3.0-rc.1` worktree so the main
+  checkout's uncommitted #47 investigation and work-log edits remain untouched.
+- Validation passed: all JSON/Rust/lockfile versions agree; `cargo fmt --all --check`;
+  `cargo clippy --workspace --all-targets --offline --locked -- -D warnings`;
+  `cargo test --workspace --offline --quiet` (191 unit tests, plus 7 gated live/fixture
+  cases that self-skipped); frozen pnpm install; `pnpm check` (0 errors/warnings),
+  `pnpm test` (10 passed), `pnpm build`; `git diff --check`. Set all four documented
+  live/fixture gates to 0. Used Node 22.23.2/pnpm 12.3.4 via npx and reused the local
+  Cargo target cache. No app launch or real-account/data test was performed.
+- Confirmed the updater signing secret exists and origin/release is an ancestor of
+  the candidate. Next: fast-forward the remote release branch and push `v3.3.0-rc.1`
+  to start macOS/Windows/Linux artifact builds. The existing workflow publishes RCs
+  as prereleases; the stable updater endpoint continues to resolve the stable release.
+
+- Diagnosed Windows failure in release run `34462503175`: Rust/frontend compilation
+  succeeded, but WiX rejected `3.3.0-rc.1` because its prerelease identifier is not
+  numeric-only. macOS/Linux jobs succeeded; publication was skipped. Updated the
+  workflow to select NSIS only for Windows prereleases, preserving stable MSI/NSIS
+  builds and the existing NSIS updater format. Documented the packaging constraint
+  and workflow-only retry procedure in the updater design.
+- Validation: parsed release YAML and exercised the extracted build shell step with
+  a stub pnpm for all six OS × RC/stable combinations; every command matched the
+  intended bundle selection. `git diff --check` passed. No application code/version
+  changed, so application tests were not repeated. The same immutable RC tag will be
+  built via workflow_dispatch using the corrected workflow on `release`; actual
+  Windows NSIS packaging/signing still requires the runner result. Merge this release
+  workflow fix back into main before preparing a later release from main.
+
+- Restored MSI support after the user clarified that RCs should still have MSI
+  installers. Replaced the NSIS-only workaround with a build-time
+  `bundle.windows.wix.version` override: app/tag `3.3.0-rc.1` → MSI `3.3.0.1`.
+  Both default Windows installers remain enabled; filenames, app version, and updater
+  metadata keep SemVer. Cancelled the superseded NSIS-only retry `34463778788`.
+- Checked the exact Tauri CLI 2.11.4 WiX converter/template and Microsoft ProductVersion
+  documentation: explicit wix.version bypasses the failing conversion; MSI compares only
+  the first three fields. Existing Tauri upgrade settings allow related-version replacement;
+  the fourth field is not a strict RC ordering guarantee. Recorded that boundary and kept
+  native RC-to-stable installation verification pending in the updater design.
+- Validation passed: YAML parse, bash syntax, extracted actual shell/Node step across
+  all six platform/channel combinations plus RC2 and maximum MSI fields, and rejection
+  of unsupported suffixes/overflow before invoking pnpm. The first local dry run caught
+  Bash 3.2's nounset behavior for empty arrays; initializing the argument array with
+  `tauri build` fixed it, and every case passed afterward. `git diff --check` passed.
+  No app source/tag/version change or extra app test run; Windows packaging/signing
+  will be checked in a fresh dispatch of the corrected release workflow.
+
+- Completed the requested commit/push and release-to-main integration. Committed the
+  remaining main-checkout documentation as `4b930ff` and pushed it. Prepared the merge
+  of `origin/release` (`5ee5b7a`); resolved the sole work-log conflict by preserving
+  every main entry and appending every release entry. The #47 investigation is retained.
+- Release run `34464213959` succeeded on macOS, Windows, and Linux and published
+  `v3.3.0-rc.1` as a prerelease. Downloaded the Windows artifact and verified both
+  RC-named MSI/NSIS installers, both signature files, and all SHA-256 checksums.
+  Verified 13 GitHub release assets including `latest.json`; the stable endpoint
+  still resolves `v3.2.2`. Updated the published release notes and candidate tracker.
+  No installer was executed and no live authentication or updater installation was tested.
+- Merge validation: source/config matches the successful release branch; differences
+  are only documentation. All app/9 Rust package/lockfile versions match `3.3.0-rc.1`,
+  rustfmt and staged whitespace checks passed. Release-branch CI `34464208319` passed.
+  No redundant application tests were rerun for this documentation-only conflict
+  resolution. The merge commit will run main CI; manual/native acceptance remains
+  pending before a stable release. The existing RC tag is unchanged.

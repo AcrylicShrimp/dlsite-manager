@@ -1,6 +1,6 @@
 [package]
 name = "dm-library"
-version = "3.2.2"
+version = "3.3.0-rc.1"
 edition = "2021"
 license = "MIT"
 publish = false
