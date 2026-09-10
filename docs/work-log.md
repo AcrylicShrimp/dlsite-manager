@@ -331,3 +331,21 @@
   built via workflow_dispatch using the corrected workflow on `release`; actual
   Windows NSIS packaging/signing still requires the runner result. Merge this release
   workflow fix back into main before preparing a later release from main.
+
+- Restored MSI support after the user clarified that RCs should still have MSI
+  installers. Replaced the NSIS-only workaround with a build-time
+  `bundle.windows.wix.version` override: app/tag `3.3.0-rc.1` → MSI `3.3.0.1`.
+  Both default Windows installers remain enabled; filenames, app version, and updater
+  metadata keep SemVer. Cancelled the superseded NSIS-only retry `34463778788`.
+- Checked the exact Tauri CLI 2.11.4 WiX converter/template and Microsoft ProductVersion
+  documentation: explicit wix.version bypasses the failing conversion; MSI compares only
+  the first three fields. Existing Tauri upgrade settings allow related-version replacement;
+  the fourth field is not a strict RC ordering guarantee. Recorded that boundary and kept
+  native RC-to-stable installation verification pending in the updater design.
+- Validation passed: YAML parse, bash syntax, extracted actual shell/Node step across
+  all six platform/channel combinations plus RC2 and maximum MSI fields, and rejection
+  of unsupported suffixes/overflow before invoking pnpm. The first local dry run caught
+  Bash 3.2's nounset behavior for empty arrays; initializing the argument array with
+  `tauri build` fixed it, and every case passed afterward. `git diff --check` passed.
+  No app source/tag/version change or extra app test run; Windows packaging/signing
+  will be checked in a fresh dispatch of the corrected release workflow.

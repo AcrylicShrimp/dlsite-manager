@@ -179,17 +179,31 @@ jobs:
         run: |
           set -euo pipefail
 
-          # WiX rejects alphabetic prerelease identifiers such as rc.1. NSIS accepts
-          # the app's SemVer and is already the Windows updater artifact format.
+          build_args=(tauri build)
+
+          # Keep the app/tag SemVer, but give WiX its required numeric version.
+          # The fourth field identifies the RC; MSI upgrade comparisons ignore it.
           if [[ "${RUNNER_OS}" == "Windows" && "${PRERELEASE}" == "true" ]]; then
-            BUNDLES="nsis"
+            WIX_CONFIG="$(node <<'NODE'
+          const version = require('./src-tauri/tauri.conf.json').version;
+          const match = /^(\d+)\.(\d+)\.(\d+)-rc\.(\d+)$/.exec(version);
+          if (!match) throw new Error(`Unexpected RC version: ${version}`);
+          const parts = match.slice(1).map(Number);
+          const limits = [255, 255, 65535, 65535];
+          if (parts.some((part, index) => !Number.isInteger(part) || part > limits[index])) {
+            throw new Error(`RC version exceeds MSI numeric limits: ${version}`);
+          }
+          console.log(JSON.stringify({ bundle: { windows: { wix: { version: parts.join('.') } } } }));
+          NODE
+          )"
+            build_args+=(--config "${WIX_CONFIG}")
           fi
 
           if [[ -n "${BUNDLES}" ]]; then
-            pnpm tauri build --bundles "${BUNDLES}"
-          else
-            pnpm tauri build
+            build_args+=(--bundles "${BUNDLES}")
           fi
+
+          pnpm "${build_args[@]}"
 
       - name: Repack AppImage without the bundled Wayland client library
         if: runner.os == 'Linux'
