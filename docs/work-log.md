@@ -253,6 +253,19 @@
 - Built the macOS QA bundle with Node 22/pnpm 10 `pnpm tauri build --bundles app --config src-tauri/tauri.qa.conf.json`. Output: `target/release/bundle/macos/dlsite-manager QA.app`. Verified `CFBundleIdentifier = dev.ashrimp.dlsite-manager.qa` and `codesign --verify --deep --strict --verbose=2` passed. This uses local ad-hoc signing; bundler skipped Apple notarization because no Apple signing/notarization credentials were supplied, and updater artifacts are deliberately disabled for QA. The normal app's identifier/version/release workflow is unchanged. Re-fetched origin and confirmed main had not diverged before preparing the follow-up commit.
 - Launched the QA bundle after rechecking that its app-data profile did not exist. Verified the running bundle process and, with read-only SQLite queries against only the new QA database, six applied migrations plus the recovery table. Did not read account rows, the credential vault, or authentication logs. The production app/database/content was not opened or copied. QA folders are `/private/tmp/dlsite-manager-qa.s6YoMP/library` and `/private/tmp/dlsite-manager-qa.s6YoMP/staging`; interactive/live acceptance is handed to the user. No release tag, release-branch change, or publication was performed.
 
+## 2026-09-06
+
+- Investigated #47 against local Opener/open sources, public Tauri #15804/#10078/#6172,
+  npm CLI release metadata, and CI/release workflows. Identified bundled xdg-open and
+  inherited AppImage library paths as likely causes; detached launch also hides helper
+  failures. Recorded evidence, a child-environment/host-opener fix proposal and staged
+  Linux CI/packaged desktop verification in
+  `docs/todos/2026-09-06.00.investigate-appimage-open-issue-47.md`. Exact reporter failure
+  remains unconfirmed. No implementation, release, remote message or workflow dispatch.
+  Validation: source/config inspection and public API reads; no runtime tests/builds
+  because this is an investigation-only documentation change. GitHub CLI returned 401;
+  unauthenticated public reads succeeded.
+
 ## 2026-09-09
 
 - Refreshed all direct Rust/npm dependency requirements to stable releases and regenerated
@@ -291,3 +304,47 @@
   API dependency in the dependency-refresh TODO without adding a forced override or
   suppression. Windows/Linux and live/manual release acceptance remain pending.
 - Final checks: `pnpm audit --prod --json` reported zero advisories; `cargo fmt --all --check` and `git diff --check` passed.
+
+
+## 2026-09-10
+
+- Started the requested `3.3.0-rc.1` release in the sibling worktree
+  `/Users/ashrimp/Devel/dlsite-manager-release-3.3.0-rc.1`, preserving this main
+  checkout's existing #47 investigation edits. Selected minor 3.3.0 for pagination,
+  TOTP login, and Linux AppImage support; RC status reflects pending live/native QA.
+  Release commit `7098f9174fb7f0f6a261031ad6a81f83d104fb38` contains aligned app/crate/
+  lockfile versions, `docs/releases/3.3.0-rc.1.md`, and updated verification trackers.
+- Local validation passed: 191 Rust unit tests (7 gated live/fixture cases self-skipped),
+  workspace clippy with warnings denied, rustfmt, version consistency, frozen pnpm
+  install, frontend check (0 errors/warnings), 10 frontend tests, production frontend
+  build, and whitespace checks. All four documented live gates were disabled.
+- Atomically fast-forwarded `origin/release` and pushed tag `v3.3.0-rc.1`. Release run
+  https://github.com/AcrylicShrimp/dlsite-manager/actions/runs/34462503175 passed the
+  tag/branch/version/signing-secret guard and started macOS, Windows, and Linux jobs.
+  CI run: https://github.com/AcrylicShrimp/dlsite-manager/actions/runs/34462505189.
+  Builds/publication are still in progress, not verified complete. The workflow publishes
+  a prerelease on success; stable publication and native/live/updater acceptance remain
+  pending, and AppImage folder-opening issue #47 has no dedicated fix in this candidate.
+  The detailed candidate release notes are committed; the existing workflow initially
+  uses its generic automated-artifact description on GitHub.
+
+- Investigated the RC Windows failure: compilation completed, then WiX/MSI rejected
+  the alphabetic `rc.1` version suffix. macOS/Linux succeeded; release publication
+  was skipped. Release-branch fix `f1d74a3` selects NSIS only for Windows prereleases
+  and keeps stable packaging unchanged. Parsed YAML and validated all six OS ×
+  prerelease/stable command paths. Application code and `v3.3.0-rc.1` tag are unchanged.
+  Dispatched corrected workflow from `release` for the same tag:
+  https://github.com/AcrylicShrimp/dlsite-manager/actions/runs/34463778788.
+  The retry result is pending. The release workflow/design/log fix remains on the
+  release branch and needs merging back to main before the next release preparation.
+
+- User clarified MSI should remain available for RCs. Superseded the NSIS-only fix
+  with release commit `5ee5b7a`: Windows RC builds pass an explicit numeric WiX version
+  (`3.3.0-rc.1` → `3.3.0.1`) while keeping MSI and NSIS, original app/tag versions,
+  filenames, and updater metadata. Cancelled retry `34463778788` and started
+  https://github.com/AcrylicShrimp/dlsite-manager/actions/runs/34464213959.
+  YAML/bash and all platform/channel/RC-boundary/error-path dry runs passed. MSI
+  ignores the fourth field for comparison; current Tauri upgrade settings support
+  related-version replacement, but native install/update acceptance is still pending.
+  Build/publication results are pending; merge the final release workflow fix into
+  main before the next release. This supersedes the preceding NSIS-only handoff.
