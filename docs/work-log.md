@@ -291,3 +291,29 @@
   API dependency in the dependency-refresh TODO without adding a forced override or
   suppression. Windows/Linux and live/manual release acceptance remain pending.
 - Final checks: `pnpm audit --prod --json` reported zero advisories; `cargo fmt --all --check` and `git diff --check` passed.
+
+
+## 2026-09-10
+
+- Started the user-requested release from `69cc077` (latest main CI `34316175494`
+  passed), comparing all changes since published `v3.2.2`. Selected minor `3.3.0`
+  for pagination, TOTP login, and Linux AppImage support, with `3.3.0-rc.1` as the
+  first candidate because live/native acceptance remains pending. Updated both app
+  JSON versions, all nine Rust package manifests, and only their Cargo.lock entries.
+- Added `docs/releases/3.3.0-rc.1.md` with changes, version rationale, upgrade behavior,
+  and explicit live-auth/native/signing/#47 limitations. Updated the release-candidate
+  and dependency-refresh trackers. The new release request supersedes the previous
+  session's hold on starting an RC; stable publication still needs the recorded
+  acceptance checks. Used a separate `codex/release-3.3.0-rc.1` worktree so the main
+  checkout's uncommitted #47 investigation and work-log edits remain untouched.
+- Validation passed: all JSON/Rust/lockfile versions agree; `cargo fmt --all --check`;
+  `cargo clippy --workspace --all-targets --offline --locked -- -D warnings`;
+  `cargo test --workspace --offline --quiet` (191 unit tests, plus 7 gated live/fixture
+  cases that self-skipped); frozen pnpm install; `pnpm check` (0 errors/warnings),
+  `pnpm test` (10 passed), `pnpm build`; `git diff --check`. Set all four documented
+  live/fixture gates to 0. Used Node 22.23.2/pnpm 12.3.4 via npx and reused the local
+  Cargo target cache. No app launch or real-account/data test was performed.
+- Confirmed the updater signing secret exists and origin/release is an ancestor of
+  the candidate. Next: fast-forward the remote release branch and push `v3.3.0-rc.1`
+  to start macOS/Windows/Linux artifact builds. The existing workflow publishes RCs
+  as prereleases; the stable updater endpoint continues to resolve the stable release.
