@@ -423,3 +423,33 @@
   No redundant application tests were rerun for this documentation-only conflict
   resolution. The merge commit will run main CI; manual/native acceptance remains
   pending before a stable release. The existing RC tag is unchanged.
+
+
+## 2026-09-11
+
+- Prepared an isolated author/committer email repair after the user reported incorrect
+  attribution. Eight recent commits used `ashrimp@ashrimp-mms.local`; local Git config,
+  historical maintainer commits, and the GitHub profile agree on
+  `AcrylicShrimp <led789zxpp@naver.com>`. Corrected only the matching maintainer identity
+  and the RC tagger; unrelated contributors and the older unattributed `a <a>` commit
+  remain unchanged. Future commits already use the corrected current Git configuration.
+- Preserved every original tree, commit message, author/committer timestamp, and merge
+  parent order while replacing the affected identities and parent object references.
+  `git fsck --full --no-reflogs`, exact tree/message/date/parent checks, and a scan for
+  remaining machine-local email metadata passed. Application tests are unnecessary
+  for this metadata-only rewrite; this work-log entry is the only added file content.
+- Preserved a verified pre-rewrite Git bundle outside the repository. Remote history
+  replacement requires main/release/RC-tag updates with exact expected-old leases.
+  The Release workflow must be paused while replacing the existing tag and restored
+  afterward to preserve the already-published 13 assets and updater signatures.
+  Remote branches, tags, workflow state, and release assets were unchanged during
+  preparation; publication is pending the user's approval of the history replacement.
+- Original → corrected commit IDs (historical work-log references above use the originals):
+  - `8855893` → `cd05302` — fix: harden two-factor auth and download recovery
+  - `2bf5328` → `7622b0e` — fix: close release review gaps and prepare isolated QA
+  - `69cc077` → `c35d778` — chore: update dependencies and migrate frontend tooling
+  - `4b930ff` → `fdedb56` — docs: record release preparation and AppImage investigation
+  - `7098f91` → `e87e754` — chore: prepare v3.3.0-rc.1 release
+  - `f1d74a3` → `4d87919` — fix: use NSIS for Windows release candidates
+  - `5ee5b7a` → `451e46e` — fix: retain MSI installers with numeric RC package versions
+  - `35203cb` → `c3a1e2d` — Merge release into main after v3.3.0-rc.1 publication
