@@ -453,3 +453,18 @@
   - `f1d74a3` → `4d87919` — fix: use NSIS for Windows release candidates
   - `5ee5b7a` → `451e46e` — fix: retain MSI installers with numeric RC package versions
   - `35203cb` → `c3a1e2d` — Merge release into main after v3.3.0-rc.1 publication
+
+- After explicit user approval, atomically replaced remote main, release, and
+  `v3.3.0-rc.1` using an exact expected-old force-with-lease for every ref. Paused the
+  Release workflow for the tag update and restored its previously active state in a
+  finally block. Verified no replacement release run was triggered and all 13 release
+  asset IDs, names, sizes, and SHA-256 digests remained identical.
+- Synchronized both original worktrees with `git reset --keep` after checking that
+  their working trees and old HEADs had not changed. All referenced commit identities
+  are free of the incorrect machine-local email. GitHub resolves both author and
+  committer of the rewritten merge to AcrylicShrimp / led789zxpp@naver.com. Updated
+  the candidate tracker with the rewritten RC target while retaining original build
+  provenance. The pre-rewrite bundle and full mapping remain in the sibling
+  `dlsite-manager-email-repair-20260911-41x3n6m9` directory. Validation: exact remote
+  ref/asset comparisons, GitHub identity lookup, clean worktrees, and whitespace checks;
+  no application tests rerun for metadata and documentation changes.
