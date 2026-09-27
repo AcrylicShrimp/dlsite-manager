@@ -506,3 +506,19 @@
   CLI signing-option inspection, and `git diff --check` passed. Python lacked PyYAML;
   workflow validation used the installed Ruby YAML parser instead. Remote platform
   builds, final asset/signature checks, stable publication, and #47 follow-up are next.
+
+- Published stable `v3.3.0` from release commit `d8108dd` after both main/release CI
+  runs (`36319639686`, `36319639799`) and all macOS/Windows/Linux jobs in release
+  run `36319639931` succeeded. Downloaded all 13 draft assets and checked every
+  SHA-256 checksum, all four updater signatures against the committed public key
+  (including authenticated 3.3.0 version comments), and all three updater entries.
+  Updated release notes, published the draft as a non-prerelease, and marked it latest.
+- Confirmed the public stable updater endpoint serves metadata identical to the
+  verified 3.3.0 asset. Published artifacts were not executed; live authentication,
+  interactive installation/update, and Linux desktop folder opening remain unverified.
+  Added the validation provenance to `docs/releases/3.3.0.md`.
+- At the maintainer's explicit request, posted the concise #47 comment linking the
+  release, disclosing the lack of a Linux machine, and asking for remaining failures:
+  https://github.com/AcrylicShrimp/dlsite-manager/issues/47#issuecomment-5855994171
+  Closed #47 as completed and verified its closed state and posted comment.
+  Closure records delivery of the upstream fix, not a verified Linux desktop result.
