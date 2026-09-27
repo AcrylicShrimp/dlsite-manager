@@ -468,3 +468,41 @@
   `dlsite-manager-email-repair-20260911-41x3n6m9` directory. Validation: exact remote
   ref/asset comparisons, GitHub identity lookup, clean worktrees, and whitespace checks;
   no application tests rerun for metadata and documentation changes.
+
+## 2026-09-27
+
+- Raised `@tauri-apps/cli` from 2.11.4 to 2.12.0 in `package.json` and
+  `pnpm-lock.yaml` to adopt the released AppImage packaging fix in Tauri #15804.
+  The CLI embeds the bundler that removes bundled xdg-open/xdg-utils; application
+  Rust/runtime and opener versions remain unchanged. Retained pnpm's generated,
+  exact-version release-age exceptions for the CLI and its platform binaries in
+  `pnpm-workspace.yaml`, allowing this newly published version to install in CI.
+- Documented the upstream-first packaging choice and remaining desktop acceptance
+  in `docs/designs/2026-05-12.01-manual-auto-update.md`. This supersedes the custom
+  opener proposal in the September 6 investigation as the immediate next step.
+  Issue #47 still needs a newly built AppImage tested on the reporter's Linux desktop;
+  inherited environment-variable conflicts are not proven resolved by this change.
+- Validation passed with pnpm 12.3.4 via `npx` (pnpm was absent from the shell PATH):
+  `pnpm install --frozen-lockfile`, `pnpm tauri --version` (2.12.0),
+  `pnpm tauri info`, `pnpm check` (0 errors/warnings), and
+  `pnpm tauri build --debug --bundles app --config src-tauri/tauri.qa.conf.json -- --locked`
+  (frontend build, Rust compilation, and ad-hoc-signed macOS QA app bundle).
+  `git diff --check` passed. Linux AppImage build/runtime verification was not run
+  on this macOS host; no release was published or existing artifact replaced.
+
+- Prepared stable 3.3.0 at the maintainer's explicit request, superseding the earlier
+  RC-only publication hold without claiming outstanding manual acceptance passed.
+  Updated all nine Rust package versions, Cargo.lock, package.json, and Tauri config;
+  added `docs/releases/3.3.0.md` with changes and remaining live/Linux verification.
+- Updated the final AppImage signing command to pass the validated `--app-version`
+  required to retain CLI 2.12.0's authenticated version metadata after repacking.
+  The maintainer also requested a concise #47 release comment and issue closure
+  after successful publication, while disclosing unavailable Linux desktop testing.
+- Validation passed: `cargo fmt --all --check`, `cargo test --workspace --locked`
+  (live/fixture cases remain environment-gated),
+  `cargo clippy --workspace --all-targets --locked -- -D warnings`, frozen pnpm
+  installation, `pnpm check` (0 errors/warnings), `pnpm test` (10 passed), and
+  `pnpm build`. Workflow YAML parsing, all embedded shell syntax, version consistency,
+  CLI signing-option inspection, and `git diff --check` passed. Python lacked PyYAML;
+  workflow validation used the installed Ruby YAML parser instead. Remote platform
+  builds, final asset/signature checks, stable publication, and #47 follow-up are next.
