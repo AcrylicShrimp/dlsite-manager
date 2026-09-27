@@ -1,4 +1,5 @@
 use chrono::{SecondsFormat, Utc};
+use futures_util::FutureExt;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -282,6 +283,7 @@ pub enum CancelJobOutcome {
 
 #[derive(Clone)]
 pub struct JobManager {
+    audit: Option<dm_audit::AuditLogger>,
     inner: Arc<Mutex<Inner>>,
     events: broadcast::Sender<JobEvent>,
 }
@@ -292,9 +294,15 @@ impl JobManager {
         let (events, _) = broadcast::channel(event_channel_capacity);
 
         Self {
+            audit: None,
             inner: Arc::new(Mutex::new(Inner::new(config))),
             events,
         }
+    }
+
+    pub fn with_diagnostics(mut self, audit: dm_audit::AuditLogger) -> Self {
+        self.audit = Some(audit);
+        self
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<JobEvent> {
@@ -353,10 +361,45 @@ impl JobManager {
             cancellation_token,
         };
 
+        let operation = self
+            .audit
+            .as_ref()
+            .map(|audit| audit.job_operation("job", id.as_str()));
         tokio::spawn(async move {
             manager.mark_running(&task_id);
-            let result = job_fn(context).await;
-            manager.finish_job(&task_id, result);
+            let job =
+                std::panic::AssertUnwindSafe(async move { job_fn(context).await }).catch_unwind();
+            if let Some(mut operation) = operation {
+                let result = operation.scope(job).await.unwrap_or_else(|_| {
+                    Err(JobFailure::with_code(
+                        "panic",
+                        "Background task terminated unexpectedly",
+                    ))
+                });
+                let outcome = match &result {
+                    Ok(_) => dm_audit::AuditOutcome::Succeeded,
+                    Err(error) if error.code.as_deref() == Some("cancelled") => {
+                        dm_audit::AuditOutcome::Cancelled
+                    }
+                    Err(_) => dm_audit::AuditOutcome::Failed,
+                };
+                let details = match &result {
+                    Ok(output) => serde_json::json!({"output":output}),
+                    Err(error) => {
+                        serde_json::json!({"errorDetails":error.details,"errorCode":error.code})
+                    }
+                };
+                operation.finish(outcome, details);
+                manager.finish_job(&task_id, result);
+            } else {
+                let result = job.await.unwrap_or_else(|_| {
+                    Err(JobFailure::with_code(
+                        "panic",
+                        "Background task terminated unexpectedly",
+                    ))
+                });
+                manager.finish_job(&task_id, result);
+            }
         });
 
         id
@@ -554,14 +597,20 @@ impl JobManager {
                 return;
             };
 
-            if record.snapshot.status.is_terminal() {
+            if record.snapshot.status.is_terminal() || record.snapshot.phase == phase {
                 return;
             }
 
-            record.snapshot.phase = phase;
+            record.snapshot.phase = phase.clone();
             let snapshot = record.snapshot.clone();
             inner.event_from_snapshot(JobEventKind::Updated, snapshot, None, None)
         };
+        if let Some(audit) = &self.audit {
+            let mut entry = dm_audit::AuditEvent::succeeded("job.phase", "")
+                .with_details(serde_json::json!({"jobId":id.as_str(),"phase":phase}));
+            entry.audience = "support".into();
+            audit.record_now(entry);
+        }
         self.emit(event);
     }
 
@@ -796,6 +845,21 @@ mod tests {
     use super::*;
     use serde_json::json;
     use tokio::time::{sleep, timeout, Duration};
+
+    #[tokio::test]
+    async fn panicking_job_finishes_and_does_not_expose_the_panic_payload() {
+        let manager = JobManager::default();
+        let id = manager.spawn("test", "fixture", JobMetadata::new(), |_| async {
+            panic!("PRIVATE-PANIC-PAYLOAD");
+        });
+        let snapshot = wait_for_terminal(&manager, &id).await;
+        assert_eq!(snapshot.status, JobStatus::Failed);
+        assert_eq!(
+            snapshot.error.as_ref().unwrap().code.as_deref(),
+            Some("panic")
+        );
+        assert!(!snapshot.error.unwrap().message.contains("PRIVATE"));
+    }
 
     #[tokio::test]
     async fn successful_job_transitions_to_succeeded() {

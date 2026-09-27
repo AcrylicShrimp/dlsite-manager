@@ -2,7 +2,6 @@ use dm_audit::{AuditEvent, AuditLogger};
 use dm_credentials::{CredentialStore, LocalCredentialStore};
 use dm_jobs::{
     JobContext, JobEventKind, JobFailure, JobId, JobLogPage, JobManager, JobMetadata, JobProgress,
-    JobStatus,
 };
 use dm_library::{
     AccountRemovalReport, AccountSyncRequest, BulkWorkDownloadPreview,
@@ -29,9 +28,12 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_opener::OpenerExt;
+use tauri_plugin_dialog::DialogExt;
 use tokio::sync::broadcast::error::RecvError;
+use tracing_subscriber::prelude::*;
 
+mod desktop;
+mod diagnostics;
 mod two_factor;
 use two_factor::{JobTwoFactorPrompt, TwoFactorPrompts};
 
@@ -42,7 +44,6 @@ struct AppState {
     audit: AuditLogger,
     download_reservations: DownloadReservations,
     two_factor_prompts: TwoFactorPrompts,
-    _tracing_guard: tracing_appender::non_blocking::WorkerGuard,
 }
 
 const WORK_DOWNLOAD_PROGRESS_EVENT_INTERVAL: Duration = Duration::from_secs(1);
@@ -148,12 +149,17 @@ impl DownloadReservations {
 
 #[tauri::command]
 async fn get_settings(state: State<'_, AppState>) -> Result<AppSettingsDto, String> {
-    state
-        .storage
-        .app_settings()
+    let diagnostic_operation = state.audit.operation("get_settings");
+    diagnostic_operation
+        .command(async {
+            state
+                .storage
+                .app_settings()
+                .await
+                .map(AppSettingsDto::from)
+                .map_err(command_error)
+        })
         .await
-        .map(AppSettingsDto::from)
-        .map_err(command_error)
 }
 
 #[tauri::command]
@@ -161,60 +167,72 @@ async fn save_settings(
     state: State<'_, AppState>,
     settings: SaveSettingsRequest,
 ) -> Result<AppSettingsDto, String> {
-    let settings = match settings.into_app_settings() {
-        Ok(settings) => settings,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("settings.save", "Failed to validate settings")
-                    .with_error(Some("validation"), error.clone()),
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let result = state.storage.save_app_settings(&settings).await;
+    let diagnostic_operation = state.audit.operation("save_settings");
+    diagnostic_operation
+        .command(async {
+            let settings = match settings.into_app_settings() {
+                Ok(settings) => settings,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed("settings.save", "Failed to validate settings")
+                            .with_error(Some("validation"), error.clone()),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
+            let result = state.storage.save_app_settings(&settings).await;
 
-    match result {
-        Ok(()) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::succeeded("settings.save", "Saved settings").with_details(json!({
-                    "libraryRootSet": settings.library_root.is_some(),
-                    "downloadRootSet": settings.download_root.is_some(),
-                })),
-            )
-            .await;
-            Ok(AppSettingsDto::from(settings))
-        }
-        Err(error) => {
-            let message = command_error(error);
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("settings.save", "Failed to save settings")
-                    .with_error(Some("storage"), message.clone()),
-            )
-            .await;
-            Err(message)
-        }
-    }
+            match result {
+                Ok(()) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::succeeded("settings.save", "Saved settings").with_details(
+                            json!({
+                                "libraryRootSet": settings.library_root.is_some(),
+                                "downloadRootSet": settings.download_root.is_some(),
+                            }),
+                        ),
+                    )
+                    .await;
+                    Ok(AppSettingsDto::from(settings))
+                }
+                Err(error) => {
+                    let message = command_error(error);
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed("settings.save", "Failed to save settings")
+                            .with_error(Some("storage"), message.clone()),
+                    )
+                    .await;
+                    Err(message)
+                }
+            }
+        })
+        .await
 }
 
 #[tauri::command]
 async fn list_accounts(state: State<'_, AppState>) -> Result<Vec<AccountDto>, String> {
-    let accounts = state.library.accounts().await.map_err(command_error)?;
-    let mut dtos = Vec::with_capacity(accounts.len());
+    let diagnostic_operation = state.audit.operation("list_accounts");
+    diagnostic_operation
+        .command(async {
+            let accounts = state.library.accounts().await.map_err(command_error)?;
+            let mut dtos = Vec::with_capacity(accounts.len());
 
-    for account in accounts {
-        let has_credential = state
-            .library
-            .account_has_saved_password(&account)
-            .map_err(command_error)?;
+            for account in accounts {
+                let has_credential = state
+                    .library
+                    .account_has_saved_password(&account)
+                    .map_err(command_error)?;
 
-        dtos.push(AccountDto::from_account(account, has_credential));
-    }
+                dtos.push(AccountDto::from_account(account, has_credential));
+            }
 
-    Ok(dtos)
+            Ok(dtos)
+        })
+        .await
 }
 
 #[tauri::command]
@@ -222,56 +240,63 @@ async fn save_account(
     state: State<'_, AppState>,
     request: SaveAccountCommandRequest,
 ) -> Result<AccountDto, String> {
-    let request = match request.into_library_request() {
-        Ok(request) => request,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("account.save", "Failed to validate account")
-                    .with_error(Some("validation"), error.clone()),
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let details = json!({
-        "accountId": request.id.clone(),
-        "hasLoginName": request.login_name.is_some(),
-        "hasPassword": request.password.is_some(),
-    });
-    let result = state.library.save_account(request).await;
+    let diagnostic_operation = state.audit.operation("save_account");
+    diagnostic_operation
+        .command(async {
+            let request = match request.into_library_request() {
+                Ok(request) => request,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed("account.save", "Failed to validate account")
+                            .with_error(Some("validation"), error.clone()),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
+            let details = json!({
+                "accountId": request.id.clone(),
+                "hasLoginName": request.login_name.is_some(),
+                "hasPassword": request.password.is_some(),
+            });
+            let result = state.library.save_account(request).await;
 
-    match result {
-        Ok(account) => {
-            let has_credential = state
-                .library
-                .account_has_saved_password(&account)
-                .map_err(command_error)?;
+            match result {
+                Ok(account) => {
+                    let has_credential = state
+                        .library
+                        .account_has_saved_password(&account)
+                        .map_err(command_error)?;
 
-            record_audit(
-                &state.audit,
-                AuditEvent::succeeded("account.save", "Saved account").with_details(json!({
-                    "accountId": account.id.clone(),
-                    "label": account.label.clone(),
-                    "hasCredential": has_credential,
-                    "enabled": account.enabled,
-                })),
-            )
-            .await;
-            Ok(AccountDto::from_account(account, has_credential))
-        }
-        Err(error) => {
-            let message = command_error(error);
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("account.save", "Failed to save account")
-                    .with_error(Some("library"), message.clone())
-                    .with_details(details),
-            )
-            .await;
-            Err(message)
-        }
-    }
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::succeeded("account.save", "Saved account").with_details(
+                            json!({
+                                "accountId": account.id.clone(),
+                                "label": account.label.clone(),
+                                "hasCredential": has_credential,
+                                "enabled": account.enabled,
+                            }),
+                        ),
+                    )
+                    .await;
+                    Ok(AccountDto::from_account(account, has_credential))
+                }
+                Err(error) => {
+                    let message = command_error(error);
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed("account.save", "Failed to save account")
+                            .with_error(Some("library"), message.clone())
+                            .with_details(details),
+                    )
+                    .await;
+                    Err(message)
+                }
+            }
+        })
+        .await
 }
 
 #[tauri::command]
@@ -279,54 +304,65 @@ async fn set_account_enabled(
     state: State<'_, AppState>,
     request: SetAccountEnabledRequest,
 ) -> Result<(), String> {
-    let account_id = match normalize_required_id(request.account_id) {
-        Ok(account_id) => account_id,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("account.setEnabled", "Failed to validate account toggle")
-                    .with_error(Some("validation"), error.clone()),
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let result = state
-        .library
-        .set_account_enabled(&account_id, request.enabled)
-        .await;
+    let diagnostic_operation = state.audit.operation("set_account_enabled");
+    diagnostic_operation
+        .command(async {
+            let account_id = match normalize_required_id(request.account_id) {
+                Ok(account_id) => account_id,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "account.setEnabled",
+                            "Failed to validate account toggle",
+                        )
+                        .with_error(Some("validation"), error.clone()),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
+            let result = state
+                .library
+                .set_account_enabled(&account_id, request.enabled)
+                .await;
 
-    match result {
-        Ok(()) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::succeeded("account.setEnabled", "Updated account enabled state")
-                    .with_details(json!({
-                        "accountId": account_id,
-                        "enabled": request.enabled,
-                    })),
-            )
-            .await;
-            Ok(())
-        }
-        Err(error) => {
-            let message = command_error(error);
-            record_audit(
-                &state.audit,
-                AuditEvent::failed(
-                    "account.setEnabled",
-                    "Failed to update account enabled state",
-                )
-                .with_error(Some("library"), message.clone())
-                .with_details(json!({
-                    "accountId": account_id,
-                    "enabled": request.enabled,
-                })),
-            )
-            .await;
-            Err(message)
-        }
-    }
+            match result {
+                Ok(()) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::succeeded(
+                            "account.setEnabled",
+                            "Updated account enabled state",
+                        )
+                        .with_details(json!({
+                            "accountId": account_id,
+                            "enabled": request.enabled,
+                        })),
+                    )
+                    .await;
+                    Ok(())
+                }
+                Err(error) => {
+                    let message = command_error(error);
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "account.setEnabled",
+                            "Failed to update account enabled state",
+                        )
+                        .with_error(Some("library"), message.clone())
+                        .with_details(json!({
+                            "accountId": account_id,
+                            "enabled": request.enabled,
+                        })),
+                    )
+                    .await;
+                    Err(message)
+                }
+            }
+        })
+        .await
 }
 
 #[tauri::command]
@@ -334,44 +370,51 @@ async fn remove_account(
     state: State<'_, AppState>,
     request: RemoveAccountRequest,
 ) -> Result<AccountRemovalReportDto, String> {
-    let account_id = match normalize_required_id(request.account_id) {
-        Ok(account_id) => account_id,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("account.remove", "Failed to validate account removal")
-                    .with_error(Some("validation"), error.clone()),
-            )
-            .await;
-            return Err(error);
-        }
-    };
+    let diagnostic_operation = state.audit.operation("remove_account");
+    diagnostic_operation
+        .command(async {
+            let account_id = match normalize_required_id(request.account_id) {
+                Ok(account_id) => account_id,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed("account.remove", "Failed to validate account removal")
+                            .with_error(Some("validation"), error.clone()),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
 
-    match state.library.remove_account(&account_id).await {
-        Ok(report) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::succeeded("account.remove", "Removed account").with_details(json!({
-                    "accountId": report.account_id.clone(),
-                    "label": report.label.clone(),
-                    "credentialDeleted": report.credential_deleted,
-                })),
-            )
-            .await;
-            Ok(AccountRemovalReportDto::from(report))
-        }
-        Err(error) => {
-            let message = command_error(error);
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("account.remove", "Failed to remove account")
-                    .with_error(Some("library"), message.clone())
-                    .with_details(json!({ "accountId": account_id })),
-            )
-            .await;
-            Err(message)
-        }
-    }
+            match state.library.remove_account(&account_id).await {
+                Ok(report) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::succeeded("account.remove", "Removed account").with_details(
+                            json!({
+                                "accountId": report.account_id.clone(),
+                                "label": report.label.clone(),
+                                "credentialDeleted": report.credential_deleted,
+                            }),
+                        ),
+                    )
+                    .await;
+                    Ok(AccountRemovalReportDto::from(report))
+                }
+                Err(error) => {
+                    let message = command_error(error);
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed("account.remove", "Failed to remove account")
+                            .with_error(Some("library"), message.clone())
+                            .with_details(json!({ "accountId": account_id })),
+                    )
+                    .await;
+                    Err(message)
+                }
+            }
+        })
+        .await
 }
 
 #[tauri::command]
@@ -379,12 +422,17 @@ async fn list_products(
     state: State<'_, AppState>,
     request: ListProductsRequest,
 ) -> Result<ProductListPageDto, String> {
-    state
-        .library
-        .list_products(&request.into_query()?)
+    let diagnostic_operation = state.audit.operation("list_products");
+    diagnostic_operation
+        .command(async {
+            state
+                .library
+                .list_products(&request.into_query()?)
+                .await
+                .map(ProductListPageDto::from)
+                .map_err(command_error)
+        })
         .await
-        .map(ProductListPageDto::from)
-        .map_err(command_error)
 }
 
 #[tauri::command]
@@ -392,12 +440,17 @@ async fn list_product_filter_facets(
     state: State<'_, AppState>,
     request: ListProductsRequest,
 ) -> Result<ProductFilterFacetsDto, String> {
-    state
-        .library
-        .product_filter_facets(&request.into_query()?)
+    let diagnostic_operation = state.audit.operation("list_product_filter_facets");
+    diagnostic_operation
+        .command(async {
+            state
+                .library
+                .product_filter_facets(&request.into_query()?)
+                .await
+                .map(ProductFilterFacetsDto::from)
+                .map_err(command_error)
+        })
         .await
-        .map(ProductFilterFacetsDto::from)
-        .map_err(command_error)
 }
 
 #[tauri::command]
@@ -405,14 +458,19 @@ async fn get_product_detail(
     state: State<'_, AppState>,
     request: GetProductDetailRequest,
 ) -> Result<ProductDetailDto, String> {
-    let work_id = normalize_required_id(request.work_id)?;
+    let diagnostic_operation = state.audit.operation("get_product_detail");
+    diagnostic_operation
+        .command(async {
+            let work_id = normalize_required_id(request.work_id)?;
 
-    state
-        .library
-        .product_detail(&work_id)
+            state
+                .library
+                .product_detail(&work_id)
+                .await
+                .map(ProductDetailDto::from)
+                .map_err(command_error)
+        })
         .await
-        .map(ProductDetailDto::from)
-        .map_err(command_error)
 }
 
 #[tauri::command]
@@ -420,64 +478,69 @@ async fn set_product_custom_tags(
     state: State<'_, AppState>,
     request: SetProductCustomTagsRequest,
 ) -> Result<Vec<ProductCustomTagDto>, String> {
-    let work_id = match normalize_required_id(request.work_id) {
-        Ok(work_id) => work_id,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("product.tags.update", "Failed to validate custom tags")
-                    .with_error(Some("validation"), error.clone()),
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let tags = match normalize_optional_strings(Some(request.tags)) {
-        Ok(tags) => tags,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("product.tags.update", "Failed to validate custom tags")
-                    .with_error(Some("validation"), error.clone())
-                    .with_details(json!({ "workId": work_id })),
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let result = state.library.set_product_custom_tags(&work_id, &tags).await;
+    let diagnostic_operation = state.audit.operation("set_product_custom_tags");
+    diagnostic_operation
+        .command(async {
+            let work_id = match normalize_required_id(request.work_id) {
+                Ok(work_id) => work_id,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed("product.tags.update", "Failed to validate custom tags")
+                            .with_error(Some("validation"), error.clone()),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
+            let tags = match normalize_optional_strings(Some(request.tags)) {
+                Ok(tags) => tags,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed("product.tags.update", "Failed to validate custom tags")
+                            .with_error(Some("validation"), error.clone())
+                            .with_details(json!({ "workId": work_id })),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
+            let result = state.library.set_product_custom_tags(&work_id, &tags).await;
 
-    match result {
-        Ok(tags) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::succeeded("product.tags.update", "Updated product custom tags")
-                    .with_details(json!({
-                        "workId": work_id,
-                        "tagCount": tags.len(),
-                    })),
-            )
-            .await;
-            Ok(tags.into_iter().map(ProductCustomTagDto::from).collect())
-        }
-        Err(error) => {
-            let message = command_error(error);
-            record_audit(
-                &state.audit,
-                AuditEvent::failed(
-                    "product.tags.update",
-                    "Failed to update product custom tags",
-                )
-                .with_error(Some("library"), message.clone())
-                .with_details(json!({
-                    "workId": work_id,
-                    "tagCount": tags.len(),
-                })),
-            )
-            .await;
-            Err(message)
-        }
-    }
+            match result {
+                Ok(tags) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::succeeded("product.tags.update", "Updated product custom tags")
+                            .with_details(json!({
+                                "workId": work_id,
+                                "tagCount": tags.len(),
+                            })),
+                    )
+                    .await;
+                    Ok(tags.into_iter().map(ProductCustomTagDto::from).collect())
+                }
+                Err(error) => {
+                    let message = command_error(error);
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "product.tags.update",
+                            "Failed to update product custom tags",
+                        )
+                        .with_error(Some("library"), message.clone())
+                        .with_details(json!({
+                            "workId": work_id,
+                            "tagCount": tags.len(),
+                        })),
+                    )
+                    .await;
+                    Err(message)
+                }
+            }
+        })
+        .await
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -501,27 +564,32 @@ async fn submit_two_factor_code(
     state: State<'_, AppState>,
     request: SubmitTwoFactorCodeRequest,
 ) -> Result<(), String> {
-    let code = request.code.trim().to_owned();
+    let diagnostic_operation = state.audit.operation("submit_two_factor_code");
+    diagnostic_operation
+        .command(async {
+            let code = request.code.trim().to_owned();
 
-    if code.is_empty() {
-        return Err("Verification code must not be empty".to_owned());
-    }
+            if code.is_empty() {
+                return Err("Verification code must not be empty".to_owned());
+            }
 
-    if !state
-        .two_factor_prompts
-        .answer(&request.request_id, Some(code))
-    {
-        return Err("This verification request is no longer waiting for a code".to_owned());
-    }
+            if !state
+                .two_factor_prompts
+                .answer(&request.request_id, Some(code))
+            {
+                return Err("This verification request is no longer waiting for a code".to_owned());
+            }
 
-    record_audit(
-        &state.audit,
-        AuditEvent::succeeded("account.login.twoFactor", "Submitted two-factor code")
-            .with_details(json!({ "requestId": request.request_id })),
-    )
-    .await;
+            record_audit(
+                &state.audit,
+                AuditEvent::succeeded("account.login.twoFactor", "Submitted two-factor code")
+                    .with_details(json!({ "requestId": request.request_id })),
+            )
+            .await;
 
-    Ok(())
+            Ok(())
+        })
+        .await
 }
 
 #[tauri::command]
@@ -529,19 +597,24 @@ async fn cancel_two_factor(
     state: State<'_, AppState>,
     request: CancelTwoFactorRequest,
 ) -> Result<(), String> {
-    state.two_factor_prompts.answer(&request.request_id, None);
+    let diagnostic_operation = state.audit.operation("cancel_two_factor");
+    diagnostic_operation
+        .command(async {
+            state.two_factor_prompts.answer(&request.request_id, None);
 
-    record_audit(
-        &state.audit,
-        AuditEvent::succeeded(
-            "account.login.twoFactor",
-            "Cancelled two-factor verification",
-        )
-        .with_details(json!({ "requestId": request.request_id })),
-    )
-    .await;
+            record_audit(
+                &state.audit,
+                AuditEvent::succeeded(
+                    "account.login.twoFactor",
+                    "Cancelled two-factor verification",
+                )
+                .with_details(json!({ "requestId": request.request_id })),
+            )
+            .await;
 
-    Ok(())
+            Ok(())
+        })
+        .await
 }
 
 #[tauri::command]
@@ -550,193 +623,162 @@ async fn start_account_sync(
     state: State<'_, AppState>,
     request: StartAccountSyncRequest,
 ) -> Result<StartJobResponse, String> {
-    let account_id = match normalize_required_id(request.account_id) {
-        Ok(account_id) => account_id,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("account.sync.queue", "Failed to validate account sync")
-                    .with_error(Some("validation"), error.clone()),
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let password = match normalize_secret(request.password) {
-        Ok(password) => password,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed(
-                    "account.sync.queue",
-                    "Failed to validate account sync secret",
-                )
-                .with_error(Some("validation"), error.clone())
-                .with_details(json!({ "accountId": account_id })),
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let library = state.library.clone();
-    let (local_scan_library_root, local_scan_skip_reason) = match state.storage.app_settings().await
-    {
-        Ok(settings) => match required_library_root(&settings) {
-            Ok(root) => (Some(root), None),
-            Err(error) => (None, Some(error)),
-        },
-        Err(error) => (None, Some(command_error(error))),
-    };
-    let mut metadata = JobMetadata::new();
-
-    metadata.insert("accountId".to_owned(), json!(account_id.clone()));
-    metadata.insert(
-        "localScanPlanned".to_owned(),
-        json!(local_scan_library_root.is_some()),
-    );
-    if let Some(reason) = &local_scan_skip_reason {
-        metadata.insert("localScanSkipReason".to_owned(), json!(reason));
-    }
-
-    let job_account_id = account_id.clone();
-    let two_factor_prompts = state.two_factor_prompts.clone();
-    let job_id = state.jobs.spawn(
-        "accountSync",
-        format!("Sync {job_account_id}"),
-        metadata,
-        move |context| async move {
-            context.info("Preparing account sync");
-            let client = dm_api::DlsiteClient::new(dm_api::DlsiteClientConfig::default())
-                .map_err(|error| JobFailure::with_code("api_client", error.to_string()))?;
-            let source = DlsiteSyncSource::new(client.clone());
-            let metadata_source = DlsitePublicMetadataSource::new(client);
-            let progress_sink = JobSyncProgressSink {
-                context: context.clone(),
+    let diagnostic_operation = state.audit.operation("start_account_sync");
+    diagnostic_operation
+        .command(async {
+            let account_id = match normalize_required_id(request.account_id) {
+                Ok(account_id) => account_id,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed("account.sync.queue", "Failed to validate account sync")
+                            .with_error(Some("validation"), error.clone()),
+                    )
+                    .await;
+                    return Err(error);
+                }
             };
-            let two_factor_prompt =
-                JobTwoFactorPrompt::new(app, two_factor_prompts, context.clone());
-            let report = library
-                .sync_account_with_source(
-                    AccountSyncRequest {
-                        account_id: &job_account_id,
-                        password: password.as_deref(),
-                        cancellation_token: Some(context.cancellation_token()),
-                        progress_sink: Some(&progress_sink),
-                        two_factor_prompt: Some(&two_factor_prompt),
+            let password = match normalize_secret(request.password) {
+                Ok(password) => password,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "account.sync.queue",
+                            "Failed to validate account sync secret",
+                        )
+                        .with_error(Some("validation"), error.clone())
+                        .with_details(json!({ "accountId": account_id })),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
+            let library = state.library.clone();
+            let (local_scan_library_root, local_scan_skip_reason) =
+                match state.storage.app_settings().await {
+                    Ok(settings) => match required_library_root(&settings) {
+                        Ok(root) => (Some(root), None),
+                        Err(error) => (None, Some(error)),
                     },
-                    &source,
-                )
-                .await
-                .map_err(account_sync_failure)?;
-            let local_scan_output = match &local_scan_library_root {
-                Some(library_root) => {
-                    context.set_phase("scanningLocalDownloads");
-                    context.clear_progress();
-                    context.info("Scanning local downloads");
+                    Err(error) => (None, Some(command_error(error))),
+                };
+            let mut metadata = JobMetadata::new();
 
-                    match library
-                        .import_local_work_downloads_with_metadata_source(
-                            LocalWorkImportRequest::new(library_root),
-                            &metadata_source,
+            metadata.insert("accountId".to_owned(), json!(account_id.clone()));
+            metadata.insert(
+                "localScanPlanned".to_owned(),
+                json!(local_scan_library_root.is_some()),
+            );
+            if let Some(reason) = &local_scan_skip_reason {
+                metadata.insert("localScanSkipReason".to_owned(), json!(reason));
+            }
+
+            let job_account_id = account_id.clone();
+            let two_factor_prompts = state.two_factor_prompts.clone();
+            let job_id = state.jobs.spawn(
+                "accountSync",
+                format!("Sync {job_account_id}"),
+                metadata,
+                move |context| async move {
+                    context.info("Preparing account sync");
+                    let client = dm_api::DlsiteClient::new(dm_api::DlsiteClientConfig::default())
+                        .map_err(|error| {
+                        JobFailure::with_code("api_client", error.to_string())
+                    })?;
+                    let source = DlsiteSyncSource::new(client.clone());
+                    let metadata_source = DlsitePublicMetadataSource::new(client);
+                    let progress_sink = JobSyncProgressSink {
+                        context: context.clone(),
+                    };
+                    let two_factor_prompt =
+                        JobTwoFactorPrompt::new(app, two_factor_prompts, context.clone());
+                    let report = library
+                        .sync_account_with_source(
+                            AccountSyncRequest {
+                                account_id: &job_account_id,
+                                password: password.as_deref(),
+                                cancellation_token: Some(context.cancellation_token()),
+                                progress_sink: Some(&progress_sink),
+                                two_factor_prompt: Some(&two_factor_prompt),
+                            },
+                            &source,
                         )
                         .await
-                    {
-                        Ok(report) => {
-                            context.info(format!(
-                                "Local scan imported {} folders and updated metadata for {} works",
-                                report.imported_count, report.metadata_updated_count
-                            ));
-                            if report.metadata_missing_count > 0 {
-                                context.warn(format!(
-                                    "Local scan could not find public metadata for {} works",
-                                    report.metadata_missing_count
-                                ));
-                            }
-                            if let Some(error) = &report.metadata_error {
-                                context.warn(format!(
-                                    "Local scan metadata lookup had a non-fatal error: {error}"
-                                ));
-                            }
+                        .map_err(account_sync_failure)?;
+                    let local_scan_output = match &local_scan_library_root {
+                        Some(library_root) => {
+                            context.set_phase("scanningLocalDownloads");
+                            context.clear_progress();
+                            context.info("Scanning local downloads");
 
-                            for error in &report.recovery_errors {
-                                context.warn(error);
-                            }
-                            let mut details = local_work_import_report_details(&report);
-                            if let Value::Object(ref mut object) = details {
-                                object.insert("status".to_owned(), json!("succeeded"));
-                            }
-                            details
+                            let result = library
+                                .import_local_work_downloads_with_metadata_source(
+                                    LocalWorkImportRequest::new(library_root),
+                                    &metadata_source,
+                                )
+                                .await;
+                            post_sync_scan_output(&context, result)
                         }
-                        Err(error) => {
-                            let message = error.support_message();
+                        None => {
+                            let reason = local_scan_skip_reason
+                                .clone()
+                                .unwrap_or_else(|| "Library folder is required".to_owned());
 
-                            context.warn(format!("Local scan failed after sync: {message}"));
+                            context.info(format!("Skipping local scan: {reason}"));
                             json!({
-                                "status": "failed",
-                                "errorCode": error.failure_code(),
-                                "errorMessage": message,
-                                "errorDetails": error.support_details(),
+                                "status": "skipped",
+                                "reason": reason,
                             })
                         }
+                    };
+                    let mut output = JobMetadata::new();
+
+                    output.insert("accountId".to_owned(), json!(report.account_id));
+                    output.insert("syncRunId".to_owned(), json!(report.sync_run_id));
+                    output.insert("purchasedCount".to_owned(), json!(report.purchased_count));
+                    output.insert(
+                        "cachedWorkCount".to_owned(),
+                        json!(report.cached_work_count),
+                    );
+                    output.insert(
+                        "missingDetailCount".to_owned(),
+                        json!(report.missing_detail_count),
+                    );
+                    output.insert("pageLimit".to_owned(), json!(report.page_limit));
+                    output.insert("concurrency".to_owned(), json!(report.concurrency));
+                    output.insert("localScan".to_owned(), local_scan_output);
+                    if report.missing_detail_count > 0 {
+                        context.warn(format!(
+                            "{} purchased works were missing details from content/works",
+                            report.missing_detail_count
+                        ));
                     }
-                }
-                None => {
-                    let reason = local_scan_skip_reason
-                        .clone()
-                        .unwrap_or_else(|| "Library folder is required".to_owned());
+                    context.set_phase("completed");
+                    context.set_progress(JobProgress::items(
+                        Some(report.cached_work_count as u64),
+                        Some(report.cached_work_count as u64),
+                    ));
+                    context.info(format!("Synced {} works", report.cached_work_count));
 
-                    context.info(format!("Skipping local scan: {reason}"));
-                    json!({
-                        "status": "skipped",
-                        "reason": reason,
-                    })
-                }
-            };
-            let mut output = JobMetadata::new();
-
-            output.insert("accountId".to_owned(), json!(report.account_id));
-            output.insert("syncRunId".to_owned(), json!(report.sync_run_id));
-            output.insert("purchasedCount".to_owned(), json!(report.purchased_count));
-            output.insert(
-                "cachedWorkCount".to_owned(),
-                json!(report.cached_work_count),
+                    Ok(output)
+                },
             );
-            output.insert(
-                "missingDetailCount".to_owned(),
-                json!(report.missing_detail_count),
-            );
-            output.insert("pageLimit".to_owned(), json!(report.page_limit));
-            output.insert("concurrency".to_owned(), json!(report.concurrency));
-            output.insert("localScan".to_owned(), local_scan_output);
-            if report.missing_detail_count > 0 {
-                context.warn(format!(
-                    "{} purchased works were missing details from content/works",
-                    report.missing_detail_count
-                ));
-            }
-            context.set_phase("completed");
-            context.set_progress(JobProgress::items(
-                Some(report.cached_work_count as u64),
-                Some(report.cached_work_count as u64),
-            ));
-            context.info(format!("Synced {} works", report.cached_work_count));
 
-            Ok(output)
-        },
-    );
+            record_audit(
+                &state.audit,
+                AuditEvent::queued("account.sync", "Queued account sync").with_details(json!({
+                    "accountId": account_id,
+                    "jobId": job_id.to_string(),
+                })),
+            )
+            .await;
 
-    record_audit(
-        &state.audit,
-        AuditEvent::queued("account.sync", "Queued account sync").with_details(json!({
-            "accountId": account_id,
-            "jobId": job_id.to_string(),
-        })),
-    )
-    .await;
-
-    Ok(StartJobResponse {
-        job_id: job_id.to_string(),
-    })
+            Ok(StartJobResponse {
+                job_id: job_id.to_string(),
+            })
+        })
+        .await
 }
 
 #[tauri::command]
@@ -745,224 +787,245 @@ async fn start_work_download(
     state: State<'_, AppState>,
     request: StartWorkDownloadRequest,
 ) -> Result<StartJobResponse, String> {
-    let work_id = match normalize_required_id(request.work_id) {
-        Ok(work_id) => work_id,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("work.download.queue", "Failed to validate download")
-                    .with_error(Some("validation"), error.clone()),
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let account_id = match normalize_optional_id(request.account_id) {
-        Ok(account_id) => account_id,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("work.download.queue", "Failed to validate download account")
-                    .with_error(Some("validation"), error.clone())
-                    .with_details(json!({ "workId": work_id })),
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let password = match normalize_secret(request.password) {
-        Ok(password) => password,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("work.download.queue", "Failed to validate download secret")
-                    .with_error(Some("validation"), error.clone())
-                    .with_details(json!({ "workId": work_id })),
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let settings = match state.storage.app_settings().await {
-        Ok(settings) => settings,
-        Err(error) => {
-            let message = command_error(error);
-            record_audit(
-                &state.audit,
-                AuditEvent::failed(
-                    "work.download.queue",
-                    "Failed to load settings for download",
+    let diagnostic_operation = state.audit.operation("start_work_download");
+    diagnostic_operation
+        .command(async {
+            let work_id = match normalize_required_id(request.work_id) {
+                Ok(work_id) => work_id,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed("work.download.queue", "Failed to validate download")
+                            .with_error(Some("validation"), error.clone()),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
+            let account_id = match normalize_optional_id(request.account_id) {
+                Ok(account_id) => account_id,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "work.download.queue",
+                            "Failed to validate download account",
+                        )
+                        .with_error(Some("validation"), error.clone())
+                        .with_details(json!({ "workId": work_id })),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
+            let password = match normalize_secret(request.password) {
+                Ok(password) => password,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "work.download.queue",
+                            "Failed to validate download secret",
+                        )
+                        .with_error(Some("validation"), error.clone())
+                        .with_details(json!({ "workId": work_id })),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
+            let settings = match state.storage.app_settings().await {
+                Ok(settings) => settings,
+                Err(error) => {
+                    let message = command_error(error);
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "work.download.queue",
+                            "Failed to load settings for download",
+                        )
+                        .with_error(Some("storage"), message.clone())
+                        .with_details(json!({ "workId": work_id })),
+                    )
+                    .await;
+                    return Err(message);
+                }
+            };
+            let library_root = match required_library_root(&settings) {
+                Ok(root) => root,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "work.download.queue",
+                            "Failed to resolve library folder",
+                        )
+                        .with_error(Some("settings"), error.clone())
+                        .with_details(json!({ "workId": work_id })),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
+            let download_root = match effective_download_root(&app, &settings) {
+                Ok(root) => root,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "work.download.queue",
+                            "Failed to resolve download staging folder",
+                        )
+                        .with_error(Some("settings"), error.clone())
+                        .with_details(json!({ "workId": work_id })),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
+            let unpack_policy = request.unpack_policy.unwrap_or_default().into();
+            let replace_existing = request.replace_existing.unwrap_or(false);
+            let library = state.library.clone();
+            let mut metadata = JobMetadata::new();
+
+            metadata.insert("workId".to_owned(), json!(work_id.clone()));
+            if let Some(account_id) = &account_id {
+                metadata.insert("accountId".to_owned(), json!(account_id));
+            }
+
+            let reservation_id = state.download_reservations.next_owner_id();
+            let reservation = state
+                .download_reservations
+                .claim_available(std::slice::from_ref(&work_id), &reservation_id);
+
+            metadata.insert(
+                "skippedQueuedCount".to_owned(),
+                json!(reservation.reserved.len()),
+            );
+
+            if reservation.available.is_empty() {
+                metadata.insert("skippedQueued".to_owned(), json!(true));
+
+                let job_work_id = work_id.clone();
+                let job_id = state.jobs.spawn(
+                    "workDownload",
+                    format!("Download {job_work_id}"),
+                    metadata,
+                    move |context| async move {
+                        context.info(
+                            "Download is already queued or running; skipping duplicate request",
+                        );
+                        let mut output = JobMetadata::new();
+
+                        output.insert("workId".to_owned(), json!(job_work_id));
+                        output.insert("skippedQueued".to_owned(), json!(true));
+                        output.insert("skippedQueuedCount".to_owned(), json!(1usize));
+
+                        Ok(output)
+                    },
+                );
+
+                record_audit(
+                    &state.audit,
+                    AuditEvent::queued("work.download", "Queued duplicate work download no-op")
+                        .with_details(json!({
+                            "workId": work_id,
+                            "accountId": account_id,
+                            "jobId": job_id.to_string(),
+                            "skippedQueuedCount": 1,
+                            "replaceExisting": replace_existing,
+                            "unpackPolicy": unpack_policy_label(unpack_policy),
+                        })),
                 )
-                .with_error(Some("storage"), message.clone())
-                .with_details(json!({ "workId": work_id })),
-            )
-            .await;
-            return Err(message);
-        }
-    };
-    let library_root = match required_library_root(&settings) {
-        Ok(root) => root,
-        Err(error) => {
+                .await;
+
+                return Ok(StartJobResponse {
+                    job_id: job_id.to_string(),
+                });
+            }
+
+            metadata.insert(
+                DOWNLOAD_RESERVATION_METADATA_KEY.to_owned(),
+                json!(reservation_id),
+            );
+            metadata.insert("reservedWorkIds".to_owned(), json!(reservation.available));
+
+            let job_work_id = work_id.clone();
+            let audit_account_id = account_id.clone();
+            let two_factor_prompts = state.two_factor_prompts.clone();
+            let two_factor_app = app.clone();
+            let job_id = state.jobs.spawn(
+                "workDownload",
+                format!("Download {job_work_id}"),
+                metadata,
+                move |context| async move {
+                    context.info("Preparing download");
+                    let client = dm_api::DlsiteClient::new(dm_api::DlsiteClientConfig::default())
+                        .map_err(|error| {
+                        JobFailure::with_code("api_client", error.to_string())
+                    })?;
+                    let source = DlsiteWorkDownloadSource::new(client);
+                    let progress_sink = JobWorkDownloadProgressSink::new(context.clone());
+                    let two_factor_prompt = JobTwoFactorPrompt::new(
+                        two_factor_app,
+                        two_factor_prompts,
+                        context.clone(),
+                    );
+                    let report = library
+                        .download_work_with_source(
+                            WorkDownloadRequest {
+                                work_id: &job_work_id,
+                                account_id: account_id.as_deref(),
+                                password: password.as_deref(),
+                                library_root: &library_root,
+                                download_root: &download_root,
+                                unpack_policy,
+                                replace_existing,
+                                cancellation_token: Some(context.cancellation_token()),
+                                progress_sink: Some(&progress_sink),
+                                two_factor_prompt: Some(&two_factor_prompt),
+                            },
+                            &source,
+                        )
+                        .await
+                        .map_err(work_download_failure)?;
+                    let mut output = JobMetadata::new();
+
+                    output.insert("workId".to_owned(), json!(report.work_id));
+                    output.insert("accountId".to_owned(), json!(report.account_id));
+                    output.insert(
+                        "localPath".to_owned(),
+                        json!(report.local_path.to_string_lossy().to_string()),
+                    );
+                    output.insert("fileCount".to_owned(), json!(report.file_count));
+                    output.insert("warnings".to_owned(), json!(report.warnings));
+                    output.insert(
+                        "archiveExtracted".to_owned(),
+                        json!(report.archive_extracted),
+                    );
+                    context.info(format!("Downloaded {}", job_work_id));
+
+                    Ok(output)
+                },
+            );
+
             record_audit(
                 &state.audit,
-                AuditEvent::failed("work.download.queue", "Failed to resolve library folder")
-                    .with_error(Some("settings"), error.clone())
-                    .with_details(json!({ "workId": work_id })),
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let download_root = match effective_download_root(&app, &settings) {
-        Ok(root) => root,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed(
-                    "work.download.queue",
-                    "Failed to resolve download staging folder",
-                )
-                .with_error(Some("settings"), error.clone())
-                .with_details(json!({ "workId": work_id })),
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let unpack_policy = request.unpack_policy.unwrap_or_default().into();
-    let replace_existing = request.replace_existing.unwrap_or(false);
-    let library = state.library.clone();
-    let mut metadata = JobMetadata::new();
-
-    metadata.insert("workId".to_owned(), json!(work_id.clone()));
-    if let Some(account_id) = &account_id {
-        metadata.insert("accountId".to_owned(), json!(account_id));
-    }
-
-    let reservation_id = state.download_reservations.next_owner_id();
-    let reservation = state
-        .download_reservations
-        .claim_available(std::slice::from_ref(&work_id), &reservation_id);
-
-    metadata.insert(
-        "skippedQueuedCount".to_owned(),
-        json!(reservation.reserved.len()),
-    );
-
-    if reservation.available.is_empty() {
-        metadata.insert("skippedQueued".to_owned(), json!(true));
-
-        let job_work_id = work_id.clone();
-        let job_id = state.jobs.spawn(
-            "workDownload",
-            format!("Download {job_work_id}"),
-            metadata,
-            move |context| async move {
-                context.info("Download is already queued or running; skipping duplicate request");
-                let mut output = JobMetadata::new();
-
-                output.insert("workId".to_owned(), json!(job_work_id));
-                output.insert("skippedQueued".to_owned(), json!(true));
-                output.insert("skippedQueuedCount".to_owned(), json!(1usize));
-
-                Ok(output)
-            },
-        );
-
-        record_audit(
-            &state.audit,
-            AuditEvent::queued("work.download", "Queued duplicate work download no-op")
-                .with_details(json!({
+                AuditEvent::queued("work.download", "Queued work download").with_details(json!({
                     "workId": work_id,
-                    "accountId": account_id,
+                    "accountId": audit_account_id,
                     "jobId": job_id.to_string(),
-                    "skippedQueuedCount": 1,
                     "replaceExisting": replace_existing,
                     "unpackPolicy": unpack_policy_label(unpack_policy),
                 })),
-        )
-        .await;
+            )
+            .await;
 
-        return Ok(StartJobResponse {
-            job_id: job_id.to_string(),
-        });
-    }
-
-    metadata.insert(
-        DOWNLOAD_RESERVATION_METADATA_KEY.to_owned(),
-        json!(reservation_id),
-    );
-    metadata.insert("reservedWorkIds".to_owned(), json!(reservation.available));
-
-    let job_work_id = work_id.clone();
-    let audit_account_id = account_id.clone();
-    let two_factor_prompts = state.two_factor_prompts.clone();
-    let two_factor_app = app.clone();
-    let job_id = state.jobs.spawn(
-        "workDownload",
-        format!("Download {job_work_id}"),
-        metadata,
-        move |context| async move {
-            context.info("Preparing download");
-            let client = dm_api::DlsiteClient::new(dm_api::DlsiteClientConfig::default())
-                .map_err(|error| JobFailure::with_code("api_client", error.to_string()))?;
-            let source = DlsiteWorkDownloadSource::new(client);
-            let progress_sink = JobWorkDownloadProgressSink::new(context.clone());
-            let two_factor_prompt =
-                JobTwoFactorPrompt::new(two_factor_app, two_factor_prompts, context.clone());
-            let report = library
-                .download_work_with_source(
-                    WorkDownloadRequest {
-                        work_id: &job_work_id,
-                        account_id: account_id.as_deref(),
-                        password: password.as_deref(),
-                        library_root: &library_root,
-                        download_root: &download_root,
-                        unpack_policy,
-                        replace_existing,
-                        cancellation_token: Some(context.cancellation_token()),
-                        progress_sink: Some(&progress_sink),
-                        two_factor_prompt: Some(&two_factor_prompt),
-                    },
-                    &source,
-                )
-                .await
-                .map_err(work_download_failure)?;
-            let mut output = JobMetadata::new();
-
-            output.insert("workId".to_owned(), json!(report.work_id));
-            output.insert("accountId".to_owned(), json!(report.account_id));
-            output.insert(
-                "localPath".to_owned(),
-                json!(report.local_path.to_string_lossy().to_string()),
-            );
-            output.insert("fileCount".to_owned(), json!(report.file_count));
-            output.insert("warnings".to_owned(), json!(report.warnings));
-            output.insert(
-                "archiveExtracted".to_owned(),
-                json!(report.archive_extracted),
-            );
-            context.info(format!("Downloaded {}", job_work_id));
-
-            Ok(output)
-        },
-    );
-
-    record_audit(
-        &state.audit,
-        AuditEvent::queued("work.download", "Queued work download").with_details(json!({
-            "workId": work_id,
-            "accountId": audit_account_id,
-            "jobId": job_id.to_string(),
-            "replaceExisting": replace_existing,
-            "unpackPolicy": unpack_policy_label(unpack_policy),
-        })),
-    )
-    .await;
-
-    Ok(StartJobResponse {
-        job_id: job_id.to_string(),
-    })
+            Ok(StartJobResponse {
+                job_id: job_id.to_string(),
+            })
+        })
+        .await
 }
 
 #[tauri::command]
@@ -971,6 +1034,8 @@ async fn start_bulk_work_download(
     state: State<'_, AppState>,
     request: BulkWorkDownloadCommandRequest,
 ) -> Result<StartJobResponse, String> {
+    let diagnostic_operation = state.audit.operation("start_bulk_work_download");
+    diagnostic_operation.command(async {
     let query = match request.to_query() {
         Ok(query) => query,
         Err(error) => {
@@ -1208,6 +1273,7 @@ async fn start_bulk_work_download(
     Ok(StartJobResponse {
         job_id: job_id.to_string(),
     })
+    }).await
 }
 
 #[tauri::command]
@@ -1216,175 +1282,184 @@ async fn preview_bulk_work_download(
     state: State<'_, AppState>,
     request: BulkWorkDownloadCommandRequest,
 ) -> Result<BulkWorkDownloadPreviewDto, String> {
-    let query = match request.to_query() {
-        Ok(query) => query,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed(
-                    "work.bulkDownload.preview",
-                    "Failed to validate bulk download preview",
-                )
-                .with_error(Some("validation"), error.clone()),
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let settings = match state.storage.app_settings().await {
-        Ok(settings) => settings,
-        Err(error) => {
-            let message = command_error(error);
-            record_audit(
-                &state.audit,
-                AuditEvent::failed(
-                    "work.bulkDownload.preview",
-                    "Failed to load settings for bulk download preview",
-                )
-                .with_error(Some("storage"), message.clone()),
-            )
-            .await;
-            return Err(message);
-        }
-    };
-
-    if let Err(error) = required_library_root(&settings) {
-        record_audit(
-            &state.audit,
-            AuditEvent::failed(
-                "work.bulkDownload.preview",
-                "Failed to resolve library folder",
-            )
-            .with_error(Some("settings"), error.clone()),
-        )
-        .await;
-        return Err(error);
-    }
-
-    if let Err(error) = effective_download_root(&app, &settings) {
-        record_audit(
-            &state.audit,
-            AuditEvent::failed(
-                "work.bulkDownload.preview",
-                "Failed to resolve download staging folder",
-            )
-            .with_error(Some("settings"), error.clone()),
-        )
-        .await;
-        return Err(error);
-    }
-
-    let skip_downloaded = request.skip_downloaded.unwrap_or(true);
-    let candidates = match bulk_download_candidates(&state.library, &query, skip_downloaded).await {
-        Ok(candidates) => candidates,
-        Err(error) => {
-            let message = command_error(error);
-            record_audit(
-                &state.audit,
-                AuditEvent::failed(
-                    "work.bulkDownload.preview",
-                    "Failed to select bulk download products",
-                )
-                .with_error(Some("library"), message.clone()),
-            )
-            .await;
-            return Err(message);
-        }
-    };
-    let reservation = state
-        .download_reservations
-        .split_available(&candidates.work_ids);
-    let skipped_queued_count = reservation.reserved.len();
-    let available_work_ids = reservation.available;
-    let library = state.library.clone();
-    let (result_tx, result_rx) =
-        tokio::sync::oneshot::channel::<Result<BulkWorkDownloadPreviewDto, String>>();
-    let mut metadata = JobMetadata::new();
-
-    metadata.insert("search".to_owned(), json!(query.search.clone()));
-    metadata.insert("accountId".to_owned(), json!(query.account_id.clone()));
-    metadata.insert("skipDownloaded".to_owned(), json!(skip_downloaded));
-    metadata.insert(
-        "candidateCount".to_owned(),
-        json!(candidates.work_ids.len()),
-    );
-    metadata.insert(
-        "skippedDownloadedCount".to_owned(),
-        json!(candidates.skipped_downloaded_count),
-    );
-    metadata.insert("skippedQueuedCount".to_owned(), json!(skipped_queued_count));
-    metadata.insert(
-        "plannedCandidateCount".to_owned(),
-        json!(available_work_ids.len()),
-    );
-
-    let audit_metadata = metadata.clone();
-    let job_id = state.jobs.spawn(
-        "bulkWorkDownloadPreview",
-        "Plan Bulk Download",
-        metadata,
-        move |context| async move {
-            context.info("Preparing bulk download plan");
-            let client = match dm_api::DlsiteClient::new(dm_api::DlsiteClientConfig::default()) {
-                Ok(client) => client,
+    let diagnostic_operation = state.audit.operation("preview_bulk_work_download");
+    diagnostic_operation
+        .command(async {
+            let query = match request.to_query() {
+                Ok(query) => query,
                 Err(error) => {
-                    let message = error.to_string();
-                    let _ = result_tx.send(Err(message.clone()));
-                    return Err(JobFailure::with_code("api_client", message));
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "work.bulkDownload.preview",
+                            "Failed to validate bulk download preview",
+                        )
+                        .with_error(Some("validation"), error.clone()),
+                    )
+                    .await;
+                    return Err(error);
                 }
             };
-            let source = DlsiteWorkDownloadSource::new(client);
-            let progress_sink = JobBulkWorkDownloadPreviewProgressSink {
-                context: context.clone(),
+            let settings = match state.storage.app_settings().await {
+                Ok(settings) => settings,
+                Err(error) => {
+                    let message = command_error(error);
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "work.bulkDownload.preview",
+                            "Failed to load settings for bulk download preview",
+                        )
+                        .with_error(Some("storage"), message.clone()),
+                    )
+                    .await;
+                    return Err(message);
+                }
             };
-            let result = library
-                .preview_download_products_with_source(
-                    BulkWorkDownloadPreviewRequest {
-                        query,
-                        work_ids: Some(available_work_ids),
-                        skip_downloaded,
-                        cancellation_token: Some(context.cancellation_token()),
-                        progress_sink: Some(&progress_sink),
-                    },
-                    &source,
+
+            if let Err(error) = required_library_root(&settings) {
+                record_audit(
+                    &state.audit,
+                    AuditEvent::failed(
+                        "work.bulkDownload.preview",
+                        "Failed to resolve library folder",
+                    )
+                    .with_error(Some("settings"), error.clone()),
                 )
                 .await;
-
-            match result {
-                Ok(preview) => {
-                    let dto =
-                        BulkWorkDownloadPreviewDto::from_preview(preview, skipped_queued_count);
-                    let output = bulk_download_preview_output(&dto);
-
-                    let _ = result_tx.send(Ok(dto));
-
-                    Ok(output)
-                }
-                Err(error) => {
-                    let failure = work_download_failure(error);
-                    let message = failure.message.clone();
-
-                    let _ = result_tx.send(Err(message));
-
-                    Err(failure)
-                }
+                return Err(error);
             }
-        },
-    );
 
-    record_audit(
-        &state.audit,
-        AuditEvent::queued("work.bulkDownload.preview", "Queued bulk download preview")
-            .with_details(json!({
-                "jobId": job_id.to_string(),
-                "metadata": audit_metadata,
-            })),
-    )
-    .await;
+            if let Err(error) = effective_download_root(&app, &settings) {
+                record_audit(
+                    &state.audit,
+                    AuditEvent::failed(
+                        "work.bulkDownload.preview",
+                        "Failed to resolve download staging folder",
+                    )
+                    .with_error(Some("settings"), error.clone()),
+                )
+                .await;
+                return Err(error);
+            }
 
-    result_rx
+            let skip_downloaded = request.skip_downloaded.unwrap_or(true);
+            let candidates =
+                match bulk_download_candidates(&state.library, &query, skip_downloaded).await {
+                    Ok(candidates) => candidates,
+                    Err(error) => {
+                        let message = command_error(error);
+                        record_audit(
+                            &state.audit,
+                            AuditEvent::failed(
+                                "work.bulkDownload.preview",
+                                "Failed to select bulk download products",
+                            )
+                            .with_error(Some("library"), message.clone()),
+                        )
+                        .await;
+                        return Err(message);
+                    }
+                };
+            let reservation = state
+                .download_reservations
+                .split_available(&candidates.work_ids);
+            let skipped_queued_count = reservation.reserved.len();
+            let available_work_ids = reservation.available;
+            let library = state.library.clone();
+            let (result_tx, result_rx) =
+                tokio::sync::oneshot::channel::<Result<BulkWorkDownloadPreviewDto, String>>();
+            let mut metadata = JobMetadata::new();
+
+            metadata.insert("search".to_owned(), json!(query.search.clone()));
+            metadata.insert("accountId".to_owned(), json!(query.account_id.clone()));
+            metadata.insert("skipDownloaded".to_owned(), json!(skip_downloaded));
+            metadata.insert(
+                "candidateCount".to_owned(),
+                json!(candidates.work_ids.len()),
+            );
+            metadata.insert(
+                "skippedDownloadedCount".to_owned(),
+                json!(candidates.skipped_downloaded_count),
+            );
+            metadata.insert("skippedQueuedCount".to_owned(), json!(skipped_queued_count));
+            metadata.insert(
+                "plannedCandidateCount".to_owned(),
+                json!(available_work_ids.len()),
+            );
+
+            let audit_metadata = metadata.clone();
+            let job_id = state.jobs.spawn(
+                "bulkWorkDownloadPreview",
+                "Plan Bulk Download",
+                metadata,
+                move |context| async move {
+                    context.info("Preparing bulk download plan");
+                    let client =
+                        match dm_api::DlsiteClient::new(dm_api::DlsiteClientConfig::default()) {
+                            Ok(client) => client,
+                            Err(error) => {
+                                let message = error.to_string();
+                                let _ = result_tx.send(Err(message.clone()));
+                                return Err(JobFailure::with_code("api_client", message));
+                            }
+                        };
+                    let source = DlsiteWorkDownloadSource::new(client);
+                    let progress_sink = JobBulkWorkDownloadPreviewProgressSink {
+                        context: context.clone(),
+                    };
+                    let result = library
+                        .preview_download_products_with_source(
+                            BulkWorkDownloadPreviewRequest {
+                                query,
+                                work_ids: Some(available_work_ids),
+                                skip_downloaded,
+                                cancellation_token: Some(context.cancellation_token()),
+                                progress_sink: Some(&progress_sink),
+                            },
+                            &source,
+                        )
+                        .await;
+
+                    match result {
+                        Ok(preview) => {
+                            let dto = BulkWorkDownloadPreviewDto::from_preview(
+                                preview,
+                                skipped_queued_count,
+                            );
+                            let output = bulk_download_preview_output(&dto);
+
+                            let _ = result_tx.send(Ok(dto));
+
+                            Ok(output)
+                        }
+                        Err(error) => {
+                            let failure = work_download_failure(error);
+                            let message = failure.message.clone();
+
+                            let _ = result_tx.send(Err(message));
+
+                            Err(failure)
+                        }
+                    }
+                },
+            );
+
+            record_audit(
+                &state.audit,
+                AuditEvent::queued("work.bulkDownload.preview", "Queued bulk download preview")
+                    .with_details(json!({
+                        "jobId": job_id.to_string(),
+                        "metadata": audit_metadata,
+                    })),
+            )
+            .await;
+
+            result_rx.await.map_err(|_| {
+                "bulk download preview job stopped before returning a result".to_owned()
+            })?
+        })
         .await
-        .map_err(|_| "bulk download preview job stopped before returning a result".to_owned())?
 }
 
 #[tauri::command]
@@ -1393,129 +1468,132 @@ async fn open_work_download(
     state: State<'_, AppState>,
     request: OpenWorkDownloadRequest,
 ) -> Result<(), String> {
-    let work_id = match normalize_required_id(request.work_id) {
-        Ok(work_id) => work_id,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("work.open", "Failed to validate open request")
-                    .with_error(Some("validation"), error.clone()),
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let download = match state.storage.work_download_state(&work_id).await {
-        Ok(download) => download,
-        Err(error) => {
-            let message = command_error(error);
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("work.open", "Failed to load download state")
-                    .with_error(Some("storage"), message.clone())
-                    .with_details(json!({ "workId": work_id })),
-            )
-            .await;
-            return Err(message);
-        }
-    };
+    let diagnostic_operation = state.audit.operation("open_work_download");
+    diagnostic_operation
+        .command(async {
+            let work_id = match normalize_required_id(request.work_id) {
+                Ok(work_id) => work_id,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed("work.open", "Failed to validate open request")
+                            .with_error(Some("validation"), error.clone()),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
+            let download = match state.storage.work_download_state(&work_id).await {
+                Ok(download) => download,
+                Err(error) => {
+                    let message = command_error(error);
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed("work.open", "Failed to load download state")
+                            .with_error(Some("storage"), message.clone())
+                            .with_details(json!({ "workId": work_id })),
+                    )
+                    .await;
+                    return Err(message);
+                }
+            };
 
-    if download.status != WorkDownloadStatus::Downloaded {
-        let message = format!("{work_id} is not downloaded");
-        record_audit(
-            &state.audit,
-            AuditEvent::failed("work.open", "Failed to open downloaded work")
-                .with_error(Some("not_downloaded"), message.clone())
-                .with_details(json!({ "workId": work_id })),
-        )
-        .await;
-        return Err(message);
-    }
+            if download.status != WorkDownloadStatus::Downloaded {
+                let message = format!("{work_id} is not downloaded");
+                record_audit(
+                    &state.audit,
+                    AuditEvent::failed("work.open", "Failed to open downloaded work")
+                        .with_error(Some("not_downloaded"), message.clone())
+                        .with_details(json!({ "workId": work_id })),
+                )
+                .await;
+                return Err(message);
+            }
 
-    let local_path = download
-        .local_path
-        .as_deref()
-        .ok_or_else(|| format!("{work_id} does not have a local path"))?;
-    let canonical_path = match canonicalize_existing_path(local_path) {
-        Ok(path) => path,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("work.open", "Failed to resolve downloaded work path")
-                    .with_error(Some("path"), error.clone())
-                    .with_details(json!({ "workId": work_id, "path": local_path })),
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let settings = match state.storage.app_settings().await {
-        Ok(settings) => settings,
-        Err(error) => {
-            let message = command_error(error);
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("work.open", "Failed to load settings")
-                    .with_error(Some("storage"), message.clone())
-                    .with_details(json!({ "workId": work_id })),
-            )
-            .await;
-            return Err(message);
-        }
-    };
-    let allowed_roots = canonical_open_roots(&app, &settings);
+            let local_path = download
+                .local_path
+                .as_deref()
+                .ok_or_else(|| format!("{work_id} does not have a local path"))?;
+            let canonical_path = match canonicalize_existing_path(local_path) {
+                Ok(path) => path,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed("work.open", "Failed to resolve downloaded work path")
+                            .with_error(Some("path"), error.clone())
+                            .with_details(json!({ "workId": work_id, "path": local_path })),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
+            let settings = match state.storage.app_settings().await {
+                Ok(settings) => settings,
+                Err(error) => {
+                    let message = command_error(error);
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed("work.open", "Failed to load settings")
+                            .with_error(Some("storage"), message.clone())
+                            .with_details(json!({ "workId": work_id })),
+                    )
+                    .await;
+                    return Err(message);
+                }
+            };
+            let allowed_roots = canonical_open_roots(&app, &settings);
 
-    if !path_is_under_any_root(&canonical_path, &allowed_roots) {
-        let message = format!(
-            "download path is outside the configured library or staging folders: {}",
-            canonical_path.display()
-        );
-        record_audit(
-            &state.audit,
-            AuditEvent::failed("work.open", "Refused to open path outside configured roots")
-                .with_error(Some("path_outside_roots"), message.clone())
-                .with_details(json!({
-                    "workId": work_id,
-                    "path": canonical_path.to_string_lossy().to_string(),
-                })),
-        )
-        .await;
-        return Err(message);
-    }
-
-    match app
-        .opener()
-        .open_path(
-            canonical_path.to_string_lossy().into_owned(),
-            None::<String>,
-        )
-        .map_err(command_error)
-    {
-        Ok(()) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::succeeded("work.open", "Opened downloaded work").with_details(json!({
-                    "workId": work_id,
-                    "path": canonical_path.to_string_lossy().to_string(),
-                })),
-            )
-            .await;
-            Ok(())
-        }
-        Err(message) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("work.open", "Failed to open downloaded work")
-                    .with_error(Some("opener"), message.clone())
+            if !path_is_under_any_root(&canonical_path, &allowed_roots) {
+                let message = format!(
+                    "download path is outside the configured library or staging folders: {}",
+                    canonical_path.display()
+                );
+                record_audit(
+                    &state.audit,
+                    AuditEvent::failed(
+                        "work.open",
+                        "Refused to open path outside configured roots",
+                    )
+                    .with_error(Some("path_outside_roots"), message.clone())
                     .with_details(json!({
                         "workId": work_id,
                         "path": canonical_path.to_string_lossy().to_string(),
                     })),
-            )
-            .await;
-            Err(message)
-        }
-    }
+                )
+                .await;
+                return Err(message);
+            }
+
+            match desktop::open_path(&app, &state.audit, &canonical_path).await {
+                Ok(()) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::succeeded("work.open", "Opened downloaded work").with_details(
+                            json!({
+                                "workId": work_id,
+                                "path": canonical_path.to_string_lossy().to_string(),
+                            }),
+                        ),
+                    )
+                    .await;
+                    Ok(())
+                }
+                Err(message) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed("work.open", "Failed to open downloaded work")
+                            .with_error(Some("opener"), message.clone())
+                            .with_details(json!({
+                                "workId": work_id,
+                                "path": canonical_path.to_string_lossy().to_string(),
+                            })),
+                    )
+                    .await;
+                    Err(message)
+                }
+            }
+        })
+        .await
 }
 
 #[tauri::command]
@@ -1524,96 +1602,107 @@ async fn delete_work_download(
     state: State<'_, AppState>,
     request: DeleteWorkDownloadRequest,
 ) -> Result<WorkDownloadStateDto, String> {
-    let work_id = match normalize_required_id(request.work_id) {
-        Ok(work_id) => work_id,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed(
-                    "work.download.delete",
-                    "Failed to validate delete download request",
-                )
-                .with_error(Some("validation"), error.clone()),
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let settings = match state.storage.app_settings().await {
-        Ok(settings) => settings,
-        Err(error) => {
-            let message = command_error(error);
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("work.download.delete", "Failed to load settings")
-                    .with_error(Some("storage"), message.clone())
-                    .with_details(json!({ "workId": work_id })),
-            )
-            .await;
-            return Err(message);
-        }
-    };
-    let library_root = match required_library_root(&settings) {
-        Ok(root) => root,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("work.download.delete", "Failed to resolve library folder")
-                    .with_error(Some("settings"), error.clone())
-                    .with_details(json!({ "workId": work_id })),
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let download_root = match effective_download_root(&app, &settings) {
-        Ok(root) => root,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed(
-                    "work.download.delete",
-                    "Failed to resolve download staging folder",
-                )
-                .with_error(Some("settings"), error.clone())
-                .with_details(json!({ "workId": work_id })),
-            )
-            .await;
-            return Err(error);
-        }
-    };
+    let diagnostic_operation = state.audit.operation("delete_work_download");
+    diagnostic_operation
+        .command(async {
+            let work_id = match normalize_required_id(request.work_id) {
+                Ok(work_id) => work_id,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "work.download.delete",
+                            "Failed to validate delete download request",
+                        )
+                        .with_error(Some("validation"), error.clone()),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
+            let settings = match state.storage.app_settings().await {
+                Ok(settings) => settings,
+                Err(error) => {
+                    let message = command_error(error);
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed("work.download.delete", "Failed to load settings")
+                            .with_error(Some("storage"), message.clone())
+                            .with_details(json!({ "workId": work_id })),
+                    )
+                    .await;
+                    return Err(message);
+                }
+            };
+            let library_root = match required_library_root(&settings) {
+                Ok(root) => root,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "work.download.delete",
+                            "Failed to resolve library folder",
+                        )
+                        .with_error(Some("settings"), error.clone())
+                        .with_details(json!({ "workId": work_id })),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
+            let download_root = match effective_download_root(&app, &settings) {
+                Ok(root) => root,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "work.download.delete",
+                            "Failed to resolve download staging folder",
+                        )
+                        .with_error(Some("settings"), error.clone())
+                        .with_details(json!({ "workId": work_id })),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
 
-    let result = state
-        .library
-        .remove_work_download(WorkDownloadRemovalRequest::new(
-            &work_id,
-            &library_root,
-            &download_root,
-        ))
-        .await;
+            let result = state
+                .library
+                .remove_work_download(WorkDownloadRemovalRequest::new(
+                    &work_id,
+                    &library_root,
+                    &download_root,
+                ))
+                .await;
 
-    match result {
-        Ok(state_after_delete) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::succeeded("work.download.delete", "Deleted work download")
-                    .with_details(json!({ "workId": work_id })),
-            )
-            .await;
-            Ok(WorkDownloadStateDto::from(state_after_delete))
-        }
-        Err(error) => {
-            let message = command_error(error);
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("work.download.delete", "Failed to delete work download")
-                    .with_error(Some("library"), message.clone())
-                    .with_details(json!({ "workId": work_id })),
-            )
-            .await;
-            Err(message)
-        }
-    }
+            match result {
+                Ok(state_after_delete) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::succeeded("work.download.delete", "Deleted work download")
+                            .with_details(json!({ "workId": work_id })),
+                    )
+                    .await;
+                    Ok(WorkDownloadStateDto::from(state_after_delete))
+                }
+                Err(error) => {
+                    let message = command_error(error);
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "work.download.delete",
+                            "Failed to delete work download",
+                        )
+                        .with_error(Some("library"), message.clone())
+                        .with_details(json!({ "workId": work_id })),
+                    )
+                    .await;
+                    Err(message)
+                }
+            }
+        })
+        .await
 }
 
 #[tauri::command]
@@ -1621,178 +1710,195 @@ async fn mark_work_downloaded(
     state: State<'_, AppState>,
     request: MarkWorkDownloadedRequest,
 ) -> Result<WorkDownloadStateDto, String> {
-    let work_id = match normalize_required_id(request.work_id) {
-        Ok(work_id) => work_id,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed(
-                    "work.download.mark",
-                    "Failed to validate manual download request",
-                )
-                .with_error(Some("validation"), error.clone()),
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let local_path = match normalize_required_path(request.local_path) {
-        Ok(path) => path,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed(
-                    "work.download.mark",
-                    "Failed to validate manual download path",
-                )
-                .with_error(Some("validation"), error.clone())
-                .with_details(json!({ "workId": work_id })),
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let settings = match state.storage.app_settings().await {
-        Ok(settings) => settings,
-        Err(error) => {
-            let message = command_error(error);
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("work.download.mark", "Failed to load settings")
-                    .with_error(Some("storage"), message.clone())
-                    .with_details(json!({ "workId": work_id })),
-            )
-            .await;
-            return Err(message);
-        }
-    };
-    let library_root = match required_library_root(&settings) {
-        Ok(root) => root,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("work.download.mark", "Failed to resolve library folder")
-                    .with_error(Some("settings"), error.clone())
-                    .with_details(json!({ "workId": work_id })),
-            )
-            .await;
-            return Err(error);
-        }
-    };
+    let diagnostic_operation = state.audit.operation("mark_work_downloaded");
+    diagnostic_operation
+        .command(async {
+            let work_id = match normalize_required_id(request.work_id) {
+                Ok(work_id) => work_id,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "work.download.mark",
+                            "Failed to validate manual download request",
+                        )
+                        .with_error(Some("validation"), error.clone()),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
+            let local_path = match normalize_required_path(request.local_path) {
+                Ok(path) => path,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "work.download.mark",
+                            "Failed to validate manual download path",
+                        )
+                        .with_error(Some("validation"), error.clone())
+                        .with_details(json!({ "workId": work_id })),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
+            let settings = match state.storage.app_settings().await {
+                Ok(settings) => settings,
+                Err(error) => {
+                    let message = command_error(error);
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed("work.download.mark", "Failed to load settings")
+                            .with_error(Some("storage"), message.clone())
+                            .with_details(json!({ "workId": work_id })),
+                    )
+                    .await;
+                    return Err(message);
+                }
+            };
+            let library_root = match required_library_root(&settings) {
+                Ok(root) => root,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "work.download.mark",
+                            "Failed to resolve library folder",
+                        )
+                        .with_error(Some("settings"), error.clone())
+                        .with_details(json!({ "workId": work_id })),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
 
-    let result = state
-        .library
-        .mark_work_downloaded(WorkDownloadMarkRequest::new(
-            &work_id,
-            &library_root,
-            &local_path,
-        ))
-        .await;
+            let result = state
+                .library
+                .mark_work_downloaded(WorkDownloadMarkRequest::new(
+                    &work_id,
+                    &library_root,
+                    &local_path,
+                ))
+                .await;
 
-    match result {
-        Ok(state_after_mark) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::succeeded("work.download.mark", "Marked work as downloaded")
-                    .with_details(json!({
-                        "workId": work_id,
-                        "path": state_after_mark.local_path,
-                    })),
-            )
-            .await;
-            Ok(WorkDownloadStateDto::from(state_after_mark))
-        }
-        Err(error) => {
-            let message = command_error(error);
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("work.download.mark", "Failed to mark work as downloaded")
-                    .with_error(Some("library"), message.clone())
-                    .with_details(json!({
-                        "workId": work_id,
-                        "path": local_path.to_string_lossy().to_string(),
-                    })),
-            )
-            .await;
-            Err(message)
-        }
-    }
+            match result {
+                Ok(state_after_mark) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::succeeded("work.download.mark", "Marked work as downloaded")
+                            .with_details(json!({
+                                "workId": work_id,
+                                "path": state_after_mark.local_path,
+                            })),
+                    )
+                    .await;
+                    Ok(WorkDownloadStateDto::from(state_after_mark))
+                }
+                Err(error) => {
+                    let message = command_error(error);
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "work.download.mark",
+                            "Failed to mark work as downloaded",
+                        )
+                        .with_error(Some("library"), message.clone())
+                        .with_details(json!({
+                            "workId": work_id,
+                            "path": local_path.to_string_lossy().to_string(),
+                        })),
+                    )
+                    .await;
+                    Err(message)
+                }
+            }
+        })
+        .await
 }
 
 #[tauri::command]
 async fn scan_local_work_downloads(
     state: State<'_, AppState>,
 ) -> Result<LocalWorkImportReportDto, String> {
-    let settings = match state.storage.app_settings().await {
-        Ok(settings) => settings,
-        Err(error) => {
-            let message = command_error(error);
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("work.local.scan", "Failed to load settings")
-                    .with_error(Some("storage"), message.clone()),
-            )
-            .await;
-            return Err(message);
-        }
-    };
-    let library_root = match required_library_root(&settings) {
-        Ok(root) => root,
-        Err(error) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("work.local.scan", "Failed to resolve library folder")
-                    .with_error(Some("settings"), error.clone()),
-            )
-            .await;
-            return Err(error);
-        }
-    };
-    let metadata_source = match dm_api::DlsiteClient::new(dm_api::DlsiteClientConfig::default()) {
-        Ok(client) => DlsitePublicMetadataSource::new(client),
-        Err(error) => {
-            let message = command_error(error);
-            record_audit(
-                &state.audit,
-                AuditEvent::failed(
-                    "work.local.scan",
-                    "Failed to prepare DLsite product metadata lookup",
-                )
-                .with_error(Some("api_client"), message.clone()),
-            )
-            .await;
-            return Err(message);
-        }
-    };
+    let diagnostic_operation = state.audit.operation("scan_local_work_downloads");
+    diagnostic_operation
+        .command(async {
+            let settings = match state.storage.app_settings().await {
+                Ok(settings) => settings,
+                Err(error) => {
+                    let message = command_error(error);
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed("work.local.scan", "Failed to load settings")
+                            .with_error(Some("storage"), message.clone()),
+                    )
+                    .await;
+                    return Err(message);
+                }
+            };
+            let library_root = match required_library_root(&settings) {
+                Ok(root) => root,
+                Err(error) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed("work.local.scan", "Failed to resolve library folder")
+                            .with_error(Some("settings"), error.clone()),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
+            let metadata_source =
+                match dm_api::DlsiteClient::new(dm_api::DlsiteClientConfig::default()) {
+                    Ok(client) => DlsitePublicMetadataSource::new(client),
+                    Err(error) => {
+                        let message = command_error(error);
+                        record_audit(
+                            &state.audit,
+                            AuditEvent::failed(
+                                "work.local.scan",
+                                "Failed to prepare DLsite product metadata lookup",
+                            )
+                            .with_error(Some("api_client"), message.clone()),
+                        )
+                        .await;
+                        return Err(message);
+                    }
+                };
 
-    match state
-        .library
-        .import_local_work_downloads_with_metadata_source(
-            LocalWorkImportRequest::new(&library_root),
-            &metadata_source,
-        )
+            match state
+                .library
+                .import_local_work_downloads_with_metadata_source(
+                    LocalWorkImportRequest::new(&library_root),
+                    &metadata_source,
+                )
+                .await
+            {
+                Ok(report) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::succeeded("work.local.scan", "Scanned local work folders")
+                            .with_details(local_work_import_report_details(&report)),
+                    )
+                    .await;
+                    Ok(LocalWorkImportReportDto::from(report))
+                }
+                Err(error) => {
+                    let message = command_error(error);
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed("work.local.scan", "Failed to scan local work folders")
+                            .with_error(Some("library"), message.clone()),
+                    )
+                    .await;
+                    Err(message)
+                }
+            }
+        })
         .await
-    {
-        Ok(report) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::succeeded("work.local.scan", "Scanned local work folders")
-                    .with_details(local_work_import_report_details(&report)),
-            )
-            .await;
-            Ok(LocalWorkImportReportDto::from(report))
-        }
-        Err(error) => {
-            let message = command_error(error);
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("work.local.scan", "Failed to scan local work folders")
-                    .with_error(Some("library"), message.clone()),
-            )
-            .await;
-            Err(message)
-        }
-    }
 }
 
 #[tauri::command]
@@ -1805,12 +1911,17 @@ async fn get_job(
     state: State<'_, AppState>,
     request: JobIdRequest,
 ) -> Result<dm_jobs::JobSnapshot, String> {
-    let job_id = normalize_required_id(request.job_id)?;
+    let diagnostic_operation = state.audit.operation("get_job");
+    diagnostic_operation
+        .command(async {
+            let job_id = normalize_required_id(request.job_id)?;
 
-    state
-        .jobs
-        .get_job(&JobId::from(job_id))
-        .ok_or_else(|| "job not found".to_owned())
+            state
+                .jobs
+                .get_job(&JobId::from(job_id))
+                .ok_or_else(|| "job not found".to_owned())
+        })
+        .await
 }
 
 #[tauri::command]
@@ -1818,12 +1929,17 @@ async fn cancel_job(
     state: State<'_, AppState>,
     request: JobIdRequest,
 ) -> Result<dm_jobs::CancelJobResult, String> {
-    let job_id = normalize_required_id(request.job_id)?;
+    let diagnostic_operation = state.audit.operation("cancel_job");
+    diagnostic_operation
+        .command(async {
+            let job_id = normalize_required_id(request.job_id)?;
 
-    state
-        .jobs
-        .cancel_job(&JobId::from(job_id))
-        .map_err(command_error)
+            state
+                .jobs
+                .cancel_job(&JobId::from(job_id))
+                .map_err(command_error)
+        })
+        .await
 }
 
 #[tauri::command]
@@ -1831,21 +1947,31 @@ async fn get_job_logs(
     state: State<'_, AppState>,
     request: JobLogsRequest,
 ) -> Result<JobLogPage, String> {
-    let job_id = normalize_required_id(request.job_id)?;
+    let diagnostic_operation = state.audit.operation("get_job_logs");
+    diagnostic_operation
+        .command(async {
+            let job_id = normalize_required_id(request.job_id)?;
 
-    state
-        .jobs
-        .job_logs(&JobId::from(job_id), request.after_sequence, request.limit)
-        .map_err(command_error)
+            state
+                .jobs
+                .job_logs(&JobId::from(job_id), request.after_sequence, request.limit)
+                .map_err(command_error)
+        })
+        .await
 }
 
 #[tauri::command]
 async fn clear_finished_jobs(
     state: State<'_, AppState>,
 ) -> Result<ClearFinishedJobsResponse, String> {
-    Ok(ClearFinishedJobsResponse {
-        removed_count: state.jobs.clear_finished(),
-    })
+    let diagnostic_operation = state.audit.operation("clear_finished_jobs");
+    diagnostic_operation
+        .command(async {
+            Ok(ClearFinishedJobsResponse {
+                removed_count: state.jobs.clear_finished(),
+            })
+        })
+        .await
 }
 
 #[tauri::command]
@@ -1869,37 +1995,54 @@ async fn get_audit_log_dir(state: State<'_, AppState>) -> Result<AuditLogDirDto,
 
 #[tauri::command]
 async fn open_audit_log_dir(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let path = state.audit.log_dir().to_path_buf();
+    let diagnostic_operation = state.audit.operation("open_audit_log_dir");
+    diagnostic_operation
+        .command(async {
+            let path = state.audit.log_dir().to_path_buf();
 
-    match app
-        .opener()
-        .open_path(path.to_string_lossy().into_owned(), None::<String>)
-        .map_err(command_error)
-    {
-        Ok(()) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::succeeded("audit.openLogDir", "Opened audit log directory")
-                    .with_details(json!({
-                        "path": path.to_string_lossy().to_string(),
-                    })),
-            )
-            .await;
-            Ok(())
-        }
-        Err(message) => {
-            record_audit(
-                &state.audit,
-                AuditEvent::failed("audit.openLogDir", "Failed to open audit log directory")
-                    .with_error(Some("opener"), message.clone())
-                    .with_details(json!({
-                        "path": path.to_string_lossy().to_string(),
-                    })),
-            )
-            .await;
-            Err(message)
-        }
-    }
+            match desktop::open_path(&app, &state.audit, &path).await {
+                Ok(()) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::succeeded("audit.openLogDir", "Opened audit log directory")
+                            .with_details(json!({
+                                "path": path.to_string_lossy().to_string(),
+                            })),
+                    )
+                    .await;
+                    Ok(())
+                }
+                Err(message) => {
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "audit.openLogDir",
+                            "Failed to open audit log directory",
+                        )
+                        .with_error(Some("opener"), message.clone())
+                        .with_details(json!({
+                            "path": path.to_string_lossy().to_string(),
+                        })),
+                    )
+                    .await;
+                    Err(message)
+                }
+            }
+        })
+        .await
+}
+
+#[tauri::command]
+async fn open_external_url(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    url: String,
+) -> Result<(), String> {
+    state
+        .audit
+        .operation("external.open")
+        .command(desktop::open_url(&app, &state.audit, &url))
+        .await
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3034,7 +3177,15 @@ impl BulkWorkDownloadProgressSink for JobBulkWorkDownloadProgressSink {
                 total,
                 error_code,
                 error_message,
+                error_details,
             } => {
+                dm_audit::record_current_failure(
+                    &error_code,
+                    json!({
+                        "phase": "bulkDownloading", "workId": work_id,
+                        "current": current, "total": total, "errorDetails": error_details,
+                    }),
+                );
                 self.context
                     .set_progress(JobProgress::items(Some(current as u64), Some(total as u64)));
                 self.context.warn(format!(
@@ -3288,8 +3439,73 @@ fn job_failure_with_details(
     failure
 }
 
-fn command_error(error: impl ToString) -> String {
+fn command_error(error: impl ToString + 'static) -> String {
+    let value = &error as &dyn std::any::Any;
+    let (code, details) = if let Some(e) = value.downcast_ref::<dm_library::LibraryError>() {
+        (e.failure_code(), e.support_details())
+    } else if let Some(e) = value.downcast_ref::<std::io::Error>() {
+        ("io", json!({"osCode":e.raw_os_error()}))
+    } else if value.is::<dm_storage::StorageError>() {
+        ("storage", json!({}))
+    } else if value.is::<dm_credentials::CredentialsError>() {
+        ("credentials", json!({}))
+    } else {
+        ("failed", json!({}))
+    };
+    dm_audit::record_current_failure(code, details);
     error.to_string()
+}
+
+fn post_sync_scan_output(
+    context: &JobContext,
+    result: dm_library::Result<LocalWorkImportReport>,
+) -> Value {
+    match result {
+        Ok(report) => {
+            context.info(format!(
+                "Local scan imported {} folders and updated metadata for {} works",
+                report.imported_count, report.metadata_updated_count
+            ));
+            if report.metadata_missing_count > 0 {
+                context.warn(format!(
+                    "Local scan could not find public metadata for {} works",
+                    report.metadata_missing_count
+                ));
+            }
+            if let Some(error) = &report.metadata_error {
+                context.warn(format!(
+                    "Local scan metadata lookup had a non-fatal error: {error}"
+                ));
+            }
+
+            for error in &report.recovery_errors {
+                context.warn(error);
+            }
+            let mut details = local_work_import_report_details(&report);
+            if let Value::Object(ref mut object) = details {
+                object.insert("status".to_owned(), json!("succeeded"));
+            }
+            details
+        }
+        Err(error) => {
+            dm_audit::record_current_failure(
+                error.failure_code(),
+                json!({
+                    "phase": "scanningLocalDownloads",
+                    "errorDetails": error.support_details(),
+                }),
+            );
+            let message = error.support_message();
+
+            context.warn(format!("Local scan failed after sync: {message}"));
+            json!({
+                "status": "failed",
+                "errorCode": error.failure_code(),
+                "errorMessage": message,
+                "errorDetails": error.support_details(),
+            })
+        }
+    }
 }
 
 fn local_work_import_report_details(report: &LocalWorkImportReport) -> Value {
@@ -3309,57 +3525,7 @@ fn local_work_import_report_details(report: &LocalWorkImportReport) -> Value {
 }
 
 async fn record_audit(logger: &AuditLogger, event: AuditEvent) {
-    if let Err(error) = logger.record(event).await {
-        tracing::error!(target: "dlsite_manager::audit", error = %error, "failed to write audit event");
-    }
-}
-
-fn job_audit_event(event: &dm_jobs::JobEvent) -> Option<AuditEvent> {
-    if event.event_kind != JobEventKind::Finished {
-        return None;
-    }
-
-    let operation = job_audit_operation(event.kind.as_str());
-    let details = json!({
-        "jobId": event.job_id.to_string(),
-        "kind": event.kind.as_str(),
-        "title": event.snapshot.title.clone(),
-        "metadata": event.snapshot.metadata.clone(),
-        "output": event.snapshot.output.clone(),
-        "errorDetails": event.snapshot.error.as_ref().map(|error| error.details.clone()),
-    });
-
-    match event.status {
-        JobStatus::Succeeded => {
-            Some(AuditEvent::succeeded(operation, "Job succeeded").with_details(details))
-        }
-        JobStatus::Cancelled => {
-            Some(AuditEvent::cancelled(operation, "Job cancelled").with_details(details))
-        }
-        JobStatus::Failed => {
-            let error = event.snapshot.error.as_ref();
-            let message = error
-                .map(|error| error.message.clone())
-                .unwrap_or_else(|| "Job failed".to_owned());
-
-            Some(
-                AuditEvent::failed(operation, "Job failed")
-                    .with_error(error.and_then(|error| error.code.clone()), message)
-                    .with_details(details),
-            )
-        }
-        _ => None,
-    }
-}
-
-fn job_audit_operation(kind: &str) -> String {
-    match kind {
-        "accountSync" => "account.sync".to_owned(),
-        "workDownload" => "work.download".to_owned(),
-        "bulkWorkDownload" => "work.bulkDownload".to_owned(),
-        "bulkWorkDownloadPreview" => "work.bulkDownload.preview".to_owned(),
-        _ => format!("job.{kind}"),
-    }
+    logger.record_now(event);
 }
 
 fn job_download_reservation_id(event: &dm_jobs::JobEvent) -> Option<&str> {
@@ -3534,28 +3700,6 @@ fn bulk_download_noop_output(
     output
 }
 
-fn setup_tracing(
-    log_dir: &Path,
-) -> Result<tracing_appender::non_blocking::WorkerGuard, Box<dyn std::error::Error>> {
-    std::fs::create_dir_all(log_dir)?;
-    let file_appender = tracing_appender::rolling::daily(log_dir, "runtime.log");
-    let (writer, guard) = tracing_appender::non_blocking(file_appender);
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    let subscriber = tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .with_writer(writer)
-        .with_ansi(false)
-        .json()
-        .finish();
-
-    if let Err(error) = tracing::subscriber::set_global_default(subscriber) {
-        eprintln!("failed to initialize tracing subscriber: {error}");
-    }
-
-    Ok(guard)
-}
-
 fn forward_job_events(
     app: AppHandle,
     jobs: JobManager,
@@ -3584,19 +3728,18 @@ fn forward_job_events(
                         }
                     }
 
-                    if let Some(audit_event) = job_audit_event(&event) {
-                        let audit = audit.clone();
-                        tauri::async_runtime::spawn(async move {
-                            record_audit(&audit, audit_event).await;
-                        });
+                    if app.emit("dm-job-event", event).is_err() {
+                        audit.record_now(AuditEvent::failed("job.events", ""));
                     }
-                    let _ = app.emit("dm-job-event", event);
                 }
                 Err(RecvError::Lagged(skipped)) => {
-                    eprintln!("job event forwarder skipped {skipped} lagged events");
+                    audit.record_now(
+                        AuditEvent::failed("job.events", "")
+                            .with_details(json!({"skipped":skipped})),
+                    );
                 }
                 Err(RecvError::Closed) => {
-                    eprintln!("job event forwarder stopped");
+                    audit.record_now(AuditEvent::failed("job.events", ""));
                     break;
                 }
             }
@@ -3605,22 +3748,29 @@ fn forward_job_events(
 }
 
 fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let log_dir = app.path().app_log_dir()?;
-    let tracing_guard = setup_tracing(&log_dir)?;
-    let audit = AuditLogger::new(log_dir.clone())?;
+    let audit = app.state::<AuditLogger>().inner().clone();
+    let log_dir = audit.log_dir().to_path_buf();
     let app_data_dir = app.path().app_data_dir()?;
-    std::fs::create_dir_all(&app_data_dir)?;
+    let mut directories = audit.operation("app.startup");
+    let result = std::fs::create_dir_all(&app_data_dir);
+    directories.finish(if result.is_ok(){dm_audit::AuditOutcome::Succeeded}else{dm_audit::AuditOutcome::Failed},json!({"phase":"directories","osCode":result.as_ref().err().and_then(std::io::Error::raw_os_error)}));
+    result?;
     let database_path: PathBuf = app_data_dir.join("dlsite-manager.sqlite");
-    let storage = tauri::async_runtime::block_on(async {
+    let mut database = audit.operation("app.startup");
+    let storage_result = tauri::async_runtime::block_on(async {
         let storage = Storage::open(&database_path).await?;
         storage.run_migrations().await?;
         dm_storage::Result::Ok(storage)
-    })?;
+    });
+    database.finish(if storage_result.is_ok(){dm_audit::AuditOutcome::Succeeded}else{dm_audit::AuditOutcome::Failed},json!({"phase":"database","failureKind":if storage_result.is_err(){Some("storage")}else{None}}));
+    let storage = storage_result?;
     let credential_vault_path = app_data_dir.join("credentials").join("vault.json");
-    let credentials: Arc<dyn CredentialStore> =
-        Arc::new(LocalCredentialStore::open(&credential_vault_path)?);
+    let mut vault = audit.operation("app.startup");
+    let result = LocalCredentialStore::open(&credential_vault_path);
+    vault.finish(if result.is_ok(){dm_audit::AuditOutcome::Succeeded}else{dm_audit::AuditOutcome::Failed},json!({"phase":"credentials","failureKind":if result.is_err(){Some("credentials")}else{None}}));
+    let credentials: Arc<dyn CredentialStore> = Arc::new(result?);
     let library = Library::new(storage.clone(), credentials);
-    let jobs = JobManager::default();
+    let jobs = JobManager::default().with_diagnostics(audit.clone());
     let download_reservations = DownloadReservations::default();
 
     tracing::info!(
@@ -3651,7 +3801,6 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         audit,
         download_reservations,
         two_factor_prompts: TwoFactorPrompts::default(),
-        _tracing_guard: tracing_guard,
     });
 
     Ok(())
@@ -3664,7 +3813,17 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .setup(setup_app)
+        .setup(|app| {
+            let audit=diagnostics::initialize(app);
+            let _=tracing::subscriber::set_global_default(tracing_subscriber::registry().with(dm_audit::DiagnosticLayer(audit.clone())));
+            app.manage(audit.clone());
+            app.manage(diagnostics::FrontendReports::default());
+            if setup_app(app).is_err() {
+                audit.record_now(AuditEvent::failed("app.startup", ""));
+                app.dialog().message(format!("Application initialization failed. Open Activity to export diagnostics. Support run: {}",audit.run_id())).title("dlsite-manager startup failure").show(|_|{});
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_settings,
             save_settings,
@@ -3694,9 +3853,20 @@ pub fn run() {
             list_audit_events,
             get_audit_log_dir,
             open_audit_log_dir,
+            open_external_url,
+            diagnostics::diagnostic_summary,
+            diagnostics::diagnostic_runs,
+            diagnostics::diagnostic_operation,
+            diagnostics::export_diagnostics,
+            diagnostics::report_frontend_failure,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app,event| {
+            if matches!(event,tauri::RunEvent::Exit) {
+                if let Some(audit)=app.try_state::<AuditLogger>() {audit.flush(Duration::from_secs(2));}
+            }
+        });
 }
 
 #[cfg(test)]
@@ -3834,3 +4004,6 @@ mod tests {
         assert_eq!(split.available, vec!["RJ000002".to_owned()]);
     }
 }
+
+#[cfg(test)]
+mod diagnostic_tests;

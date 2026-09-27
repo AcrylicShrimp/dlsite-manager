@@ -35,8 +35,12 @@ serde_json = "1.0.151"
 tokio = { version = "1.53.1", features = ["macros", "sync", "time"] }
 tauri-plugin-dialog = "2.7.3"
 tracing = "0.1.44"
-tracing-appender = "0.2.5"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }
+tracing-subscriber = { version = "0.3.23", features = ["registry"] }
+
+[dev-dependencies]
+dm-archive = { path = "../crates/dm-archive" }
+tempfile = "3.27.0"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [lints]
 workspace = true

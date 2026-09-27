@@ -281,6 +281,7 @@ impl LibraryError {
             }),
             Self::Io(error) => json!({
                 "failureKind": "io",
+                "osCode": error.raw_os_error(),
                 "message": error.to_string(),
             }),
             Self::Json(error) => json!({
@@ -608,11 +609,14 @@ fn download_error_support_details(error: &dm_download::DownloadError) -> Value {
         dm_download::DownloadError::Archive(error) => json!({
             "failureKind": "download",
             "downloadErrorKind": "archive",
+            "archiveErrorKind": error.diagnostic_kind(),
+            "osCode": error.os_error_code(),
             "source": error.to_string(),
         }),
         dm_download::DownloadError::Io(error) => json!({
             "failureKind": "download",
             "downloadErrorKind": "io",
+            "osCode": error.raw_os_error(),
             "source": error.to_string(),
         }),
     }
@@ -1178,6 +1182,7 @@ impl Library {
                         total: requested_count,
                         error_code,
                         error_message,
+                        error_details: error.support_details(),
                     });
                 }
             }
@@ -2344,6 +2349,8 @@ pub enum BulkWorkDownloadProgress {
         total: usize,
         error_code: String,
         error_message: String,
+        /// Structured causes for consumers; raw text must pass diagnostic privacy projection.
+        error_details: Value,
     },
     Completed {
         report: BulkWorkDownloadReport,
@@ -3730,6 +3737,7 @@ mod tests {
     #[derive(Debug, Clone)]
     struct FailingDownloadSource {
         fail_work_id: &'static str,
+        failure: fn() -> LibraryError,
     }
 
     impl_fake_auth_source!(FailingDownloadSource);
@@ -3758,7 +3766,7 @@ mod tests {
             progress_sink: &mut (dyn FnMut(DownloadProgress) + Send),
         ) -> Result<DownloadedWork> {
             if job.work_id.as_ref() == self.fail_work_id {
-                return Err(LibraryError::SyncSource("download failed".to_owned()));
+                return Err((self.failure)());
             }
 
             FakeDownloadSource
@@ -5108,15 +5116,23 @@ mod tests {
             .sync_account_with_source(AccountSyncRequest::new("account-a"), &sync_source())
             .await?;
 
+        let progress = RecordingBulkDownloadProgressSink::default();
+        let mut request = BulkWorkDownloadRequest::new(
+            ProductListQuery::default(),
+            &library_root,
+            &download_root,
+        );
+        request.progress_sink = Some(&progress);
         let report = library
             .download_products_with_source(
-                BulkWorkDownloadRequest::new(
-                    ProductListQuery::default(),
-                    &library_root,
-                    &download_root,
-                ),
+                request,
                 &FailingDownloadSource {
                     fail_work_id: "RJ000002",
+                    failure: || {
+                        LibraryError::Download(dm_download::DownloadError::Io(
+                            std::io::Error::from_raw_os_error(28),
+                        ))
+                    },
                 },
             )
             .await?;
@@ -5127,6 +5143,24 @@ mod tests {
         assert_eq!(report.failed_count, 1);
         assert_eq!(report.failed_works[0].work_id, "RJ000002");
         assert_eq!(failed_state.status, WorkDownloadStatus::Failed);
+        let events = progress.events.lock().unwrap();
+        let failures: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                BulkWorkDownloadProgress::WorkFailed {
+                    work_id,
+                    error_code,
+                    error_details,
+                    ..
+                } => Some((work_id, error_code, error_details)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].0, "RJ000002");
+        assert_eq!(failures[0].1, "download");
+        assert_eq!(failures[0].2["osCode"], 28);
+        assert_eq!(failures[0].2["downloadErrorKind"], "io");
         assert!(library_root.join("RJ000001/RJ000001.txt").exists());
 
         std::fs::remove_dir_all(root).unwrap();
@@ -6162,5 +6196,73 @@ mod tests {
         assert_eq!(sync_runs[0].error_code, Some("cancelled".to_owned()));
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+    #[test]
+    fn wrapped_download_and_archive_causes_survive_persistence_and_export() {
+        use dm_archive::ArchiveError;
+        use dm_audit::{AuditEvent, AuditLogger, ExportScope};
+        use std::io::Read;
+        let dir = tempfile::tempdir().unwrap();
+        let logger = AuditLogger::new(dir.path()).unwrap();
+        let failures = [
+            dm_download::DownloadError::Io(std::io::Error::from_raw_os_error(13)),
+            dm_download::DownloadError::Io(std::io::Error::from_raw_os_error(28)),
+            dm_download::DownloadError::Archive(ArchiveError::Io(
+                std::io::Error::from_raw_os_error(28),
+            )),
+            dm_download::DownloadError::Archive(ArchiveError::UnsafeArchiveEntry {
+                entry: "PRIVATE-ENTRY".into(),
+            }),
+            dm_download::DownloadError::Archive(ArchiveError::Zip(
+                zip::result::ZipError::InvalidArchive("PRIVATE-ARCHIVE-DETAIL".into()),
+            )),
+            dm_download::DownloadError::Archive(ArchiveError::Zip(zip::result::ZipError::Io(
+                std::io::Error::from_raw_os_error(13),
+            ))),
+        ];
+        for error in failures {
+            logger.record_now(
+                AuditEvent::failed("work.download", "")
+                    .with_details(LibraryError::Download(error).support_details()),
+            );
+        }
+        assert!(logger.flush(std::time::Duration::from_secs(2)));
+        let persisted = std::fs::read_to_string(
+            dir.path()
+                .join("diagnostics")
+                .join(logger.run_id())
+                .join("events-0001.jsonl"),
+        )
+        .unwrap();
+        let destination = dir.path().join("support.zip");
+        logger.export(&destination, ExportScope::default()).unwrap();
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(destination).unwrap()).unwrap();
+        let mut exported = String::new();
+        archive
+            .by_name("events.jsonl")
+            .unwrap()
+            .read_to_string(&mut exported)
+            .unwrap();
+        for data in [persisted, exported] {
+            assert!(!data.contains("PRIVATE-"));
+            let events: Vec<dm_audit::AuditEvent> = data
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            assert_eq!(events.len(), 6);
+            assert_eq!(events[0].details["osCode"], 13);
+            assert_eq!(events[1].details["osCode"], 28);
+            assert_eq!(events[2].details["archiveErrorKind"], "io");
+            assert_eq!(events[2].details["osCode"], 28);
+            assert_eq!(events[3].details["archiveErrorKind"], "unsafe_entry");
+            assert_eq!(events[4].details["archiveErrorKind"], "zip_invalid");
+            assert_eq!(events[5].details["archiveErrorKind"], "zip_io");
+            assert_eq!(events[5].details["osCode"], 13);
+        }
     }
 }

@@ -522,3 +522,160 @@
   https://github.com/AcrylicShrimp/dlsite-manager/issues/47#issuecomment-5855994171
   Closed #47 as completed and verified its closed state and posted comment.
   Closure records delivery of the upstream fix, not a verified Linux desktop result.
+
+## 2026-09-28
+
+- Finalized the agreed logging redesign in
+  `docs/designs/2026-09-28.00-diagnostic-logging.md`: one always-on system, no detailed
+  recording mode/timer, correlated command/job/phase evidence, allowlisted inherited
+  and child environments, truthful desktop-open outcomes, bounded storage/health,
+  privacy at collection, and support export independent of folder opening.
+- Defined module ownership, event fields, safe error/output conversion, initial resource
+  limits, bootstrap and frontend reporting failures, legacy-log handling, acceptance
+  scenarios, and ordered next architecture slices. Kept #47's root cause and real
+  desktop acceptance unproven; helper pipe/deadline behavior requires platform tests.
+  Linked the superseding design from the existing audit and job design documents.
+- Validation: manually stress-checked concurrent operations, missing/nonzero/slow
+  helpers, inherited output pipes, private environment/output values, queue/disk
+  exhaustion, retention/export races, and IPC/save failures. Document checks passed
+  for local links, unique headings, balanced fences, required agreements, and
+  whitespace. No source edits, implementation tests, release, or GitHub comment:
+  this session was explicitly design-only. Next work starts with the safe event,
+  writer, and health contract plus fault-injection tests.
+
+- Ran the user-requested `fresh-context-review` loop for the diagnostics design with
+  two separate read-only agents, neither inheriting the conversation. Both returned
+  PASS_WITH_NOTES and no blocking findings; before/after hashes confirmed no reviewer
+  edits. Verified the first round's three notes against the code/document and fixed
+  them: exclude existing body snippets, distinguish pre-handler IPC rejection, and
+  explicitly merge sanitized ring/disk evidence with shared intake-assigned IDs.
+- The second fresh review found only implementation-level notes: set numeric budgets
+  for frontend fallback/deduplication/alias state and specify the opener operation
+  tree so acceptance, observation, and reaping cannot create duplicate terminal events.
+  Recorded these as non-blocking implementation-plan obligations in the design. No
+  reviewer claims were rejected or left inconclusive. Document structure/link and
+  whitespace checks passed; no implementation tests run for this documentation-only
+  review. Packaged Linux helper/pipe behavior and #47 remain runtime verification work.
+
+- Implemented the agreed diagnostics redesign in `dm-audit`, with one sanitized event
+  stream, run/operation/job correlation, bounded queue/ring, background disk writer,
+  4 MiB rotation, seven-day/50 MiB retention, OS leases, health/drop counters, storage
+  retry, bounded shutdown flush, and ZIP export merging disk/ring identities. Export
+  skips legacy/symlink inputs, preserves existing destinations, and reports missing
+  ranges, malformed records, incomplete operations, and omitted context.
+- Added allowlisted startup/child environment snapshots and path aliases, bounded
+  output classification, build/platform metadata, early Tauri bootstrap, typed command
+  causes, HTTP role/status/duration/transport evidence, job phase/panic handling, and
+  filesystem prepare/install/rollback/cleanup milestones. Removed the parallel raw
+  tracing file sink. Wrapped frontend/native calls with bounded safe reporting and
+  added Activity export/operation details/copy-summary and saved-path controls.
+- Consolidated folder/link dispatch in `src-tauri/src/desktop.rs`. Linux retains opener
+  helper order and helper-specific environment overrides, then observes an owned
+  subprocess without delaying command acceptance. Exit, signal, output truncation/
+  completion, and observation timeout remain distinct. After timeout, bounded readers
+  drain/discard while reaping rather than closing pipes and risking SIGPIPE; the
+  observer slot stays occupied. This is documented as a design refinement, not a #47 fix.
+- Validation: `cargo test --workspace --locked --quiet` passed (live gates disabled; seven
+  live/optional fixtures self-skipped). Final focused audit/
+  desktop tests passed; `cargo clippy --workspace --all-targets --locked -- -D warnings`,
+  `cargo fmt --all --check`, `pnpm check` (0 errors/warnings), and `pnpm test` (13 tests)
+  passed. Tests inspect actual JSONL/ZIP privacy, storage failure/recovery, retention
+  leases, saturation, context isolation, safe tracing, IPC recovery/flooding, and real
+  subprocess nonzero/signal/large-output/deadline/inherited-pipe behavior on macOS.
+- During verification, fixed output classes being reclassified as unknown, stale disk
+  metadata overriding the current memory snapshot, permanent storage initialization
+  failure, missing WSL helper environment overrides, repeated phase logging, and task
+  panic leaving jobs active. All were resolved before the passing validation above.
+- The macOS debug QA bundle built with the QA identifier and passed ad-hoc code-signature
+  verification. Updated the design's implementation notes and `docs/todo.md` with
+  remaining packaged Linux/Windows/native UI acceptance. No live account testing,
+  production-profile launch, version bump, release publication, or issue update was
+  performed. Linux AppImage and actual desktop opening remain unverified.
+
+- Final boundary checks additionally preserve PATH fallback after a denied candidate,
+  handle an unset PATH, record resolved helper symlinks/AppImage origin, validate
+  inherited job IDs, and reject a symlinked diagnostics root during export. The
+  symlink-root regression confirms that the outside directory is untouched and
+  bounded ring evidence still exports. These changes do not establish Linux desktop
+  acceptance; that remains the next platform check.
+
+- Ran the requested `fresh-context-review` of the diagnostics implementation with one
+  fresh-context, read-only reviewer. Recorded diff/status plus SHA-256 baselines for
+  all 35 changed/untracked files; post-review hashes showed no reviewer modifications.
+  Verdict: BLOCK. Locally verified three blockers: manager-owned output pipes can
+  SIGPIPE surviving desktop processes on app exit (and launch lost setsid isolation),
+  export budgets records before resolving the selected operation tree, and wrapped
+  download/archive errors lose available typed causes during privacy projection.
+  Also verified the minor historical-drop/flush-completion conflation.
+- Independently reproduced the process-lifetime problem with separate-session shell
+  children: closed reader => exit -13; previous null output => exit 0. Confirmed the
+  other findings against export selection, error conversion/privacy, and flush/writer
+  control flow. No claims rejected or inconclusive. Existing passing tests do not
+  exercise these missing cases. No source edits or release performed in this review.
+- Paused after round 1 under the skill's architecture escalation rule: preserving
+  independent desktop-process lifetime while capturing output needs an explicit
+  design decision, not a silent launch behavior change. Recorded accepted findings,
+  required regression scenarios, and the two lifetime/observation alternatives in
+  the design and `docs/todo.md`. Validation this turn: subprocess reproduction and
+  `git diff --check`; code tests were not rerun because only review documentation changed.
+
+- Applied the maintainer's explicit decision after review: diagnostics must preserve
+  the existing Tauri opener. Removed the custom Linux launcher, stdout/stderr pipes,
+  observers, output classifiers, child-environment reconstruction, and direct `open`
+  dependency. Every platform delegates to the original plugin; logs describe the
+  sanitized parent environment and API acceptance/error, with child details and
+  desktop completion explicitly unobserved. Updated the design and next steps.
+- Corrected the other verified review findings: export discovers operation context
+  before bounded record selection; wrapped download/archive failures preserve safe
+  archive subtypes and OS codes; flush tickets report their own outcome independently
+  of historical drops. Added actual JSONL/ZIP regressions for distinct typed failures,
+  old selected-operation evidence in a >20 MiB retained run, and storage recovery.
+- Focused validation: all 13 dm-audit and 74 dm-library tests passed; frontend tests
+  (13), Svelte typecheck (0 errors/warnings), and `git diff --check` passed. An obsolete
+  output-classifier assertion initially failed after removing capture; removed it and
+  reran the focused suites successfully. Full workspace checks and round-2 independent
+  review follow. No Linux desktop validation or release was performed.
+
+- Full validation after opener restoration passed: `cargo test --workspace --locked
+  --quiet` with live gates disabled; `cargo clippy --workspace --all-targets --locked
+  -- -D warnings`; `cargo fmt --all --check`; frontend tests/typecheck; macOS debug QA
+  app build and `codesign --verify --deep --strict`. No packaged Linux/Windows runtime
+  or native UI acceptance was performed.
+- Round 2 fresh-context, read-only review returned BLOCK; all 36 baseline hashes were
+  unchanged. Confirmed the original Tauri opener, scope-first export, wrapped single-job
+  causes and flush-result corrections. Verified two remaining P2 gaps locally: bulk
+  aggregation loses individual typed causes/work references and `partial_failure`
+  projects to `unclassified`; post-sync failure under `output.localScan` is dropped,
+  leaving only a successful sync with no durable scan failure. A compiled `/tmp`
+  projection probe reproduced both omissions; source tracing confirmed no alternative
+  structured failure event. No claims rejected or inconclusive.
+- Paused the loop per fresh-context-review's repeated-blocking-class rule: failure
+  evidence loss recurred at consumed-suboperation boundaries. Updated design/todo
+  with the explicit next correction and JSONL/ZIP scenarios. Applied no additional
+  source changes after round 2 and did not publish a release or update issue #47.
+
+- Resumed after the maintainer explicitly requested fixes for both round-2 findings.
+  `dm-library` now passes structured causes in bulk `WorkFailed` progress before
+  discarding the typed error. The Tauri progress adapter records a bounded, sanitized
+  cause with work alias, phase and current job context. Added `partial_failure` to the
+  fixed diagnostic code vocabulary; aggregate raw failure arrays remain excluded.
+- Extracted the existing post-sync scan result adaptation into `post_sync_scan_output`
+  and record its failed cause before preserving the existing warning/output. Successful
+  sync and bulk partial-failure business outcomes remain unchanged. Opener unchanged.
+- Focused tests passed: real library mixed-success bulk test verifies structured cause
+  propagation; two Tauri tests inspect actual JSONL and exported ZIP for distinct
+  permission/disk-full/archive causes, private-data omission, work aliases, correlated
+  job identities, failed bulk terminal and successful sync with failed scan. Updated
+  diagnostic design/todo with the consumed-error boundary. Workspace validation and a
+  fresh independent review of these corrections follow.
+
+- Completed the maintainer-requested corrections. Full locked workspace tests (live
+  gates disabled), locked workspace/all-target Clippy with `-D warnings`, rustfmt and
+  diff checks passed. No frontend or opener changes; their checks were not repeated.
+  The macOS bundle was not rebuilt for this correction; prior packaging validation
+  predates it. Native Linux/Windows and issue #47 verification remain pending.
+- One resumed fresh-context review returned PASS with no blocking/minor findings.
+  Locally verified production call sites, privacy/context propagation, parent outcomes,
+  and actual JSONL/ZIP regressions; all 37 pre-review hashes were unchanged. No rejected
+  or inconclusive claims. Updated design status and removed the resolved corrections
+  from next steps. No version bump, release, or issue comment was performed.

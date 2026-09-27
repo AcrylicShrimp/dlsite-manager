@@ -6,6 +6,7 @@ license = "MIT"
 publish = false
 
 [dependencies]
+tracing = "0.1.44"
 async-trait = "0.1.92"
 chrono = "0.4.45"
 dm-api = { path = "../dm-api" }
@@ -19,6 +20,10 @@ tokio = { version = "1.53.1", features = ["fs", "rt", "sync", "time"] }
 uuid = { version = "1.26.0", features = ["v4"] }
 
 [dev-dependencies]
+dm-audit = { path = "../dm-audit" }
+dm-archive = { path = "../dm-archive" }
+tempfile = "3.27.0"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
 url = "2.5.8"
 

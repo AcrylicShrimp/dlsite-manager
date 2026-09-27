@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { diagnosticInvoke as invoke } from "./diagnostics";
 import type {
   Account,
   AccountRemovalReport,

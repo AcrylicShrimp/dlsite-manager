@@ -250,11 +250,17 @@ export type StartJobResponse = {
   jobId: string;
 };
 
-export type AuditOutcome = "queued" | "succeeded" | "failed" | "cancelled";
+export type AuditOutcome = "queued" | "succeeded" | "failed" | "cancelled" | "unknown";
 
 export type AuditLevel = "info" | "warn" | "error";
 
 export type AuditEvent = {
+  runId?: string;
+  operationId?: string | null;
+  parentOperationId?: string | null;
+  sequence?: number;
+  stage?: string;
+  durationMs?: number | null;
   at: string;
   level: AuditLevel;
   operation: string;

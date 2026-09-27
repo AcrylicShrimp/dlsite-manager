@@ -37,6 +37,42 @@ const HOME_SERIAL_URL: &str = "https://www.dlsite.com/home/serial/=/product_id/"
 const MAX_DOWNLOAD_REDIRECTS: usize = 8;
 const DOWNLOAD_PAGE_BODY_LIMIT: usize = 512 * 1024;
 
+// A narrow HTTP boundary: never emit URLs, headers, bodies, or error strings.
+trait DiagnosticRequest {
+    async fn diagnostic_send(self) -> std::result::Result<Response, reqwest::Error>;
+}
+impl DiagnosticRequest for reqwest::RequestBuilder {
+    async fn diagnostic_send(self) -> std::result::Result<Response, reqwest::Error> {
+        let started = std::time::Instant::now();
+        let (client, request) = self.build_split();
+        let request = request?;
+        let role = endpoint_role(request.url());
+        tracing::info!(target:"dm_diagnostic", phase="network", kind=role, "HTTP request started");
+        let result = client.execute(request).await;
+        let duration = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+        match &result {
+            Ok(response) => {
+                tracing::info!(target:"dm_diagnostic", phase="network", kind=role, httpStatus=u64::from(response.status().as_u16()),durationMs=duration,"HTTP response received");
+            }
+            Err(error) => {
+                tracing::error!(target:"dm_diagnostic", phase="network",kind=role,durationMs=duration,isTimeout=error.is_timeout(),isConnect=error.is_connect(),failureKind="transport","HTTP transport failed");
+            }
+        }
+        result
+    }
+}
+fn endpoint_role(url: &Url) -> &'static str {
+    match (url.host_str(), url.path()) {
+        (Some(LOGIN_HOST), _) => "login",
+        (Some("play.dlsite.com"), "/api/v3/content/count") => "loadingCount",
+        (Some("play.dlsite.com"), "/api/v3/content/sales") => "purchases",
+        (Some("play.dlsite.com"), "/api/v3/content/works") => "works",
+        (Some("play.dlsite.com"), "/api/v3/download") => "download",
+        (Some("www.dlsite.com"), "/home/api/=/product.json") => "metadata",
+        _ => "other",
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DlsiteClientConfig {
     pub user_agent: String,
@@ -95,7 +131,7 @@ impl DlsiteClient {
         self.http
             .get(LOGIN_URL)
             .query(&[("user", "self")])
-            .send()
+            .diagnostic_send()
             .await?
             .error_for_status()?;
 
@@ -109,7 +145,7 @@ impl DlsiteClient {
                 ("password", credentials.password.as_str()),
                 ("_token", xsrf_token.as_str()),
             ])
-            .send()
+            .diagnostic_send()
             .await?;
 
         if auth_res.status() != StatusCode::FOUND {
@@ -160,7 +196,7 @@ impl DlsiteClient {
             .http
             .post(challenge.action.clone())
             .form(&form)
-            .send()
+            .diagnostic_send()
             .await?;
         let status = res.status();
 
@@ -225,7 +261,7 @@ impl DlsiteClient {
     /// Runs the post-credential redirect dance that turns an authenticated login cookie into
     /// a usable Play session. Shared by the ordinary and two-factor login paths.
     async fn finish_login(&self) -> Result<SessionSnapshot> {
-        let login_res = self.http.get(LOGIN_URL).send().await?;
+        let login_res = self.http.get(LOGIN_URL).diagnostic_send().await?;
         let login_res_status = login_res.status();
         let login_res_endpoint = login_res.url().clone();
         let login_res_body = response_text_snippet(login_res).await;
@@ -253,7 +289,7 @@ impl DlsiteClient {
 
         self.http
             .get(LOGIN_FINISH_URL)
-            .send()
+            .diagnostic_send()
             .await?
             .error_for_status()?;
 
@@ -297,7 +333,7 @@ impl DlsiteClient {
     }
 
     pub async fn validate_session(&self) -> Result<SessionStatus> {
-        let res = self.http.get(CONTENT_COUNT_URL).send().await?;
+        let res = self.http.get(CONTENT_COUNT_URL).diagnostic_send().await?;
 
         match res.status() {
             StatusCode::OK => {
@@ -328,7 +364,7 @@ impl DlsiteClient {
             request = request.query(&[("last", last)]);
         }
 
-        let count = parse_json_response(request.send().await?).await?;
+        let count = parse_json_response(request.diagnostic_send().await?).await?;
         self.cache_limits_from_count(&count).await;
 
         Ok(count)
@@ -342,7 +378,7 @@ impl DlsiteClient {
             request = request.query(&[("last", last)]);
         }
 
-        parse_json_response(request.send().await?).await
+        parse_json_response(request.diagnostic_send().await?).await
     }
 
     pub async fn works(&self, ids: &[WorkId]) -> Result<Vec<Work>> {
@@ -376,7 +412,12 @@ impl DlsiteClient {
             .map(|id| id.as_ref().to_owned())
             .collect::<Vec<_>>();
 
-        let res = self.http.post(endpoint).json(&ids).send().await?;
+        let res = self
+            .http
+            .post(endpoint)
+            .json(&ids)
+            .diagnostic_send()
+            .await?;
         let status = res.status();
 
         if status == StatusCode::UNAUTHORIZED {
@@ -421,7 +462,7 @@ impl DlsiteClient {
             self.http
                 .get(endpoint)
                 .query(&[("workno", id.as_ref())])
-                .send()
+                .diagnostic_send()
                 .await?,
         )
         .await?;
@@ -453,7 +494,12 @@ impl DlsiteClient {
             .iter()
             .map(|id| id.as_ref().to_owned())
             .collect::<Vec<_>>();
-        let res = self.http.post(endpoint).json(&ids).send().await?;
+        let res = self
+            .http
+            .post(endpoint)
+            .json(&ids)
+            .diagnostic_send()
+            .await?;
 
         RawResponse::from_response_with_body_limit(res, body_limit).await
     }
@@ -546,7 +592,7 @@ impl DlsiteClient {
                 builder = builder.header(RANGE, range.header_value());
             }
 
-            let res = builder.send().await?;
+            let res = builder.diagnostic_send().await?;
             let status = res.status();
 
             if status.is_redirection() {
@@ -630,7 +676,7 @@ impl DlsiteClient {
         self.http
             .get(LOGIN_URL)
             .query(&[("user", "self")])
-            .send()
+            .diagnostic_send()
             .await?
             .error_for_status()?;
 
@@ -643,7 +689,7 @@ impl DlsiteClient {
                 ("password", credentials.password.as_str()),
                 ("_token", xsrf_token.as_str()),
             ])
-            .send()
+            .diagnostic_send()
             .await?;
 
         RawResponse::from_response_with_body_limit(res, body_limit).await
@@ -662,7 +708,7 @@ impl DlsiteClient {
             .http
             .get(DOWNLOAD_URL)
             .query(&[("workno", work_id.as_ref())])
-            .send()
+            .diagnostic_send()
             .await?;
 
         RawResponse::from_response_with_body_limit(res, body_limit).await
@@ -677,7 +723,7 @@ impl DlsiteClient {
         url: Url,
         body_limit: usize,
     ) -> Result<RawResponse> {
-        let res = self.http.get(url).send().await?;
+        let res = self.http.get(url).diagnostic_send().await?;
 
         RawResponse::from_response_with_body_limit(res, body_limit).await
     }
@@ -712,7 +758,7 @@ impl DlsiteClient {
     }
 
     async fn redirect_location_from_get(&self, url: impl reqwest::IntoUrl) -> Result<Url> {
-        let res = self.http.get(url).send().await?;
+        let res = self.http.get(url).diagnostic_send().await?;
         let status = res.status();
 
         if !status.is_redirection() {

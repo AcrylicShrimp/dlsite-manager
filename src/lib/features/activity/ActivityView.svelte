@@ -3,6 +3,7 @@
   import type { AuditEvent, JobSnapshot } from "$lib/model/types";
   import AuditLogList from "./AuditLogList.svelte";
   import JobList from "./JobList.svelte";
+  import DiagnosticsPanel from "./DiagnosticsPanel.svelte";
 
   let {
     jobs = [],
@@ -34,6 +35,7 @@
 </script>
 
 <div class="activity-layout">
+  <DiagnosticsPanel events={auditEvents} />
   <section class="activity-panel" aria-label="Jobs">
     <div class="panel-title">
       <h2>Jobs</h2>
@@ -81,7 +83,7 @@
   .activity-layout {
     display: grid;
     flex: 1 1 auto;
-    grid-template-rows: minmax(120px, 0.42fr) minmax(0, 1fr);
+    grid-template-rows: auto minmax(120px, 0.42fr) minmax(0, 1fr);
     gap: 18px;
     min-width: 0;
     min-height: 0;

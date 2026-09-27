@@ -6,6 +6,7 @@ license = "MIT"
 publish = false
 
 [dependencies]
+tracing = "0.1.44"
 bytes = "1.12.1"
 chrono = { version = "0.4.45", features = ["serde"] }
 cookie_store = { version = "0.22.1", features = ["serde_json"] }

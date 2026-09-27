@@ -143,7 +143,19 @@ impl Installation {
     }
 
     pub async fn prepare(&self) -> Result<()> {
-        self.prepare_with_rename_error(None).await
+        let started = std::time::Instant::now();
+        tracing::info!(target:"dm_diagnostic",phase="finalize_prepare",status="running","Filesystem phase started");
+        let result: Result<()> = async { self.prepare_with_rename_error(None).await }.await;
+        let duration = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+        match &result {
+            Ok(()) => {
+                tracing::info!(target:"dm_diagnostic",phase="finalize_prepare",status="succeeded",durationMs=duration,"Filesystem phase completed")
+            }
+            Err(error) => {
+                tracing::error!(target:"dm_diagnostic",phase="finalize_prepare",failureKind=error.failure_code(),durationMs=duration,osCode=match error {LibraryError::Io(e)=>e.raw_os_error().unwrap_or(0),_=>0},"Filesystem phase failed")
+            }
+        }
+        result
     }
 
     // A narrow seam for deterministic cross-device/error tests without extra mounts.
@@ -169,14 +181,29 @@ impl Installation {
     }
 
     pub async fn install(&self) -> Result<()> {
-        if let Some(old) = &self.record.old_path {
-            tokio::fs::rename(old, self.backup()).await?;
+        let started = std::time::Instant::now();
+        tracing::info!(target:"dm_diagnostic",phase="finalize_install",status="running","Filesystem phase started");
+        let result: Result<()> = async {
+            if let Some(old) = &self.record.old_path {
+                tokio::fs::rename(old, self.backup()).await?;
+            }
+            if Path::new(&self.record.final_path).try_exists()? {
+                return Err(self.required("destination appeared during installation"));
+            }
+            tokio::fs::rename(self.payload(), &self.record.final_path).await?;
+            Ok(())
         }
-        if Path::new(&self.record.final_path).try_exists()? {
-            return Err(self.required("destination appeared during installation"));
+        .await;
+        let duration = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+        match &result {
+            Ok(()) => {
+                tracing::info!(target:"dm_diagnostic",phase="finalize_install",status="succeeded",durationMs=duration,"Filesystem phase completed")
+            }
+            Err(error) => {
+                tracing::error!(target:"dm_diagnostic",phase="finalize_install",failureKind=error.failure_code(),durationMs=duration,osCode=match error {LibraryError::Io(e)=>e.raw_os_error().unwrap_or(0),_=>0},"Filesystem phase failed")
+            }
         }
-        tokio::fs::rename(self.payload(), &self.record.final_path).await?;
-        Ok(())
+        result
     }
 
     fn owned(&self) -> Result<()> {
@@ -252,93 +279,123 @@ impl Installation {
     /// Restores old content. New data is returned to staging when possible; a partial
     /// cross-device copy is retained under the owned temporary path for inspection.
     pub async fn rollback(&self) -> Result<()> {
-        if !self.temporary().try_exists()? {
-            self.check_rollback_complete()?;
-            return Ok(());
-        }
-        if self.marker_missing()? {
-            // The validated recorded directory can be empty before marker creation or
-            // after retirement. Never recursively remove unowned contents.
-            self.check_rollback_complete()?;
-            tokio::fs::remove_dir(self.temporary()).await?;
-            return Ok(());
-        }
-        if self.remove_incomplete_initialization().await? {
-            return Ok(());
-        }
-        self.owned()?;
-        self.check_temporary_entries()?;
-        let final_path = Path::new(&self.record.final_path);
-        let backup = self.backup();
-        let payload = self.payload();
-        if backup.try_exists()? {
-            let old = self
+        let started = std::time::Instant::now();
+        tracing::info!(target:"dm_diagnostic",phase="rollback",status="running","Filesystem phase started");
+        let result: Result<()> = async {
+            if !self.temporary().try_exists()? {
+                self.check_rollback_complete()?;
+                return Ok(());
+            }
+            if self.marker_missing()? {
+                // The validated recorded directory can be empty before marker creation or
+                // after retirement. Never recursively remove unowned contents.
+                self.check_rollback_complete()?;
+                tokio::fs::remove_dir(self.temporary()).await?;
+                return Ok(());
+            }
+            if self.remove_incomplete_initialization().await? {
+                return Ok(());
+            }
+            self.owned()?;
+            self.check_temporary_entries()?;
+            let final_path = Path::new(&self.record.final_path);
+            let backup = self.backup();
+            let payload = self.payload();
+            if backup.try_exists()? {
+                let old = self
+                    .record
+                    .old_path
+                    .as_ref()
+                    .ok_or_else(|| self.required("unexpected backup"))?;
+                if final_path.try_exists()? {
+                    if payload.try_exists()? {
+                        return Err(self.required("both payload and destination exist"));
+                    }
+                    tokio::fs::rename(final_path, &payload).await?;
+                }
+                if Path::new(old).try_exists()? {
+                    return Err(self.required("old path is occupied"));
+                }
+                tokio::fs::rename(&backup, old).await?;
+            } else if self.record.old_path.is_none()
+                && !payload.try_exists()?
+                && final_path.try_exists()?
+            {
+                tokio::fs::rename(final_path, &payload).await?;
+            } else if self
                 .record
                 .old_path
                 .as_ref()
-                .ok_or_else(|| self.required("unexpected backup"))?;
-            if final_path.try_exists()? {
-                if payload.try_exists()? {
-                    return Err(self.required("both payload and destination exist"));
-                }
-                tokio::fs::rename(final_path, &payload).await?;
+                .is_some_and(|p| !Path::new(p).is_dir())
+            {
+                return Err(self.required("old content and backup are missing"));
             }
-            if Path::new(old).try_exists()? {
-                return Err(self.required("old path is occupied"));
+            if payload.try_exists()? && !Path::new(&self.record.staging_path).try_exists()? {
+                tokio::fs::rename(&payload, &self.record.staging_path).await?;
             }
-            tokio::fs::rename(&backup, old).await?;
-        } else if self.record.old_path.is_none()
-            && !payload.try_exists()?
-            && final_path.try_exists()?
-        {
-            tokio::fs::rename(final_path, &payload).await?;
-        } else if self
-            .record
-            .old_path
-            .as_ref()
-            .is_some_and(|p| !Path::new(p).is_dir())
-        {
-            return Err(self.required("old content and backup are missing"));
+            // Keep partial/new data if a cross-device source still exists. Never delete it
+            // as part of rollback, nor infer ownership from the prefix alone.
+            if !payload.try_exists()? {
+                tokio::fs::remove_file(self.temporary().join("owner")).await?;
+                tokio::fs::remove_dir(self.temporary()).await?;
+            }
+            Ok(())
         }
-        if payload.try_exists()? && !Path::new(&self.record.staging_path).try_exists()? {
-            tokio::fs::rename(&payload, &self.record.staging_path).await?;
+        .await;
+        let duration = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+        match &result {
+            Ok(()) => {
+                tracing::info!(target:"dm_diagnostic",phase="rollback",status="succeeded",durationMs=duration,"Filesystem phase completed")
+            }
+            Err(error) => {
+                tracing::error!(target:"dm_diagnostic",phase="rollback",failureKind=error.failure_code(),durationMs=duration,osCode=match error {LibraryError::Io(e)=>e.raw_os_error().unwrap_or(0),_=>0},"Filesystem phase failed")
+            }
         }
-        // Keep partial/new data if a cross-device source still exists. Never delete it
-        // as part of rollback, nor infer ownership from the prefix alone.
-        if !payload.try_exists()? {
-            tokio::fs::remove_file(self.temporary().join("owner")).await?;
-            tokio::fs::remove_dir(self.temporary()).await?;
-        }
-        Ok(())
+        result
     }
 
     pub async fn cleanup(&self) -> Result<()> {
-        let temporary_exists = self.temporary().try_exists()?;
-        if !temporary_exists || self.marker_missing()? {
-            if !Path::new(&self.record.final_path).is_dir()
-                || Path::new(&self.record.staging_path).try_exists()?
-            {
-                return Err(self.required("committed cleanup is not complete"));
+        let started = std::time::Instant::now();
+        tracing::info!(target:"dm_diagnostic",phase="finalize_cleanup",status="running","Filesystem phase started");
+        let result: Result<()> = async {
+            let temporary_exists = self.temporary().try_exists()?;
+            if !temporary_exists || self.marker_missing()? {
+                if !Path::new(&self.record.final_path).is_dir()
+                    || Path::new(&self.record.staging_path).try_exists()?
+                {
+                    return Err(self.required("committed cleanup is not complete"));
+                }
+                if temporary_exists {
+                    tokio::fs::remove_dir(self.temporary()).await?;
+                }
+                return Ok(());
             }
-            if temporary_exists {
-                tokio::fs::remove_dir(self.temporary()).await?;
+            self.owned()?;
+            self.check_temporary_entries()?;
+            if !Path::new(&self.record.final_path).is_dir() || self.payload().try_exists()? {
+                return Err(self.required("committed installation is not intact"));
             }
-            return Ok(());
+            if self.backup().try_exists()? {
+                tokio::fs::remove_dir_all(self.backup()).await?;
+            }
+            if Path::new(&self.record.staging_path).try_exists()? {
+                tokio::fs::remove_dir_all(&self.record.staging_path).await?;
+            }
+            tokio::fs::remove_file(self.temporary().join("owner")).await?;
+            tokio::fs::remove_dir(self.temporary()).await?;
+            Ok(())
         }
-        self.owned()?;
-        self.check_temporary_entries()?;
-        if !Path::new(&self.record.final_path).is_dir() || self.payload().try_exists()? {
-            return Err(self.required("committed installation is not intact"));
+        .await;
+        let duration = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+        match &result {
+            Ok(()) => {
+                tracing::info!(target:"dm_diagnostic",phase="finalize_cleanup",status="succeeded",durationMs=duration,"Filesystem phase completed")
+            }
+            Err(error) => {
+                tracing::error!(target:"dm_diagnostic",phase="finalize_cleanup",failureKind=error.failure_code(),durationMs=duration,osCode=match error {LibraryError::Io(e)=>e.raw_os_error().unwrap_or(0),_=>0},"Filesystem phase failed")
+            }
         }
-        if self.backup().try_exists()? {
-            tokio::fs::remove_dir_all(self.backup()).await?;
-        }
-        if Path::new(&self.record.staging_path).try_exists()? {
-            tokio::fs::remove_dir_all(&self.record.staging_path).await?;
-        }
-        tokio::fs::remove_file(self.temporary().join("owner")).await?;
-        tokio::fs::remove_dir(self.temporary()).await?;
-        Ok(())
+        result
     }
 
     pub fn required(&self, reason: &str) -> LibraryError {

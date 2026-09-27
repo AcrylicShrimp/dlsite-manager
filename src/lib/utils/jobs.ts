@@ -25,6 +25,8 @@ export function isDownloadQueueJob(job: JobSnapshot) {
 
 export function auditOutcomeLabel(outcome: AuditOutcome) {
   switch (outcome) {
+    case "unknown":
+      return "Not confirmed";
     case "queued":
       return "Queued";
     case "succeeded":

@@ -41,6 +41,49 @@ pub enum ArchiveError {
     UnsupportedPlan { kind: &'static str },
 }
 
+impl ArchiveError {
+    /// A closed vocabulary for diagnostics; never expose entry names or library messages.
+    pub fn diagnostic_kind(&self) -> &'static str {
+        use unrar_ng::error::Code;
+        use zip::result::ZipError;
+        match self {
+            Self::Io(_) => "io",
+            Self::Zip(error) => match error {
+                ZipError::Io(_) => "zip_io",
+                ZipError::InvalidArchive(_) => "zip_invalid",
+                ZipError::UnsupportedArchive(_) => "zip_unsupported",
+                ZipError::FileNotFound => "zip_missing_entry",
+                ZipError::InvalidPassword => "zip_password",
+                ZipError::CompressionMethodNotSupported(_) => "zip_compression",
+                _ => "zip_other",
+            },
+            Self::Rar(error) => match error.code {
+                Code::BadData | Code::BadArchive => "rar_corrupt",
+                Code::UnknownFormat => "rar_format",
+                Code::EOpen => "rar_open",
+                Code::ECreate => "rar_create",
+                Code::EClose => "rar_close",
+                Code::ERead => "rar_read",
+                Code::EWrite => "rar_write",
+                Code::NoMemory => "rar_memory",
+                Code::MissingPassword | Code::BadPassword => "rar_password",
+                Code::LargeDict => "rar_dictionary",
+                Code::EReference => "rar_reference",
+                _ => "rar_other",
+            },
+            Self::UnsafeArchiveEntry { .. } => "unsafe_entry",
+            Self::TargetAlreadyExists { .. } => "target_exists",
+            Self::UnsupportedPlan { .. } => "unsupported_plan",
+        }
+    }
+    pub fn os_error_code(&self) -> Option<i32> {
+        match self {
+            Self::Io(error) | Self::Zip(zip::result::ZipError::Io(error)) => error.raw_os_error(),
+            _ => None,
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, ArchiveError>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

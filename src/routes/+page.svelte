@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import { installDiagnosticHandlers } from "$lib/api/diagnostics";
   import * as native from "$lib/api/native";
   import * as commands from "$lib/api/tauri";
   import AppShell from "$lib/components/AppShell.svelte";
@@ -138,7 +139,7 @@
   onMount(() => {
     void loadInitial();
 
-    const unlisteners: (() => void)[] = [];
+    const unlisteners: (() => void)[] = [installDiagnosticHandlers()];
     let disposed = false;
 
     const register = (pending: Promise<() => void>) => {
