@@ -7,6 +7,7 @@ node_modules
 /target
 /.dlsite-downloads/
 /.dlsite-probe/
+/.linux-qa/
 .env
 .env.*
 !.env.example

@@ -679,3 +679,37 @@
   and actual JSONL/ZIP regressions; all 37 pre-review hashes were unchanged. No rejected
   or inconclusive claims. Updated design status and removed the resolved corrections
   from next steps. No version bump, release, or issue comment was performed.
+
+- Added `scripts/linux-qa.sh`, guest provisioning/session/capture helpers and an
+  optional Playwright/noVNC driver; documented usage and boundaries in
+  `docs/linux-qa.md`. Provisioned isolated OrbStack Ubuntu 22.04 amd64 `dlsite-qa`
+  with Xvfb/IceWM, private D-Bus, Thunar and authenticated loopback VNC/noVNC.
+  Local assets/password/screenshots stay under ignored `.linux-qa/`.
+- Corrected setup findings: root-owned intermediate home directories initially
+  prevented app startup; created those directories with qa ownership. Minimal
+  desktop needed GLib tools and MIME handlers, and must identify as IceWM rather
+  than pretend to be XFCE. Initial missing-handler failure still appeared as a
+  successful open request in v3.3.0 audit logs, confirming why actual windows matter.
+  SSH forwarding attempt did not serve HTTP; verified OrbStack's direct localhost
+  forwarding and removed the tunnel. Narrowed checksum selection to exclude `.sig`.
+- Verified the published v3.3.0 checksum, normal AppImage launch, browser-driven
+  Library/Downloads/Settings/Activity rendering, shell `xdg-open`, and app Activity
+  Open Folder after quitting Thunar: a real file-manager window showed the app log
+  directory. Local Library capture has no white bottom bar; original screenshot
+  cause and reporter's issue #47 environment remain unresolved. The release tested
+  predates main's diagnostic overhaul; no new export acceptance is claimed.
+- Validation: repeated provisioning and stop/start, HTTP noVNC access, Playwright
+  mouse input/screenshots, guest screenshot/window inventory/journal capture,
+  `bash -n scripts/linux-qa.sh scripts/linux-qa/*.sh`, Node syntax check and diff
+  check. App source unchanged; no app builds/unit tests were needed. No release,
+  commit/push, or issue comment was made for this environment task.
+
+- Investigated the user-observed updater failure in Linux v3.3.0. Captured the
+  on-screen `Could not fetch a valid release JSON from the remote` error. Direct
+  curl fetched valid published v3.3.0 metadata from both Mac and guest. Matching
+  updater 2.11.0's `Accept: application/json` returned HTTP 500 on both; changing
+  only Accept to `*/*` returned 200 on Mac, and changing user agent did not remove
+  the JSON-Accept failure. The direct versioned asset URL also returned 500 with
+  JSON Accept. Local upstream source confirms this header default and loss of HTTP
+  status detail in the `ReleaseNotFound` error. Recorded the proposed explicit
+  header override for follow-up; no application code or release was changed.
