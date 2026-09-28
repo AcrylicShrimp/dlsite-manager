@@ -1,9 +1,8 @@
 # Next steps
 
-- Fix updater request compatibility with GitHub release assets: on 2026-09-28,
-  `Accept: application/json` returned HTTP 500 on Mac and Linux, while `Accept: */*`
-  returned valid v3.3.0 metadata. Tauri updater 2.11.0 sends the former by default.
-  Verify an explicit header override through the packaged app before release.
+- Updater checks now explicitly send `Accept: */*` to avoid GitHub's HTTP 500
+  response to the default JSON Accept header. Verify the packaged 3.4.0 build
+  before publishing; older clients may require a manual download.
 
 - Local OrbStack Linux GUI baseline is available; see `docs/linux-qa.md`.
   Published v3.3.0 startup/navigation and actual log-folder opening passed on
@@ -16,5 +15,5 @@
 - Verify native save/cancel/copy interactions and startup-failure export on supported
   desktop platforms. Automated core/frontend tests and macOS packaging are recorded
   in `docs/work-log.md`.
-- Prepare the next stable release after implementation review and platform checks;
-  version bump/publication are separate from this implementation turn.
+- Publish stable 3.4.0 after release builds and packaged Linux checks; the maintainer
+  explicitly authorized main push and stable publication on 2026-09-28.

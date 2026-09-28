@@ -52,7 +52,9 @@ export function openExternalUrl(url: string) {
 export async function downloadAndInstallAvailableUpdate(
   onProgress: (progress: AppUpdateProgress) => void,
 ) {
-  const update = await observeNative("native.updater", () => check());
+  // GitHub release asset routes can return HTTP 500 for application/json Accept.
+  // The updater still parses and validates the downloaded release metadata.
+  const update = await observeNative("native.updater", () => check({ headers: { Accept: "*/*" } }));
 
   if (!update) {
     return null;

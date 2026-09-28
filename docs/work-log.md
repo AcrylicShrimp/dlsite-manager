@@ -713,3 +713,16 @@
   JSON Accept. Local upstream source confirms this header default and loss of HTTP
   status detail in the `ReleaseNotFound` error. Recorded the proposed explicit
   header override for follow-up; no application code or release was changed.
+
+- Committed the local Linux QA environment as `8db5ee9` at the maintainer's request.
+  Updated the existing native updater call to send `Accept: */*`; JSON parsing and
+  signature verification remain with Tauri. Recorded the HTTP compatibility choice
+  in the updater design. Frontend tests (13), Svelte check (0 errors/warnings),
+  production frontend build and diff check passed.
+- Preparing stable 3.4.0 from main, including the previously reviewed diagnostic
+  overhaul and updater repair. Updated package/Tauri/Cargo versions and release
+  notes. Minor version reflects additive diagnostics capabilities. Maintainer
+  explicitly authorized commit, main push and stable publication. Existing release
+  automation still builds drafts from tags reachable from `release`; publication
+  follows artifact validation and Linux runtime checks. Older clients failing to
+  fetch metadata will need a manual download; release notes state this limitation.
