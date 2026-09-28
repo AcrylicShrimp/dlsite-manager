@@ -1170,3 +1170,15 @@
   workflows, image saving, diagnostic navigation and common action placement.
   Updated package/Tauri/Cargo app versions and Cargo.lock; core crate versions
   remain unchanged. README screenshot refresh is deferred at user request.
+- Pushed main/release and tagged v3.5.0 at e0782e4. Main CI 36421286522,
+  release CI 36421285847 and all release jobs in 36421286251 passed. Downloaded
+  all 13 assets; verified SHA-256, four updater signatures/version comments, three
+  manifest entries and macOS strict/deep codesign plus embedded version 3.5.0.
+- The published AppImage ran on OrbStack Ubuntu 22.04/IceWM. Update checking
+  succeeded; an empty account submission produced a real correlated error;
+  View in Activity opened the correct operation above the editor, and native
+  export saved a valid ZIP containing exactly its three records. No account was
+  created. No new claim about #47 or updater installation is made.
+- Published 3.5.0 as non-draft, non-prerelease Latest at 2026-09-28 12:36:20 UTC.
+  The public Latest API and downloaded latest.json match the verified release.
+  Added final release validation notes and preserved deferred README screenshots.

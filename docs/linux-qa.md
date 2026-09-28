@@ -103,3 +103,14 @@ out of view; this layout follow-up is in `docs/todo.md`. The guest's minimal pro
 also has no configured Downloads directory, which was captured as `native.path`
 failure. These checks do not cover a full updater installation or the issue reporter's
 desktop. Screenshots and the `update-fixed` capture are in `.linux-qa/captures/`.
+
+## 3.5.0 release check
+
+The signed release AppImage passed startup/navigation and update checking on the
+existing Ubuntu 22.04/IceWM desktop. An empty account form produced a validation
+error without creating an account. View in Activity opened the matching operation
+above the editor, and its native export saved a valid ZIP containing the three
+records for that operation. Raw local capture:
+`.linux-qa/captures/20260928T123551Z-release-3-5-0-44mg`.
+This does not extend #47 coverage to the reporter's environment or validate live
+account login/MFA, Wayland/GPU behavior, or updater installation.
