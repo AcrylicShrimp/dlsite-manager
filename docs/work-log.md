@@ -1092,3 +1092,75 @@
   limits are recorded in docs/reviews/2026-09-28-production-cutover.md. Requested
   the App/Production workspace Storybook tab in Codex. Cutover is complete as a
   local implementation; native packaged smoke tests remain before release.
+
+- Renamed the account identifier label from Login to Email or username in the
+  production editor and approved Storybook prototype after native-app feedback.
+  Validation: inspected both labels and git diff --check passed. Text-only change;
+  no tests or app rebuild performed.
+
+- Investigated native Bulk Download confirmation feedback. The recorded preview
+  request failed before planning at 11:25:28Z; folder settings were saved later at
+  11:25:51Z. Sanitized logs do not retain the exact failure reason, so missing
+  folder configuration is a likely cause, pending a native retry. No bulk-flow
+  code changed. Chromium/WebKit real-route IPC mocks passed count/size confirmation,
+  cancel without starting downloads, zero-candidate notice, and visible missing-
+  library-folder error toast. No real downloads were started during investigation.
+
+- Native retry confirmed Bulk Download count/size confirmation works after folder
+  setup. The screenshot exposed an unformatted diagnostic suffix in error toasts.
+  Split that marker for presentation, added View in Activity, and shared an
+  operation-detail dialog with application-log rows. Direct correlated lookup,
+  copy with manual fallback, and scoped export preserve traceability without
+  exposing long IDs in the main error sentence. Existing editors/MFA remain open
+  underneath details. Backend error transport and privacy policy are unchanged.
+- Fixed stale Activity logs: entering Activity or selecting Application logs now
+  refreshes records, including failures before job creation. Added latest-request
+  guards to prevent older refreshes from replacing newer results.
+- Validation: Svelte check 0 errors/warnings; 15 frontend tests; diagnostic marker
+  parsing tests and CorrelatedError toast story. Chromium/WebKit drivers passed
+  clean error rendering, operation lookup, Activity navigation, copy/export scope,
+  editor draft preservation, empty/unavailable history, clipboard/export failures,
+  narrow layout, log refresh on entry/tab selection and out-of-order responses.
+  Drivers: .linux-qa/diagnostic-activity-check.cjs and activity-refresh-check.cjs.
+- Packaged macOS build passed with `pnpm tauri build --bundles app --config
+  '{"bundle":{"createUpdaterArtifacts":false}}'`; relaunched the local app for
+  native QA after the diagnostic job states were terminal. Includes the earlier
+  account-label correction. No release, commit, or push performed.
+
+- Removed the redundant Downloads shortcut above the shared sidebar queue summary.
+  Separated the application name/version footer with a semantic divider and spacing.
+  Validation: Svelte check passed; Chromium/WebKit verified the remaining main
+  Downloads navigation, active/empty queue layout and footer border/padding.
+  Packaged macOS build passed and the local app was relaunched for native QA.
+
+- Made the shared sidebar independently scrollable at short window heights,
+  preserving child control sizes and containing wheel scrolling within the sidebar.
+  Validation: Svelte check passed; Chromium/WebKit at 800x320 confirmed wheel and
+  keyboard access, reachable footer and unchanged main scroll position. Tall
+  800x900 and narrow 390x320 layouts also passed without horizontal overflow.
+  Packaged macOS build passed; relaunched the idle local app for native QA.
+
+- Removed Settings-only 680px Storage and 600px About content width caps so
+  fields, actions, update panel and separators align with the shared page width.
+  Validation: Svelte check passed; Chromium/WebKit verified both tabs at
+  1440/800/390px with full content width and no horizontal overflow.
+  Packaged macOS build passed; relaunched the local app for native QA.
+
+- Standardized action placement across Library, Downloads, Accounts, Activity and
+  Settings. Extended PageHeader with tabs/toolbar slots; added PageToolbar owning
+  rightmost Reload and FormActions owning edit footers. Global actions stay beside
+  page titles; query controls are left, result/tab actions right. Settings Revert
+  changes now sits next to Save changes; default folder selection stays with its
+  field. Preserved command callbacks, filters, pagination and update behavior.
+- Chromium/WebKit real-route checks passed at 1200/800/390px: aligned Reload style/
+  position, no overflow, correct reload command per tab, library search/reset/
+  filters/bulk confirmation, Activity search/export, account editor and settings
+  revert without saving. Driver: .linux-qa/page-toolbar-check.cjs.
+- Validation also passed: Svelte check (0 errors/warnings), all 15 frontend
+  tests, Storybook build and git diff --check. Shared layout rules are documented
+  in docs/designs/2026-08-12.00-frontend-component-workbench.md.
+- Native packaging initially failed with rustc LLVM `No space left on device`.
+  Removed only this repository's regenerable target/debug/incremental cache after
+  confirming no Rust builds were running; available disk space recovered to 7.8 GiB.
+- Packaged macOS build passed on retry; relaunched the local app with the
+  unified page actions for native QA. No release, commit or push performed.

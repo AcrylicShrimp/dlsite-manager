@@ -16,6 +16,9 @@
   import { TwoFactorController } from "$lib/controllers/two-factor-controller.svelte";
   import AccountsView from "$lib/features/accounts/AccountsView.svelte";
   import ActivityView from "$lib/features/activity/ActivityView.svelte";
+  import ActivityOperationDialog from "$lib/features/activity/ActivityOperationDialog.svelte";
+  import { hasOpenModal } from "$lib/components/workspace/modal-stack";
+  import type { DiagnosticTarget } from "$lib/utils/diagnostic-message";
   import DownloadsView from "$lib/features/downloads/DownloadsView.svelte";
   import LibraryView from "$lib/features/library/LibraryView.svelte";
   import ProductDetailDialog from "$lib/features/library/ProductDetailDialog.svelte";
@@ -115,6 +118,8 @@
   let auditEvents = $state<AuditEvent[]>([]);
   let auditLoading = $state(true);
   let auditLogDir = $state("");
+  let activityTab = $state("history");
+  let activityTarget = $state<DiagnosticTarget | null>(null);
   let toasts = $state<Toast[]>([]);
   let productImagePreview = $state<ProductImagePreview | null>(null);
   let productDetail = $state<ProductDetail | null>(null);
@@ -126,6 +131,7 @@
     notifyError(errorMessage(error)),
   );
   const detailGeneration = new RequestGeneration();
+  const auditGeneration = new RequestGeneration();
   const libraryQuery = new LibraryQueryController(commands, {
     loading: (value) => {
       productsLoading = value;
@@ -185,6 +191,7 @@
   });
 
   onDestroy(() => {
+    auditGeneration.invalidate();
     for (const timer of toastTimers.values()) {
       clearTimeout(timer);
     }
@@ -1144,14 +1151,16 @@
   }
 
   async function loadAuditEvents() {
+    const generation = auditGeneration.invalidate();
     auditLoading = true;
 
     try {
-      auditEvents = await commands.listAuditEvents(80);
+      const events = await commands.listAuditEvents(80);
+      if (auditGeneration.current(generation)) auditEvents = events;
     } catch (err) {
-      notifyError(errorMessage(err));
+      if (auditGeneration.current(generation)) notifyError(errorMessage(err));
     } finally {
-      auditLoading = false;
+      if (auditGeneration.current(generation)) auditLoading = false;
     }
   }
 
@@ -1445,6 +1454,20 @@
     pushToast("success", message);
   }
 
+  function viewErrorActivity(target: DiagnosticTarget) {
+    // Preserve an open editor, confirmation, or MFA prompt beneath the details.
+    if (!hasOpenModal()) {
+      activityTab = "logs";
+      navigate("activity");
+    }
+    activityTarget = target;
+  }
+
+  function navigate(view: View) {
+    activeView = view;
+    if (view === "activity") void loadAuditEvents();
+  }
+
   function notifyInfo(message: string) {
     pushToast("info", message);
   }
@@ -1493,7 +1516,7 @@
   {activeView}
   jobs={jobController.jobs}
   version={appInfo?.version ?? ""}
-  onNavigate={(view) => (activeView = view)}
+  onNavigate={navigate}
 >
   {#if activeView === "library"}
     <LibraryView
@@ -1586,6 +1609,8 @@
     />
   {:else if activeView === "activity"}
     <ActivityView
+      bind:tab={activityTab}
+      onViewOperation={(target) => (activityTarget = target)}
       jobs={visibleJobs()}
       jobLoading={jobController.loading}
       auditEvents={visibleAuditEvents()}
@@ -1672,7 +1697,13 @@
     />
   {/if}
 
-  <ToastStack {toasts} onDismiss={dismissToast} />
+  {#if activityTarget}
+    {#key activityTarget}
+      <ActivityOperationDialog target={activityTarget} onClose={() => (activityTarget = null)} />
+    {/key}
+  {/if}
+
+  <ToastStack {toasts} onDismiss={dismissToast} onViewActivity={viewErrorActivity} />
 </AppShell>
 
 <style>

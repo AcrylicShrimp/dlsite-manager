@@ -1,5 +1,7 @@
 <script lang="ts">
   import PageHeader from "$lib/components/workspace/PageHeader.svelte";
+  import FormActions from "$lib/components/workspace/FormActions.svelte";
+  import Button from "$lib/components/workspace/Button.svelte";
   import UiButton from "$lib/components/ui/Button.svelte";
   import Choices from "$lib/components/workspace/ChoiceGroup.svelte";
   import Mark from "$lib/components/workspace/AppMark.svelte";
@@ -50,29 +52,24 @@
 </script>
 
 <div class="settings-layout dm:min-w-0">
-  <PageHeader title="Settings" />
-  <Choices
-    variant="tabs"
-    label="Settings section"
-    value={tab}
-    onchange={(v) => (tab = v)}
-    options={[
-      { value: "storage", label: "Storage" },
-      { value: "about", label: "About & updates" },
-    ]}
-  />
+  <PageHeader title="Settings">
+    {#snippet tabs()}
+      <Choices
+        variant="tabs"
+        label="Settings section"
+        value={tab}
+        onchange={(v) => (tab = v)}
+        options={[
+          { value: "storage", label: "Storage" },
+          { value: "about", label: "About & updates" },
+        ]}
+      />
+    {/snippet}
+  </PageHeader>
   {#if tab === "storage"}<form
       onsubmit={onSave}
-      class="dm:flex dm:max-w-[680px] dm:flex-col dm:gap-6"
+      class="dm:flex dm:min-w-0 dm:flex-col dm:gap-6"
     >
-      <div class="dm:flex dm:justify-end">
-        <UiButton
-          variant="secondary"
-          size="small"
-          disabled={busy}
-          onclick={onReload}>Reload</UiButton
-        >
-      </div>
       <Field id="library-root" label="Library folder"
         ><div class="dm:flex dm:flex-wrap dm:gap-2">
           <div class="dm:min-w-0 dm:flex-1">
@@ -105,21 +102,23 @@
             disabled={busy}
             onclick={() => onChooseDirectory("download")}>Browse</UiButton
           >
+        </div>
+        <div>
+          <Button
+            variant="text"
+            disabled={busy}
+            onclick={onUseDefaultDownloadRoot}
+            >Use system Downloads folder</Button
+          >
         </div></Field
       >
-      <div
-        class="dm:flex dm:flex-wrap dm:items-center dm:justify-between dm:gap-3"
-      >
-        <UiButton
-          variant="secondary"
-          disabled={busy}
-          onclick={onUseDefaultDownloadRoot}
-          >Use system Downloads folder</UiButton
-        ><UiButton type="submit" disabled={busy}
-          >{saving ? "Saving…" : "Save changes"}</UiButton
+      <FormActions>
+        <Button disabled={busy} onclick={onReload}>Revert changes</Button>
+        <Button variant="primary" type="submit" disabled={busy}
+          >{saving ? "Saving…" : "Save changes"}</Button
         >
-      </div>
-    </form>{:else}<section aria-label="About" class="dm:max-w-[600px] dm:py-2">
+      </FormActions>
+    </form>{:else}<section aria-label="About" class="dm:min-w-0 dm:py-2">
       <div class="dm:flex dm:items-center dm:gap-3">
         <Mark size="large" />
         <div class="dm:min-w-0">
@@ -142,7 +141,8 @@
         class="dm:mb-5 dm:flex dm:flex-wrap dm:items-center dm:gap-3 dm:border-0 dm:border-t dm:border-solid dm:border-draft-line dm:pt-4"
       >
         <UiButton variant="secondary" onclick={onOpenGitHub}>GitHub ↗</UiButton
-        ><UiButton variant="secondary" onclick={onOpenDlsite}>DLsite ↗</UiButton
+        ><UiButton variant="secondary" onclick={onOpenDlsite}
+          >DLsite ↗</UiButton
         ><span class="dm:text-xs dm:text-draft-dim">MIT License</span>
       </div>
       <Disclosure title="Application details"

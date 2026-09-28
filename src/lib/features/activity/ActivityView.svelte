@@ -1,6 +1,7 @@
 <script lang="ts">
   import JobDetails from "./JobDetails.svelte";
   import PageHeader from "$lib/components/workspace/PageHeader.svelte";
+  import PageToolbar from "$lib/components/workspace/PageToolbar.svelte";
   import Button from "$lib/components/workspace/Button.svelte";
   import Choices from "$lib/components/workspace/ChoiceGroup.svelte";
   import Search from "$lib/components/workspace/SearchField.svelte";
@@ -17,8 +18,11 @@
   import { shortDate } from "$lib/utils/format";
   import type { AuditEvent, JobSnapshot } from "$lib/model/types";
   import DiagnosticsPanel from "./DiagnosticsPanel.svelte";
+  import type { DiagnosticTarget } from "$lib/utils/diagnostic-message";
 
   let {
+    tab = $bindable("history"),
+    onViewOperation,
     jobs = [],
     jobLoading = false,
     auditEvents = [],
@@ -32,6 +36,8 @@
     onOpenAuditFolder,
     onReloadAudit,
   }: {
+    tab?: string;
+    onViewOperation?: (target: DiagnosticTarget) => void;
     jobs?: JobSnapshot[];
     jobLoading?: boolean;
     auditEvents?: AuditEvent[];
@@ -46,7 +52,6 @@
     onReloadAudit: () => void;
   } = $props();
 
-  let tab = $state("history");
   let filter = $state("all");
   let search = $state("");
   let selectedJobId = $state<string | null>(null);
@@ -84,54 +89,63 @@
 
 <div class="activity-layout dm:min-w-0">
   <PageHeader title="Activity">
-    <Button
-      variant="text"
-      disabled={tab === "history" ? jobLoading : auditLoading}
-      onclick={tab === "history" ? onReloadJobs : onReloadAudit}>Reload</Button
-    >
-    {#if tab === "history"}<Button
-        variant="text"
-        disabled={jobLoading || !jobs.some((j) => !isActiveJob(j))}
-        onclick={onClearJobs}>Clear finished</Button
-      >{/if}
     <Button onclick={() => exportFor()}
       ><Icon name="downloads" />Export diagnostics</Button
     >
+    {#snippet tabs()}
+      <Choices
+        variant="tabs"
+        label="Activity view"
+        value={tab}
+        onchange={(v) => {
+          tab = v;
+          filter = "all";
+          if (v === "logs") onReloadAudit();
+        }}
+        options={[
+          { value: "history", label: "Work history", count: history.length },
+          {
+            value: "logs",
+            label: "Application logs",
+            count: auditEvents.length,
+          },
+        ]}
+      />
+    {/snippet}
+    {#snippet toolbar()}
+      <PageToolbar
+        label="Activity tools"
+        onReload={tab === "history" ? onReloadJobs : onReloadAudit}
+        reloadDisabled={tab === "history" ? jobLoading : auditLoading}
+      >
+        {#if tab === "logs"}<div class="dm:flex dm:min-w-0 dm:basis-48 dm:grow">
+            <Search
+              bind:value={search}
+              label="Search logs"
+              placeholder="Search logs…"
+              clearable
+            />
+          </div>{/if}
+        <Choices
+          label="Activity filter"
+          value={filter}
+          onchange={(v) => (filter = v)}
+          options={[
+            { value: "all", label: "All" },
+            { value: "errors", label: "Errors" },
+          ]}
+        />
+        {#snippet actions()}
+          {#if tab === "history"}<Button
+              disabled={jobLoading || !jobs.some((j) => !isActiveJob(j))}
+              onclick={onClearJobs}>Clear finished</Button
+            >{:else}<Button disabled={!auditLogDir} onclick={onOpenAuditFolder}
+              ><Icon name="folder" />Open log folder</Button
+            >{/if}
+        {/snippet}
+      </PageToolbar>
+    {/snippet}
   </PageHeader>
-  <Choices
-    variant="tabs"
-    label="Activity view"
-    value={tab}
-    onchange={(v) => {
-      tab = v;
-      filter = "all";
-    }}
-    options={[
-      { value: "history", label: "Work history", count: history.length },
-      { value: "logs", label: "Application logs", count: auditEvents.length },
-    ]}
-  />
-  <div class="dm:mb-3 dm:flex dm:flex-wrap dm:items-center dm:gap-3">
-    <Choices
-      label="Activity filter"
-      value={filter}
-      onchange={(v) => (filter = v)}
-      options={[
-        { value: "all", label: "All" },
-        { value: "errors", label: "Errors" },
-      ]}
-    />
-    {#if tab === "logs"}<Search
-        bind:value={search}
-        label="Search logs"
-        placeholder="Search logs…"
-        compact
-      /><Button
-        variant="text"
-        disabled={!auditLogDir}
-        onclick={onOpenAuditFolder}>Open log folder</Button
-      >{/if}
-  </div>
   {#if tab === "history"}
     {#if jobLoading}<p
         role="status"
@@ -183,7 +197,17 @@
       </p>{/if}
     <div aria-label="Application logs">
       {#each visibleEvents as event, i (`${event.at}-${i}`)}
-        <Row onclick={() => (selectedEvent = event)}>
+        <Row
+          onclick={() => {
+            if (onViewOperation && event.runId && event.operationId) {
+              onViewOperation({
+                runId: event.runId,
+                operationId: event.operationId,
+                message: auditDetail(event),
+              });
+            } else selectedEvent = event;
+          }}
+        >
           {#snippet leading()}<span
               class={`dm:w-12 dm:shrink-0 dm:text-xs dm:uppercase ${event.level === "error" ? "dm:text-draft-error" : "dm:text-draft-dim"}`}
               >{event.level}</span

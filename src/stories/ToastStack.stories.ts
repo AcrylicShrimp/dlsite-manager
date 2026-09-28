@@ -26,6 +26,17 @@ type Story = StoryObj<typeof meta>;
 
 export const MixedStates: Story = {};
 
+export const CorrelatedError: Story = {
+  args: {
+    onViewActivity: fn(),
+    toasts: [{
+      id: "correlated",
+      kind: "error",
+      message: "Library folder is required [diagnostic:run-96148f68-bb9f-45bd-90cb-c03144f5b5e7:op-73a57025-8359-41f4-85a6-efad05b6eadd]",
+    }],
+  },
+};
+
 export const LongMessage: Story = {
   args: {
     toasts: [

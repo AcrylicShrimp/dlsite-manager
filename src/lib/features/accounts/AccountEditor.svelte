@@ -1,7 +1,8 @@
 <script lang="ts">
-  import UiButton from "$lib/components/ui/Button.svelte";
+  import Button from "$lib/components/workspace/Button.svelte";
   import Field from "$lib/components/ui/Field.svelte";
   import TextInput from "$lib/components/ui/TextInput.svelte";
+  import FormActions from "$lib/components/workspace/FormActions.svelte";
 
   let {
     editing = false,
@@ -31,7 +32,7 @@
       bind:value={label}
     /></Field
   >
-  <Field id="account-login" label="Login"
+  <Field id="account-login" label="Email or username"
     ><TextInput
       id="account-login"
       autocomplete="username"
@@ -50,9 +51,9 @@
       bind:value={password}
     /></Field
   >
-  <div class="dm:flex dm:justify-end">
-    <UiButton type="submit" disabled={saving}
-      >{saving ? "Saving…" : "Save account"}</UiButton
+  <FormActions>
+    <Button variant="primary" type="submit" disabled={saving}
+      >{saving ? "Saving…" : "Save account"}</Button
     >
-  </div>
+  </FormActions>
 </form>

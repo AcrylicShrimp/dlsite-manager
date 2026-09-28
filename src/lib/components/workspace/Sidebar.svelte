@@ -30,7 +30,7 @@
 </script>
 
 <aside
-  class="sidebar dm:flex dm:min-h-0 dm:flex-col dm:gap-3 dm:border-0 dm:border-r dm:border-solid dm:border-draft-line-subtle dm:bg-draft-sidebar dm:px-3.5 dm:pt-6 dm:pb-4 dm:text-base dm:max-[620px]:border-r-0 dm:max-[620px]:border-b dm:max-[620px]:pt-3 dm:max-[620px]:pb-2"
+  class="sidebar dm:flex dm:min-h-0 dm:flex-col dm:gap-3 dm:overflow-y-auto dm:overscroll-y-contain dm:[&>*]:shrink-0 dm:border-0 dm:border-r dm:border-solid dm:border-draft-line-subtle dm:bg-draft-sidebar dm:px-3.5 dm:pt-6 dm:pb-4 dm:text-base dm:max-[620px]:border-r-0 dm:max-[620px]:border-b dm:max-[620px]:pt-3 dm:max-[620px]:pb-2"
   aria-label="Primary"
 >
   <a
@@ -64,16 +64,6 @@
     class="queue-overview dm:mt-auto dm:border-0 dm:border-t dm:border-solid dm:border-draft-line-subtle dm:pt-3 dm:max-[620px]:hidden"
     aria-label="All downloads summary"
   >
-    <Button
-      variant="sidebar"
-      class="queue-heading"
-      onclick={() => onNavigate("downloads")}
-      ><span class="dm:flex dm:w-full dm:items-center dm:justify-between"
-        ><span class="dm:text-[9px] dm:tracking-widest">DOWNLOADS</span><Icon
-          name="arrow"
-        /></span
-      ></Button
-    >
     <p class="dm:mx-0 dm:mt-2 dm:mb-3 dm:px-2.5 dm:text-xs dm:text-draft-dim">
       <strong class="dm:text-lg dm:text-draft-ink">{running.length}</strong>
       active <span class="dm:mx-1.5">·</span><strong
@@ -119,7 +109,7 @@
       >{/if}
   </div>
   <span
-    class="version dm:flex dm:justify-between dm:text-[9px] dm:text-draft-dim dm:max-[620px]:hidden"
+    class="version dm:mt-1 dm:flex dm:justify-between dm:border-0 dm:border-t dm:border-solid dm:border-draft-line-subtle dm:pt-3 dm:text-[9px] dm:text-draft-dim dm:max-[620px]:hidden"
     >DLsite Manager <span>{version}</span></span
   >
 </aside>

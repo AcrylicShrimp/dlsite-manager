@@ -1,5 +1,7 @@
 <script lang="ts">
   import PageHeader from "$lib/components/workspace/PageHeader.svelte";
+  import PageToolbar from "$lib/components/workspace/PageToolbar.svelte";
+  import Icon from "$lib/components/workspace/Icon.svelte";
   import Button from "$lib/components/workspace/Button.svelte";
   import Modal from "$lib/components/workspace/Modal.svelte";
   import type { Account, JobSnapshot } from "$lib/model/types";
@@ -11,7 +13,12 @@
   import AccountSourceRow from "./AccountSourceRow.svelte";
 
   type AccountStatusTone =
-    "synced" | "syncing" | "failed" | "warning" | "disabled" | "idle";
+    | "synced"
+    | "syncing"
+    | "failed"
+    | "warning"
+    | "disabled"
+    | "idle";
 
   let {
     accounts = [],
@@ -80,20 +87,27 @@
 </script>
 
 <section class="accounts-panel" aria-label="Accounts">
-  <PageHeader title="Accounts"
-    ><Button variant="text" disabled={loading || saving} onclick={onReload}
-      >Reload</Button
-    ><Button
+  <PageHeader title="Accounts">
+    <Button
       disabled={loading || jobsLoading || syncAllDisabled}
-      onclick={onSyncAll}>Sync all</Button
+      onclick={onSyncAll}><Icon name="refresh" />Sync all</Button
     ><Button variant="primary" disabled={saving} onclick={add}
-      >Add account</Button
-    ></PageHeader
-  >
-  <p class="dm:mb-4 dm:text-sm dm:text-draft-dim">
-    {enabledAccountCount(accounts)} enabled · {accounts.length} accounts · {syncingCount}
-    syncing
-  </p>
+      ><Icon name="plus" />Add account</Button
+    >
+    {#snippet toolbar()}
+      <PageToolbar
+        label="Accounts tools"
+        {onReload}
+        reloadDisabled={loading || saving}
+      >
+        <p class="dm:m-0 dm:text-sm dm:text-draft-dim">
+          {enabledAccountCount(accounts)} enabled · {accounts.length} accounts ·
+          {syncingCount}
+          syncing
+        </p>
+      </PageToolbar>
+    {/snippet}
+  </PageHeader>
   {#if loading}<p
       role="status"
       class="dm:py-10 dm:text-center dm:text-draft-dim"

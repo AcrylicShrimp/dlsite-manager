@@ -1,13 +1,18 @@
 <script lang="ts">
   import { notificationPortal } from "./workspace/modal-stack";
   import type { Toast } from "$lib/model/types";
+  import Button from "./workspace/Button.svelte";
+  import Icon from "./workspace/Icon.svelte";
+  import { splitDiagnosticMessage, type DiagnosticTarget } from "$lib/utils/diagnostic-message";
 
   let {
     toasts,
     onDismiss,
+    onViewActivity,
   }: {
     toasts: Toast[];
     onDismiss: (id: string) => void;
+    onViewActivity?: (target: DiagnosticTarget) => void;
   } = $props();
 </script>
 
@@ -19,6 +24,7 @@
     aria-live="polite"
   >
     {#each toasts as toast (toast.id)}
+      {@const parsed = splitDiagnosticMessage(toast.message)}
       <article
         class="toast"
         class:error={toast.kind === "error"}
@@ -26,7 +32,20 @@
         role={toast.kind === "error" ? "alert" : "status"}
       >
         <div class="toast-marker" aria-hidden="true"></div>
-        <p>{toast.message}</p>
+        <div class="dm:min-w-0 dm:py-2.5">
+          <p>{parsed.message}</p>
+          {#if parsed.diagnostic && onViewActivity}
+            <div class="dm:mt-2">
+              <Button variant="text" onclick={() => {
+                if (!parsed.diagnostic) return;
+                onViewActivity?.({ ...parsed.diagnostic, message: parsed.message });
+                onDismiss(toast.id);
+              }}>View in Activity <Icon name="arrow" /></Button>
+            </div>
+          {:else if parsed.diagnostic}
+            <code class="dm:mt-2 dm:block dm:wrap-anywhere dm:text-xs dm:text-draft-dim">{parsed.diagnostic.runId}<br />{parsed.diagnostic.operationId}</code>
+          {/if}
+        </div>
         <button
           class="toast-close"
           type="button"
@@ -89,7 +108,7 @@
   .toast p {
     min-width: 0;
     margin: 0;
-    padding: 10px 0;
+    padding: 0;
     color: var(--text);
     font-size: 13px;
     line-height: 1.35;

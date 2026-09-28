@@ -1,7 +1,7 @@
 <script lang="ts">
   import PageHeader from "$lib/components/workspace/PageHeader.svelte";
   import type { JobSnapshot } from "$lib/model/types";
-  import Button from "$lib/components/workspace/Button.svelte";
+  import PageToolbar from "$lib/components/workspace/PageToolbar.svelte";
   import Choices from "$lib/components/workspace/ChoiceGroup.svelte";
   import Row from "./DownloadQueueRow.svelte";
   let {
@@ -34,24 +34,22 @@
 </script>
 
 <section aria-label="Downloads">
-  <PageHeader title="Downloads"
-    ><Button variant="text" disabled={loading} onclick={onReload}>Reload</Button
-    ></PageHeader
-  >
-  <div
-    class="dm:mb-4 dm:flex dm:flex-wrap dm:items-center dm:justify-between dm:gap-3"
-  >
-    <Choices
-      label="Download status"
-      value={filter}
-      onchange={(v) => (filter = v)}
-      options={[
-        { value: "all", label: "All", count: jobs.length },
-        { value: "running", label: "In progress", count: runningCount },
-        { value: "queued", label: "Queued", count: queuedCount },
-      ]}
-    />
-  </div>
+  <PageHeader title="Downloads">
+    {#snippet toolbar()}
+      <PageToolbar label="Downloads tools" {onReload} reloadDisabled={loading}>
+        <Choices
+          label="Download status"
+          value={filter}
+          onchange={(v) => (filter = v)}
+          options={[
+            { value: "all", label: "All", count: jobs.length },
+            { value: "running", label: "In progress", count: runningCount },
+            { value: "queued", label: "Queued", count: queuedCount },
+          ]}
+        />
+      </PageToolbar>
+    {/snippet}
+  </PageHeader>
   {#if loading}<p
       role="status"
       class="dm:py-10 dm:text-center dm:text-draft-dim"

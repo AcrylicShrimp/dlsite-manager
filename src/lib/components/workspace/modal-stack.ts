@@ -1,6 +1,9 @@
 // Notifications must belong to the active native dialog to remain visible and interactive.
 const dialogs: HTMLDialogElement[] = [];
 const listeners = new Set<() => void>();
+export function hasOpenModal() {
+  return dialogs.some((dialog) => dialog.open);
+}
 export function registerModal(dialog: HTMLDialogElement) {
   dialogs.push(dialog);
   for (const notify of listeners) notify();

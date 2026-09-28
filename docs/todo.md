@@ -15,7 +15,8 @@
   clipboard support, startup-failure export, browser links and other desktop systems.
 - Production UI cutover is implemented from the approved checkpoint: shared Tailwind
   controls and semantic colors, one main scroller, compact library/full detail,
-  account edit/MFA, download queue, Activity tabs and Settings tabs. See
+  account edit/MFA, download queue, Activity tabs and Settings tabs. Page headers,
+  query/action toolbars and edit footers now share placement and spacing rules. See
   `docs/ui-redesign-preview.md`. Published 3.4.0 remains unchanged.
 - App/Production workspace now mounts the real route/controllers against isolated
   IPC fixtures; Redesign/Compare is current cutover versus the approved prototype,
@@ -24,3 +25,6 @@
 - Before a release, smoke-test the packaged app on native platforms, especially
   cover Save image (download, save/cancel/write errors), MFA above other dialogs,
   and webview focus/scroll rendering. Browser coverage uses mocked native IPC.
+
+- Refresh README screenshots to show the redesigned interface; explicitly deferred
+  by the maintainer until after the next release.

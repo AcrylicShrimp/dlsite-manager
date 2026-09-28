@@ -519,7 +519,7 @@
           >
         </footer>
       {:else if view === "activity"}
-        <ChoiceGroup
+        <div class="dm:mb-4"><ChoiceGroup
           variant="tabs"
           label="Activity view"
           value={activityTab}
@@ -532,7 +532,7 @@
               count: data.events.length,
             },
           ]}
-        />
+        /></div>
         <div class="toolbar activity-toolbar">
           <ChoiceGroup
             label="Activity filter"
@@ -607,7 +607,7 @@
             >
           </div>{/if}
       {:else}
-        <ChoiceGroup
+        <div class="dm:mb-4"><ChoiceGroup
           variant="tabs"
           label="Settings section"
           value={settingTab}
@@ -616,7 +616,7 @@
             { value: "storage", label: "Storage" },
             { value: "about", label: "About & updates" },
           ]}
-        />
+        /></div>
         {#if settingTab === "storage"}<form
             class="settings-form"
             onsubmit={(e) => {
@@ -826,7 +826,7 @@
             placeholder="e.g. Personal"
           /></label
         ><label
-          >Login<input
+          >Email or username<input
             class="dm:draft-focus-field"
             bind:value={loginName}
             autocomplete="username"

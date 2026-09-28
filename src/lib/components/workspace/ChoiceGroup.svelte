@@ -18,7 +18,7 @@
   role="group"
   aria-label={label}
   class={variant === "tabs"
-    ? "tabs dm:flex dm:flex-wrap dm:gap-1 dm:border-0 dm:border-b dm:border-solid dm:border-draft-line dm:mb-4"
+    ? "tabs dm:flex dm:flex-wrap dm:gap-1 dm:border-0 dm:border-b dm:border-solid dm:border-draft-line"
     : "switches dm:flex dm:flex-wrap dm:gap-1"}
 >
   {#each options as option}

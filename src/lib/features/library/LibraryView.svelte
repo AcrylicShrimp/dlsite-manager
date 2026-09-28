@@ -133,35 +133,39 @@
   />
 
   {#if filtersOpen}
-    <LibraryFilters
-      {accounts}
-      {facets}
-      {sort}
-      {selectedAccountIds}
-      {selectedSources}
-      {selectedAges}
-      {selectedTypes}
-      {selectedMakers}
-      {selectedCustomTags}
-      {excludedCustomTags}
-      {onSetSort}
-      {onClearAccounts}
-      {onToggleAccount}
-      {onClearSources}
-      {onToggleSource}
-      {onClearAges}
-      {onToggleAge}
-      {onClearTypes}
-      {onToggleType}
-      {onClearMakers}
-      {onToggleMaker}
-      {onClearCustomTags}
-      {onCycleCustomTag}
-    />
-    <div class="dm:flex dm:justify-end">
-      <UiButton variant="secondary" responsiveWidth="auto" onclick={showResults}
-        >Show results ↓</UiButton
-      >
+    <div class="dm:mb-6 dm:flex dm:flex-col dm:gap-3">
+      <LibraryFilters
+        {accounts}
+        {facets}
+        {sort}
+        {selectedAccountIds}
+        {selectedSources}
+        {selectedAges}
+        {selectedTypes}
+        {selectedMakers}
+        {selectedCustomTags}
+        {excludedCustomTags}
+        {onSetSort}
+        {onClearAccounts}
+        {onToggleAccount}
+        {onClearSources}
+        {onToggleSource}
+        {onClearAges}
+        {onToggleAge}
+        {onClearTypes}
+        {onToggleType}
+        {onClearMakers}
+        {onToggleMaker}
+        {onClearCustomTags}
+        {onCycleCustomTag}
+      />
+      <div class="dm:flex dm:justify-end">
+        <UiButton
+          variant="secondary"
+          responsiveWidth="auto"
+          onclick={showResults}>Show results ↓</UiButton
+        >
+      </div>
     </div>
   {/if}
 
@@ -216,10 +220,11 @@
   .product-area {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 0;
     min-width: 0;
   }
   .list-header {
+    margin: 0 0 20px;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
