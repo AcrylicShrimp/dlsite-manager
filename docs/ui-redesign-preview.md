@@ -64,6 +64,32 @@ entered code is stored in logs or persistent state. Success/cancel feedback and
 Try again belong to the fixture harness. Backend events, request queueing and
 native authentication remain the existing production controller's responsibility.
 
+## Cutover requirements beyond the visual fixture
+
+The accepted appearance is not a claim that every production control is already
+wired in this prototype. Preserve these concrete destinations during cutover:
+
+| Existing behavior | Production destination and acceptance requirement |
+| --- | --- |
+| Optional login ID/password, including accounts without credentials | Account edit dialog keeps text Login (not email-only), nullable trimmed values, and blank password meaning retain the existing credential; a new source may omit credentials |
+| Per-account Sync and Cancel | Accounts row has Sync when idle and Cancel when a sync is active; disable Cancel for non-cancellable/cancelling jobs, disable duplicate Sync, and keep the active sync accessible in Activity |
+| Account enabled/credential/sync status and last sync | Compact metadata in the Accounts row uses actual account/job state; enabled is not evidence of authentication or successful connection |
+| Enable/disable and removal | Account edit dialog keeps the enabled control (locked during sync) and a Remove action with the existing confirmation; cached works/local files remain preserved by the existing command |
+| Active job cancellation from Activity | Active job detail offers Cancel when the job permits it; routes to the existing job controller, with failures surfaced and cancelling state retained until backend completion |
+| Download queue membership and failure count | Use `isDownloadQueueJob` with `isActiveJob`; only download failures contribute to download alerts. Bulk planning/import jobs belong in Activity, not the download queue |
+| Product primary action availability | Preserve `productDownloadActionDisabled`: disable while any work job is active and disable Open folder when a downloaded record lacks localPath; add these combinations to integration stories |
+| Job progress and status | Use production job projections: null progress stays indeterminate, counts keep their units, and queued/running/cancelling/terminal states retain their meanings. Add bulk-planning, import, unknown-progress and cancelling fixtures as production components are connected |
+
+`DraftWorkspace` still owns a simulated job list and simple fixture-only
+classification. `jobDetail`/`progress` from `stories/fixtures/redesign.ts` are not
+production utilities: they include sample counts and zero fallback progress.
+Replace these imports when extracting `DraftActivityRows`, `DraftDownloadRow`,
+`DraftSidebar` and workspace projections into the app. Preserve query pagination,
+loading/error/retry states, bulk preview/confirmation, diagnostic recovery and
+updater states using their existing controllers; the mock actions are not their
+replacement. Do not carry fixture-derived timestamps/version/code validation
+into production. No additional mock framework is required to meet these gates.
+
 ## Library feedback and preservation contract
 
 The maintainer accepted the thumbnail/title/maker grid, but rejected the loss of

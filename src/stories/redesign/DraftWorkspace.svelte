@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
+  import { valueOrNull } from "$lib/utils/format";
   import type {
     Account,
     AuditEvent,
@@ -202,6 +203,7 @@
     void open("account");
   }
   function cancel(j: JobSnapshot) {
+    if (!j.cancellable || j.status === "cancelling" || !isActive(j)) return;
     jobs = jobs.map((x) =>
       x.id === j.id ? { ...x, status: "cancelled", cancellable: false } : x,
     );
@@ -243,8 +245,9 @@
     const a: Account = {
       id: accountId ?? `preview-account-${accounts.length}`,
       label: accountLabel,
-      loginName,
-      hasCredential: Boolean(password) || Boolean(existing?.hasCredential),
+      loginName: valueOrNull(loginName),
+      hasCredential:
+        Boolean(valueOrNull(password)) || Boolean(existing?.hasCredential),
       enabled: accountEnabled,
       createdAt: existing?.createdAt ?? "2026-09-28T00:00:00Z",
       updatedAt: "2026-09-28T00:00:00Z",
@@ -760,9 +763,9 @@
     {#if modal === "product" && product}
       <DraftProductDetail
         detail={makeDetail(product)}
-        queued={activeDownloads.some(
+        activeJob={activeDownloads.find(
           (j) => j.metadata.workId === product?.workId,
-        )}
+        ) ?? null}
         onTags={updateTags}
         onDownload={() => {
           if (product) {
@@ -823,19 +826,17 @@
             placeholder="e.g. Personal"
           /></label
         ><label
-          >Login email<input
+          >Login<input
             class="dm:draft-focus-field"
-            type="email"
             bind:value={loginName}
-            required
-            autocomplete="off"
+            autocomplete="username"
+            spellcheck={false}
           /></label
         ><label
           >Password<input
             class="dm:draft-focus-field"
             type="password"
             bind:value={password}
-            required={!accountId}
             placeholder={accountId ? "Leave blank to keep saved password" : ""}
             autocomplete="new-password"
           /></label

@@ -1027,3 +1027,22 @@
   tests passed, application build passed; latest Storybook build and browser
   checks are recorded above. `git diff --check` passed. Local commit only; no
   release or remote push requested in this step.
+
+- Completed maintainer-requested fresh-context review of the Storybook cutover
+  reference in two read-only rounds: BLOCK, then PASS_WITH_NOTES. Baseline was
+  clean checkpoint 79683c9; neither reviewer edited files. Full findings and
+  dispositions: docs/reviews/2026-09-28-storybook-cutover.md.
+- Verified/fixed the account form's required email restriction and preserved
+  optional credentials for new sources; normalized nullable login values. Passed
+  actual active jobs into product details so running/unpacking no longer display
+  Queued. Added cancellation guards and changed the enabled-account label to avoid
+  claiming an authenticated connection.
+- Recorded concrete cutover destinations for account sync/cancel/status/removal,
+  job classification and progress, and primary-action guards for active jobs or
+  missing local paths. Fixture-only projections remain intentionally deferred to
+  production integration; no unsupported findings were adopted.
+- Validation: Svelte check zero diagnostics, all 13 tests passed, Storybook build
+  and diff checks passed. Chromium/WebKit at 800/390px passed credentialless edit/
+  creation, text login IDs, download phases and busy/cancel guards; the second
+  reviewer independently reproduced the passing browser checks. Review fixes
+  remain uncommitted after the checkpoint; no production cutover or release.

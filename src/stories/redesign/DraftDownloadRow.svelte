@@ -34,7 +34,12 @@
       class="row-title dm:min-w-0 dm:border-0 dm:bg-transparent dm:p-0 dm:font-[inherit] dm:text-base dm:font-semibold dm:leading-normal dm:text-left dm:wrap-anywhere dm:text-draft-ink dm:cursor-pointer dm:hover:text-draft-accent dm:hover:underline dm:draft-focus-text"
       onclick={onDetails}>{job.title}</button
     >
-    <Button variant="text" tone="muted" onclick={onCancel}>Cancel</Button>
+    <Button
+      variant="text"
+      tone="muted"
+      disabled={!job.cancellable || job.status === "cancelling"}
+      onclick={onCancel}>Cancel</Button
+    >
   </div>
   {#if job.status === "running"}<Progress
       value={progress(job)}

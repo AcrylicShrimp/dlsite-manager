@@ -19,7 +19,7 @@
       >{account.loginName ?? "No saved credentials"}</span
     ><small
       class={`dm:text-xs ${account.enabled ? "dm:text-draft-accent" : "dm:text-draft-dim"}`}
-      >{account.enabled ? "Connected · DLsite" : "Disabled"}</small
+      >{account.enabled ? "Enabled · DLsite" : "Disabled"}</small
     >
   </div>
   <Button onclick={onEdit}>Edit</Button>

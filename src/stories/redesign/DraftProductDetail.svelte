@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ProductDetail } from "$lib/model/types";
+  import type { ProductDetail, JobSnapshot } from "$lib/model/types";
   import {
     ageLabel,
     productCreditFields,
@@ -11,6 +11,7 @@
     downloadStatusLabel,
     formatBytes,
   } from "$lib/utils/format";
+  import { isActiveJob, jobLabel } from "$lib/utils/jobs";
   import { parseTags } from "./library-preview";
   import Icon from "./DraftIcon.svelte";
   import Button from "./DraftButton.svelte";
@@ -20,17 +21,27 @@
   import WorkBadges from "./DraftWorkBadges.svelte";
   let {
     detail,
-    queued = false,
+    activeJob = null,
     onTags,
     onDownload,
     onAction,
   }: {
     detail: ProductDetail;
-    queued?: boolean;
+    activeJob?: JobSnapshot | null;
     onTags: (names: string[]) => void;
     onDownload: () => void;
     onAction: (action: string) => void;
   } = $props();
+  const job = $derived(activeJob && isActiveJob(activeJob) ? activeJob : null);
+  const statusLabel = $derived(
+    job
+      ? job.status === "running" && job.phase === "downloading"
+        ? "Downloading"
+        : job.status === "running" && job.phase === "unpacking"
+          ? "Unpacking"
+          : jobLabel(job)
+      : downloadStatusLabel(detail.download.status),
+  );
   let tags = $state("");
   let feedback = $state("");
   let copyFallback = $state("");
@@ -124,9 +135,7 @@
     class="detail-actions dm:mt-4 dm:border-0 dm:border-b dm:border-solid dm:border-draft-line dm:pb-4"
   >
     <span class="dm:block dm:mb-2 dm:text-xs dm:text-draft-dim"
-      >{queued
-        ? "In download queue"
-        : downloadStatusLabel(detail.download.status)}</span
+      >{statusLabel}</span
     >
     <div
       class="download-actions dm:flex dm:flex-wrap dm:items-center dm:gap-2"
@@ -135,7 +144,7 @@
     >
       <Button
         variant="primary"
-        disabled={queued && detail.download.status !== "downloaded"}
+        disabled={Boolean(job) && detail.download.status !== "downloaded"}
         onclick={onDownload}
         ><Icon
           name={detail.download.status === "downloaded"
@@ -143,27 +152,27 @@
             : "downloads"}
         />{detail.download.status === "downloaded"
           ? "Open folder"
-          : queued
-            ? "Queued"
+          : job
+            ? statusLabel
             : "Download"}</Button
       >
       {#if detail.download.status !== "downloaded"}<Button
           variant="text"
-          disabled={queued}
+          disabled={Boolean(job)}
           onclick={() => onAction("Download archives only")}
           >Download archives only</Button
         ><Button
           variant="text"
-          disabled={queued}
+          disabled={Boolean(job)}
           onclick={() => onAction("Mark as downloaded")}
           >Mark as downloaded</Button
         >{:else}<Button
           variant="text"
-          disabled={queued}
+          disabled={Boolean(job)}
           onclick={() => onAction("Re-download")}>Re-download</Button
         >{/if}{#if detail.download.status !== "notDownloaded"}<Button
           variant="text"
-          disabled={queued}
+          disabled={Boolean(job)}
           tone="error"
           onclick={() => onAction("Delete download")}>Delete download</Button
         >{/if}
