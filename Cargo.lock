@@ -1007,7 +1007,7 @@ dependencies = [
 
 [[package]]
 name = "dlsite-manager"
-version = "3.4.0"
+version = "3.5.0"
 dependencies = [
  "async-trait",
  "dm-api",

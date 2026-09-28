@@ -1164,3 +1164,9 @@
   confirming no Rust builds were running; available disk space recovered to 7.8 GiB.
 - Packaged macOS build passed on retry; relaunched the local app with the
   unified page actions for native QA. No release, commit or push performed.
+
+- Committed the native-QA UI follow-ups as d66357d. Preparing stable 3.5.0,
+  covering all changes since 3.4.0: redesigned workspace, complete library/detail
+  workflows, image saving, diagnostic navigation and common action placement.
+  Updated package/Tauri/Cargo app versions and Cargo.lock; core crate versions
+  remain unchanged. README screenshot refresh is deferred at user request.
