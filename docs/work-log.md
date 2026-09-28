@@ -726,3 +726,23 @@
   automation still builds drafts from tags reachable from `release`; publication
   follows artifact validation and Linux runtime checks. Older clients failing to
   fetch metadata will need a manual download; release notes state this limitation.
+
+- Pushed main and fast-forwarded release to `10f23fd`, then tagged `v3.4.0`. Main
+  CI `36373358652`, release CI `36373361704`, and all three platform release builds
+  in `36373364273` passed. Downloaded all 13 uploaded assets and verified every
+  checksum, four Ed25519 updater signatures and signed version comments, plus all
+  three manifest URLs/signatures. macOS strict/deep codesign verification passed.
+- Exercised the actual 3.4.0 AppImage through browser/noVNC: update check changed
+  from JSON failure to up-to-date; native export cancel/retry saved a valid ZIP;
+  inspected complete sequences/flush, version/platform/environment metadata and
+  updater success, with raw QA home/mount paths absent. After quitting Thunar,
+  Activity Open Folder displayed its log directory. Clipboard write failed but
+  exposed the support-summary text fallback. GTK clipboard probe was unavailable
+  because the minimal guest lacks its GI namespace; no clipboard success claimed.
+  Recorded the narrow-window Activity layout limitation and missing guest Downloads
+  setting for follow-up, without modifying release source or opener behavior.
+- Published v3.4.0 as non-draft, non-prerelease Latest at 2026-09-28 03:35:07 UTC,
+  under the user's explicit stable-release authorization. Public latest.json now
+  serves 3.4.0 and the three expected platforms. Updated release/QA notes and next
+  steps. Issue #47 reporter environment, real update installation, live accounts,
+  Wayland/GPU and native Windows UI remain unverified; no issue comment was sent.

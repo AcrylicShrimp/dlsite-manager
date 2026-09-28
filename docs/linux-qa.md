@@ -86,3 +86,20 @@ Published v3.3.0 amd64 AppImage SHA-256:
 Issue #47 remains unverified in the reporter's environment. Its comments do not
 specify the distribution, desktop/session or file manager. A successful local log
 folder opening is narrower evidence than resolving the reported work-folder failure.
+
+## Release 3.4.0 checks — 2026-09-28
+
+The machine now runs the published 3.4.0 AppImage. The update request fix produced
+the “up to date” toast, and the diagnostic log recorded `native.updater: succeeded`.
+Native export cancel/retry saved `/home/qa/diagnostics-3.4.0.zip`; the copied local
+`.linux-qa/diagnostics-3.4.0.zip` passed ZIP integrity and JSON parsing checks.
+Its manifest reports complete flush, no missing sequences or malformed records;
+metadata identifies 3.4.0, Ubuntu 22.04 and the release commit. Raw QA home and
+AppImage mount paths were absent. Log-folder opening again displayed Thunar.
+
+Automatic support-summary clipboard copy failed and showed the intended text-field
+fallback. At 800×600, expanded export/summary content can push lower Activity panels
+out of view; this layout follow-up is in `docs/todo.md`. The guest's minimal profile
+also has no configured Downloads directory, which was captured as `native.path`
+failure. These checks do not cover a full updater installation or the issue reporter's
+desktop. Screenshots and the `update-fixed` capture are in `.linux-qa/captures/`.
