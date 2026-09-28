@@ -1,5 +1,4 @@
 <script lang="ts">
-  import "./draft.css";
   import { onMount } from "svelte";
   import type { View } from "$lib/model/types";
   import { views, scenarios, type Scenario } from "../fixtures/redesign";

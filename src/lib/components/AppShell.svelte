@@ -1,79 +1,73 @@
 <script lang="ts">
+  import { tick, untrack } from "svelte";
   import type { Snippet } from "svelte";
-  import type { View } from "$lib/model/types";
-  import SidebarNav from "$lib/components/SidebarNav.svelte";
-  import WorkspaceHeader from "$lib/components/WorkspaceHeader.svelte";
-
-  const VIEW_COPY: Record<View, { eyebrow: string; title: string }> = {
-    library: { eyebrow: "Collection", title: "Library" },
-    downloads: { eyebrow: "Queue", title: "Downloads" },
-    accounts: { eyebrow: "Sources", title: "Accounts" },
-    activity: { eyebrow: "Jobs", title: "Activity" },
-    settings: { eyebrow: "Application", title: "Settings" },
-  };
-
+  import type { JobSnapshot, View } from "$lib/model/types";
+  import { isActiveJob, isDownloadQueueJob } from "$lib/utils/jobs";
+  import Sidebar from "./workspace/Sidebar.svelte";
+  import BackToTop from "./workspace/BackToTop.svelte";
   let {
     activeView,
     onNavigate,
     children,
+    jobs = [],
+    version = "",
   }: {
     activeView: View;
     onNavigate: (view: View) => void;
     children?: Snippet;
+    jobs?: JobSnapshot[];
+    version?: string;
   } = $props();
-
-  let viewCopy = $derived(VIEW_COPY[activeView]);
+  let scroller: HTMLElement;
+  let scrollTop = $state(0);
+  const positions: Partial<Record<View, number>> = {};
+  const downloads = $derived(
+    jobs.filter((j) => isDownloadQueueJob(j) && isActiveJob(j)),
+  );
+  const running = $derived(downloads.filter((j) => j.status !== "queued"));
+  const failures = $derived(
+    jobs.filter((j) => isDownloadQueueJob(j) && j.status === "failed").length,
+  );
+  $effect(() => {
+    const view = activeView;
+    void tick().then(() =>
+      untrack(() => {
+        if (scroller) {
+          scroller.scrollTop = positions[view] ?? 0;
+          scrollTop = scroller.scrollTop;
+        }
+      }),
+    );
+  });
 </script>
 
-<main class="app-shell">
-  <SidebarNav {activeView} {onNavigate} />
-  <section class:library-workspace={activeView === "library"} class="workspace">
-    <WorkspaceHeader eyebrow={viewCopy.eyebrow} title={viewCopy.title} />
+<div
+  class="app-shell dm:grid dm:h-dvh dm:grid-cols-[194px_minmax(0,1fr)] dm:overflow-hidden dm:bg-draft-background dm:text-draft-ink dm:text-base dm:max-[620px]:grid-cols-1 dm:max-[620px]:grid-rows-[auto_minmax(0,1fr)]"
+>
+  <Sidebar
+    view={activeView}
+    {version}
+    {running}
+    queuedCount={downloads.filter((j) => j.status === "queued").length}
+    activeCount={downloads.length}
+    failureCount={failures}
+    {onNavigate}
+    onRunning={() => onNavigate("downloads")}
+    onFailure={() => onNavigate("activity")}
+  />
+  <main
+    bind:this={scroller}
+    tabindex="-1"
+    class="workspace dm:outline-none dm:min-h-0 dm:min-w-0 dm:overflow-auto dm:px-6 dm:py-7 dm:[scrollbar-gutter:stable] dm:max-[620px]:px-4 dm:max-[620px]:py-5"
+    onscroll={() => {
+      scrollTop = scroller.scrollTop;
+      positions[activeView] = scrollTop;
+    }}
+  >
     {@render children?.()}
-  </section>
-</main>
-
-<style>
-  .app-shell {
-    display: grid;
-    grid-template-columns: 220px minmax(0, 1fr);
-    height: 100vh;
-    min-height: 100vh;
-    overflow: hidden;
-  }
-
-  .workspace {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    min-height: 0;
-    padding: 28px;
-    overflow: hidden;
-  }
-
-  .workspace.library-workspace {
-    padding-top: 0;
-    overflow: auto;
-    overscroll-behavior: contain;
-    scrollbar-gutter: stable;
-  }
-
-  .workspace.library-workspace :global(.workspace-header) {
-    padding-top: 28px;
-  }
-
-  @media (max-width: 720px) {
-    .app-shell {
-      grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: auto minmax(0, 1fr);
-    }
-
-    .workspace {
-      padding: 20px 16px;
-    }
-
-    .workspace.library-workspace :global(.workspace-header) {
-      padding-top: 20px;
-    }
-  }
-</style>
+  </main>
+</div>
+{#if scrollTop > 300}<BackToTop
+    target={() => scroller}
+    class="dm:fixed dm:bottom-6 dm:right-6 dm:z-20"
+  />{/if}

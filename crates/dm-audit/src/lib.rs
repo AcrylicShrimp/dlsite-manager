@@ -499,6 +499,7 @@ fn legacy_operation(value: &str) -> &str {
         | "remove_account"
         | "save_account"
         | "save_settings"
+        | "save_product_cover"
         | "scan_local_work_downloads"
         | "set_account_enabled"
         | "set_product_custom_tags"

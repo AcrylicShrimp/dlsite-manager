@@ -23,6 +23,7 @@
 </script>
 
 <ProductImagePreview
+  onSave={async () => true}
   preview={{
     url: image,
     workId: "RJ01553954",

@@ -1,5 +1,9 @@
 <script lang="ts">
+  import PageHeader from "$lib/components/workspace/PageHeader.svelte";
   import UiButton from "$lib/components/ui/Button.svelte";
+  import Choices from "$lib/components/workspace/ChoiceGroup.svelte";
+  import Mark from "$lib/components/workspace/AppMark.svelte";
+  import Disclosure from "$lib/components/workspace/Disclosure.svelte";
   import Field from "$lib/components/ui/Field.svelte";
   import TextInput from "$lib/components/ui/TextInput.svelte";
   import UpdatePanel from "$lib/features/settings/UpdatePanel.svelte";
@@ -41,136 +45,119 @@
   } = $props();
 
   const busy = $derived(loading || saving);
+
+  let tab = $state("storage");
 </script>
 
-<div class="settings-layout">
-  <form class="settings-panel" onsubmit={onSave}>
-    <div class="panel-title">
-      <div>
-        <h2>Storage paths</h2>
-        <p>Library is the final managed collection. Download staging keeps resumable partial files and fetched archives.</p>
-      </div>
-      <UiButton variant="secondary" size="small" disabled={busy} onclick={onReload}>Reload</UiButton>
-    </div>
-
-    <Field id="library-root" label="Library folder" help="Final location for managed works after download and unpacking.">
-      <div class="path-control">
-        <TextInput id="library-root" disabled={busy} bind:value={libraryRoot} />
-        <UiButton variant="secondary" size="small" disabled={busy} onclick={() => onChooseDirectory("library")}>
-          Browse
-        </UiButton>
-      </div>
-    </Field>
-
-    <Field
-      id="download-root"
-      label="Download staging folder"
-      help="Working folder for partial downloads, retries, and fetched archives. Defaults to your system Downloads folder."
+<div class="settings-layout dm:min-w-0">
+  <PageHeader title="Settings" />
+  <Choices
+    variant="tabs"
+    label="Settings section"
+    value={tab}
+    onchange={(v) => (tab = v)}
+    options={[
+      { value: "storage", label: "Storage" },
+      { value: "about", label: "About & updates" },
+    ]}
+  />
+  {#if tab === "storage"}<form
+      onsubmit={onSave}
+      class="dm:flex dm:max-w-[680px] dm:flex-col dm:gap-6"
     >
-      <div class="path-control download-path-control">
-        <TextInput id="download-root" disabled={busy} bind:value={downloadRoot} />
-        <UiButton variant="secondary" size="small" disabled={busy} onclick={() => onChooseDirectory("download")}>
-          Browse
-        </UiButton>
-        <UiButton variant="secondary" size="small" disabled={busy} onclick={onUseDefaultDownloadRoot}>
-          Use Default
-        </UiButton>
+      <div class="dm:flex dm:justify-end">
+        <UiButton
+          variant="secondary"
+          size="small"
+          disabled={busy}
+          onclick={onReload}>Reload</UiButton
+        >
       </div>
-    </Field>
-
-    <div class="actions">
-      <span></span>
-      <UiButton type="submit" disabled={busy}>{saving ? "Saving" : "Save"}</UiButton>
-    </div>
-  </form>
-
-  <section class="settings-panel about-panel" aria-label="About">
-    <div class="panel-title">
-      <h2>About</h2>
-      <div class="panel-actions">
-        <UiButton variant="secondary" size="small" onclick={onOpenGitHub}>GitHub</UiButton>
-        <UiButton variant="secondary" size="small" onclick={onOpenDlsite}>DLsite</UiButton>
+      <Field id="library-root" label="Library folder"
+        ><div class="dm:flex dm:flex-wrap dm:gap-2">
+          <div class="dm:min-w-0 dm:flex-1">
+            <TextInput
+              id="library-root"
+              disabled={busy}
+              bind:value={libraryRoot}
+            />
+          </div>
+          <UiButton
+            variant="secondary"
+            responsiveWidth="auto"
+            disabled={busy}
+            onclick={() => onChooseDirectory("library")}>Browse</UiButton
+          >
+        </div></Field
+      >
+      <Field id="download-root" label="Download staging folder"
+        ><div class="dm:flex dm:flex-wrap dm:gap-2">
+          <div class="dm:min-w-0 dm:flex-1">
+            <TextInput
+              id="download-root"
+              disabled={busy}
+              bind:value={downloadRoot}
+            />
+          </div>
+          <UiButton
+            variant="secondary"
+            responsiveWidth="auto"
+            disabled={busy}
+            onclick={() => onChooseDirectory("download")}>Browse</UiButton
+          >
+        </div></Field
+      >
+      <div
+        class="dm:flex dm:flex-wrap dm:items-center dm:justify-between dm:gap-3"
+      >
+        <UiButton
+          variant="secondary"
+          disabled={busy}
+          onclick={onUseDefaultDownloadRoot}
+          >Use system Downloads folder</UiButton
+        ><UiButton type="submit" disabled={busy}
+          >{saving ? "Saving…" : "Save changes"}</UiButton
+        >
       </div>
-    </div>
-    <dl class="about-grid">
-      <dt>Application</dt><dd>{appInfoValue(appInfo?.name, appInfoLoading)}</dd>
-      <dt>Version</dt><dd>{appInfoValue(appInfo?.version, appInfoLoading)}</dd>
-      <dt>Identifier</dt><dd>{appInfoValue(appInfo?.identifier, appInfoLoading)}</dd>
-      <dt>Tauri</dt><dd>{appInfoValue(appInfo?.tauriVersion, appInfoLoading)}</dd>
-    </dl>
-
-    <UpdatePanel phase={updatePhase} message={updateProgressMessage} onCheck={onCheckForUpdates} />
-  </section>
+    </form>{:else}<section aria-label="About" class="dm:max-w-[600px] dm:py-2">
+      <div class="dm:flex dm:items-center dm:gap-3">
+        <Mark size="large" />
+        <div class="dm:min-w-0">
+          <h2 class="dm:m-0 dm:text-lg dm:font-semibold">
+            {appInfoValue(appInfo?.name, appInfoLoading)}
+          </h2>
+          <p class="dm:mt-1 dm:mb-0 dm:text-sm dm:text-draft-dim">
+            Version {appInfoValue(appInfo?.version, appInfoLoading)}
+          </p>
+        </div>
+      </div>
+      <div class="dm:my-5">
+        <UpdatePanel
+          phase={updatePhase}
+          message={updateProgressMessage}
+          onCheck={onCheckForUpdates}
+        />
+      </div>
+      <div
+        class="dm:mb-5 dm:flex dm:flex-wrap dm:items-center dm:gap-3 dm:border-0 dm:border-t dm:border-solid dm:border-draft-line dm:pt-4"
+      >
+        <UiButton variant="secondary" onclick={onOpenGitHub}>GitHub ↗</UiButton
+        ><UiButton variant="secondary" onclick={onOpenDlsite}>DLsite ↗</UiButton
+        ><span class="dm:text-xs dm:text-draft-dim">MIT License</span>
+      </div>
+      <Disclosure title="Application details"
+        ><dl
+          class="dm:grid dm:grid-cols-[auto_minmax(0,1fr)] dm:gap-3 dm:text-sm"
+        >
+          <dt>Identifier</dt>
+          <dd class="dm:m-0 dm:wrap-anywhere">
+            {appInfoValue(appInfo?.identifier, appInfoLoading)}
+          </dd>
+          <dt>Tauri</dt>
+          <dd class="dm:m-0">
+            {appInfoValue(appInfo?.tauriVersion, appInfoLoading)}
+          </dd>
+        </dl></Disclosure
+      >
+    </section>{/if}
 </div>
-
-<style>
-  .settings-layout {
-    display: grid;
-    flex: 1 1 auto;
-    align-content: start;
-    gap: 14px;
-    width: 100%;
-    min-width: 0;
-    min-height: 0;
-    overflow: auto;
-    scrollbar-gutter: stable;
-  }
-
-  .settings-panel {
-    display: grid;
-    gap: 14px;
-    width: 100%;
-    min-width: 0;
-    padding: 18px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--panel);
-    box-shadow: 0 16px 40px rgb(0 0 0 / 18%);
-  }
-
-  .about-panel { gap: 10px; }
-
-  .panel-title,
-  .panel-actions,
-  .actions {
-    display: flex;
-    align-items: center;
-  }
-
-  .panel-title,
-  .actions { justify-content: space-between; gap: 10px; }
-  .panel-title { margin-bottom: 0; }
-  .panel-title > div { min-width: 0; }
-  .panel-actions { gap: 8px; }
-
-  h2 { margin: 0; color: var(--text-strong); font-size: 17px; font-weight: 700; }
-  p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.35; }
-
-  .path-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
-  .download-path-control { grid-template-columns: minmax(0, 1fr) auto auto; }
-
-  .about-grid {
-    display: grid;
-    grid-template-columns: max-content minmax(0, 1fr);
-    column-gap: 18px;
-    row-gap: 8px;
-    margin: 0;
-    font-size: 13px;
-  }
-
-  .about-grid dt { color: var(--muted); font-weight: 650; }
-  .about-grid dd {
-    min-width: 0;
-    margin: 0;
-    color: var(--text);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  @media (max-width: 720px) {
-    .panel-title, .panel-actions, .actions { align-items: stretch; flex-direction: column; }
-    .path-control, .download-path-control { grid-template-columns: 1fr; }
-  }
-</style>

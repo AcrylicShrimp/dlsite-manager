@@ -34,6 +34,7 @@ const SERIAL_INFORMATION_FILE_NAME: &str = "dlsite-manager-serial.txt";
 const SERIAL_INFORMATION_NUMBERED_PREFIX: &str = "dlsite-manager-serial-";
 const SERIAL_INFORMATION_MARKER: &str = "# dlsite-manager serial information";
 mod auth;
+pub mod cover;
 mod finalization;
 use auth::acquire_login_lock;
 pub use auth::{

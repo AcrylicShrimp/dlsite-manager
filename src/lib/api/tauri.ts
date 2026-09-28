@@ -40,7 +40,10 @@ export type ProductListRequest = {
   offset: number;
 };
 
-export type BulkWorkDownloadRequest = Omit<ProductListRequest, "limit" | "offset"> & {
+export type BulkWorkDownloadRequest = Omit<
+  ProductListRequest,
+  "limit" | "offset"
+> & {
   unpackPolicy: "keepArchives" | "unpackWhenRecognized";
   skipDownloaded: boolean;
 };
@@ -79,11 +82,15 @@ export function saveAccount(request: SaveAccountRequest) {
 }
 
 export function setAccountEnabled(accountId: string, enabled: boolean) {
-  return invoke<void>("set_account_enabled", { request: { accountId, enabled } });
+  return invoke<void>("set_account_enabled", {
+    request: { accountId, enabled },
+  });
 }
 
 export function removeAccount(accountId: string) {
-  return invoke<AccountRemovalReport>("remove_account", { request: { accountId } });
+  return invoke<AccountRemovalReport>("remove_account", {
+    request: { accountId },
+  });
 }
 
 export function listProducts(request: ProductListRequest) {
@@ -115,7 +122,9 @@ export function startWorkDownload(request: StartWorkDownloadRequest) {
 }
 
 export function previewBulkWorkDownload(request: BulkWorkDownloadRequest) {
-  return invoke<BulkWorkDownloadPreview>("preview_bulk_work_download", { request });
+  return invoke<BulkWorkDownloadPreview>("preview_bulk_work_download", {
+    request,
+  });
 }
 
 export function startBulkWorkDownload(request: BulkWorkDownloadRequest) {
@@ -127,11 +136,15 @@ export function openWorkDownload(workId: string) {
 }
 
 export function deleteWorkDownload(workId: string) {
-  return invoke<ProductDownload>("delete_work_download", { request: { workId } });
+  return invoke<ProductDownload>("delete_work_download", {
+    request: { workId },
+  });
 }
 
 export function markWorkDownloaded(workId: string, localPath: string) {
-  return invoke<ProductDownload>("mark_work_downloaded", { request: { workId, localPath } });
+  return invoke<ProductDownload>("mark_work_downloaded", {
+    request: { workId, localPath },
+  });
 }
 
 export function listJobs() {
@@ -159,9 +172,14 @@ export function openAuditLogDir() {
 }
 
 export function submitTwoFactorCode(requestId: string, code: string) {
-  return invoke<void>("submit_two_factor_code", { request: { requestId, code } });
+  return invoke<void>("submit_two_factor_code", {
+    request: { requestId, code },
+  });
 }
 
 export function cancelTwoFactor(requestId: string) {
   return invoke<void>("cancel_two_factor", { request: { requestId } });
 }
+
+export const saveProductCover = (workId: string) =>
+  invoke<boolean>("save_product_cover", { workId });

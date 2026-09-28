@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import Icon from "./DraftIcon.svelte";
+  import Icon from "$lib/components/workspace/Icon.svelte";
   let {
     children,
     leading,

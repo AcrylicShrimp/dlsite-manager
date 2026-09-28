@@ -1,14 +1,21 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import Icon from "./DraftIcon.svelte";
+  import Icon from "$lib/components/workspace/Icon.svelte";
   let {
     title,
     children,
     nested = false,
-  }: { title: string; children: Snippet; nested?: boolean } = $props();
+    open = false,
+  }: {
+    title: string;
+    children: Snippet;
+    nested?: boolean;
+    open?: boolean;
+  } = $props();
 </script>
 
 <details
+  {open}
   class={`dm:[&[open]>summary>span:first-child]:rotate-90 ${nested ? "dm:mt-3" : "metadata-section dm:border-0 dm:border-b dm:border-solid dm:border-draft-line"}`}
 >
   <summary

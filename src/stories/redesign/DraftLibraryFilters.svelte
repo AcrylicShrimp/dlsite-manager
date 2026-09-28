@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Button from "./DraftButton.svelte";
+  import Button from "$lib/components/workspace/Button.svelte";
   import LibraryFilters from "$lib/features/library/LibraryFilters.svelte";
   import type { Account, ProductFilterFacets } from "$lib/model/types";
   import {

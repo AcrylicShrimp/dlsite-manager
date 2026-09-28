@@ -13,12 +13,12 @@
   } from "$lib/utils/format";
   import { isActiveJob, jobLabel } from "$lib/utils/jobs";
   import { parseTags } from "./library-preview";
-  import Icon from "./DraftIcon.svelte";
-  import Button from "./DraftButton.svelte";
-  import Disclosure from "./DraftDisclosure.svelte";
+  import Icon from "$lib/components/workspace/Icon.svelte";
+  import Button from "$lib/components/workspace/Button.svelte";
+  import Disclosure from "$lib/components/workspace/Disclosure.svelte";
   import ImagePreview from "./DraftImagePreview.svelte";
-  import TagChip from "./DraftTagChip.svelte";
-  import WorkBadges from "./DraftWorkBadges.svelte";
+  import TagChip from "$lib/components/workspace/TagChip.svelte";
+  import WorkBadges from "$lib/components/workspace/WorkBadges.svelte";
   let {
     detail,
     activeJob = null,

@@ -1,6 +1,11 @@
 <script lang="ts">
   import UiButton from "$lib/components/ui/Button.svelte";
-  import type { Account, Product, ProductCreditField, ProductFilterFacets } from "$lib/model/types";
+  import type {
+    Account,
+    Product,
+    ProductFilterFacets,
+    JobSnapshot,
+  } from "$lib/model/types";
   import LibraryControls from "./LibraryControls.svelte";
   import LibraryFilters from "./LibraryFilters.svelte";
   import ProductCard from "./ProductCard.svelte";
@@ -28,10 +33,7 @@
     bulkDisabled = false,
     bulkLabel = "Download Results",
     detailLoadingWorkId = null,
-    openMenuWorkId = null,
-    getDownloadLabel,
-    getDownloadTitle,
-    getDownloadDisabled,
+    getActiveJob = () => null,
     onSearch,
     onReset,
     onToggleFilters,
@@ -53,16 +55,7 @@
     onCycleCustomTag,
     onPreviousPage,
     onNextPage,
-    onPreview,
     onOpenDetails,
-    onCopyWorkId,
-    onCopyCredit,
-    onShowTooltip,
-    onMoveTooltip,
-    onHideTooltip,
-    onOpenDlsite,
-    onDownload,
-    onToggleMenu,
   }: {
     products?: Product[];
     loading?: boolean;
@@ -86,10 +79,7 @@
     bulkDisabled?: boolean;
     bulkLabel?: string;
     detailLoadingWorkId?: string | null;
-    openMenuWorkId?: string | null;
-    getDownloadLabel: (product: Product) => string;
-    getDownloadTitle: (product: Product) => string;
-    getDownloadDisabled: (product: Product) => boolean;
+    getActiveJob?: (product: Product) => JobSnapshot | null;
     onSearch: () => void;
     onReset: () => void;
     onToggleFilters: () => void;
@@ -111,17 +101,18 @@
     onCycleCustomTag: (name: string) => void;
     onPreviousPage: () => void;
     onNextPage: () => void;
-    onPreview: (product: Product) => void;
     onOpenDetails: (product: Product) => void;
-    onCopyWorkId: (workId: string) => void;
-    onCopyCredit: (field: ProductCreditField, workId: string) => void;
-    onShowTooltip: (text: string, event: MouseEvent) => void;
-    onMoveTooltip: (text: string, event: MouseEvent) => void;
-    onHideTooltip: () => void;
-    onOpenDlsite: (workId: string) => void;
-    onDownload: (product: Product) => void;
-    onToggleMenu: (product: Product, event: MouseEvent) => void;
   } = $props();
+  let results: HTMLDivElement;
+  function showResults() {
+    results.focus({ preventScroll: true });
+    results.scrollIntoView({
+      block: "start",
+      behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "instant"
+        : "smooth",
+    });
+  }
 </script>
 
 <section class="product-area" aria-label="Library">
@@ -167,16 +158,37 @@
       {onClearCustomTags}
       {onCycleCustomTag}
     />
+    <div class="dm:flex dm:justify-end">
+      <UiButton variant="secondary" responsiveWidth="auto" onclick={showResults}
+        >Show results ↓</UiButton
+      >
+    </div>
   {/if}
 
-  <div class="list-header">
+  <div bind:this={results} class="list-header" tabindex="-1">
     <span>{rangeLabel}</span>
-    <div class="pagination-controls" role="navigation" aria-label="Library pages">
-      <UiButton size="small" variant="secondary" responsiveWidth="auto" disabled={previousDisabled} onclick={onPreviousPage}>
+    <div
+      class="pagination-controls"
+      role="navigation"
+      aria-label="Library pages"
+    >
+      <UiButton
+        size="small"
+        variant="secondary"
+        responsiveWidth="auto"
+        disabled={previousDisabled}
+        onclick={onPreviousPage}
+      >
         Previous
       </UiButton>
       <span>{pageLabel}</span>
-      <UiButton size="small" variant="secondary" responsiveWidth="auto" disabled={nextDisabled} onclick={onNextPage}>
+      <UiButton
+        size="small"
+        variant="secondary"
+        responsiveWidth="auto"
+        disabled={nextDisabled}
+        onclick={onNextPage}
+      >
         Next
       </UiButton>
     </div>
@@ -191,21 +203,9 @@
       {#each products as product (product.workId)}
         <ProductCard
           {product}
+          activeJob={getActiveJob(product)}
           detailLoading={detailLoadingWorkId === product.workId}
-          downloadLabel={getDownloadLabel(product)}
-          downloadTitle={getDownloadTitle(product)}
-          downloadDisabled={getDownloadDisabled(product)}
-          menuOpen={openMenuWorkId === product.workId}
-          {onPreview}
           {onOpenDetails}
-          {onCopyWorkId}
-          {onCopyCredit}
-          {onShowTooltip}
-          {onMoveTooltip}
-          {onHideTooltip}
-          {onOpenDlsite}
-          {onDownload}
-          {onToggleMenu}
         />
       {/each}
     </div>
@@ -215,66 +215,34 @@
 <style>
   .product-area {
     display: flex;
-    flex: 0 0 auto;
     flex-direction: column;
+    gap: 20px;
     min-width: 0;
-    min-height: 0;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--panel);
-    box-shadow: 0 16px 40px rgb(0 0 0 / 18%);
-    overflow: visible;
   }
-
   .list-header {
     display: flex;
-    flex: 0 0 auto;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 9px 14px;
-    border-bottom: 1px solid var(--border);
     color: var(--muted);
-    font-size: 13px;
+    font-size: 12px;
+    outline: none;
   }
-
   .pagination-controls {
-    display: inline-flex;
+    display: flex;
     align-items: center;
     gap: 8px;
-    min-width: 0;
   }
-
-  .pagination-controls > span {
-    color: var(--text-subtle);
-    font-size: 12px;
-    font-weight: 650;
-    white-space: nowrap;
-  }
-
   .product-table {
-    display: block;
-    flex: 0 0 auto;
-    min-height: 0;
-    overflow: visible;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
+    gap: 24px 18px;
     overflow-anchor: none;
-    overscroll-behavior: contain;
   }
-
   .empty-state {
-    padding: 36px 14px;
-    color: var(--muted);
+    padding: 48px 16px;
     text-align: center;
-  }
-
-  @media (max-width: 720px) {
-    .list-header {
-      align-items: flex-start;
-      flex-direction: column;
-    }
-
-    .pagination-controls {
-      flex-wrap: wrap;
-    }
+    color: var(--muted);
   }
 </style>

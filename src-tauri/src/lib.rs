@@ -474,6 +474,46 @@ async fn get_product_detail(
 }
 
 #[tauri::command]
+async fn save_product_cover(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    work_id: String,
+) -> Result<bool, String> {
+    let operation = state.audit.operation("save_product_cover");
+    operation
+        .command(async {
+            let work_id = normalize_required_id(work_id)?;
+            let detail = state
+                .library
+                .product_detail(&work_id)
+                .await
+                .map_err(command_error)?;
+            let url = detail.thumbnail_url.ok_or("This work has no cover image")?;
+            let cover = dm_library::cover::fetch_cover(&url)
+                .await
+                .map_err(command_error)?;
+            let (send, recv) = tokio::sync::oneshot::channel();
+            app.dialog()
+                .file()
+                .set_title("Save cover image")
+                .set_file_name(format!("{}.{}", work_id, cover.extension))
+                .add_filter("Cover image", &[cover.extension])
+                .save_file(move |path| {
+                    let _ = send.send(path);
+                });
+            let Some(path) = recv.await.map_err(|_| "Save dialog unavailable")? else {
+                return Ok(false);
+            };
+            let path = path
+                .into_path()
+                .map_err(|_| "Only local file destinations are supported")?;
+            cover.save(&path).await.map_err(command_error)?;
+            Ok(true)
+        })
+        .await
+}
+
+#[tauri::command]
 async fn set_product_custom_tags(
     state: State<'_, AppState>,
     request: SetProductCustomTagsRequest,
@@ -3834,6 +3874,7 @@ pub fn run() {
             list_products,
             list_product_filter_facets,
             get_product_detail,
+            save_product_cover,
             set_product_custom_tags,
             start_account_sync,
             start_work_download,

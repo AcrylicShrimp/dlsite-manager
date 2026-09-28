@@ -60,7 +60,7 @@
   input:focus {
     border-color: var(--accent-strong);
     outline: none;
-    box-shadow: var(--focus-ring);
+    box-shadow: none;
   }
 
   input::placeholder {
@@ -70,5 +70,11 @@
   input:disabled {
     color: var(--text-subtle);
     background: var(--field-disabled);
+  }
+  @media (forced-colors: active) {
+    input:focus {
+      outline: 1px solid Highlight;
+      outline-offset: -2px;
+    }
   }
 </style>

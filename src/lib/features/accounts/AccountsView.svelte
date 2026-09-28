@@ -1,11 +1,17 @@
 <script lang="ts">
-  import UiButton from "$lib/components/ui/Button.svelte";
+  import PageHeader from "$lib/components/workspace/PageHeader.svelte";
+  import Button from "$lib/components/workspace/Button.svelte";
+  import Modal from "$lib/components/workspace/Modal.svelte";
   import type { Account, JobSnapshot } from "$lib/model/types";
-  import { credentialedAccountCount, enabledAccountCount } from "$lib/utils/accounts";
+  import {
+    credentialedAccountCount,
+    enabledAccountCount,
+  } from "$lib/utils/accounts";
   import AccountEditor from "./AccountEditor.svelte";
   import AccountSourceRow from "./AccountSourceRow.svelte";
 
-  type AccountStatusTone = "synced" | "syncing" | "failed" | "warning" | "disabled" | "idle";
+  type AccountStatusTone =
+    "synced" | "syncing" | "failed" | "warning" | "disabled" | "idle";
 
   let {
     accounts = [],
@@ -52,200 +58,105 @@
     onCancelSync: (account: Account) => void;
     onRemove: (account: Account) => void;
     onReset: () => void;
-    onSave: (event: SubmitEvent) => void;
+    onSave: (event: SubmitEvent) => void | boolean | Promise<void | boolean>;
   } = $props();
+
+  let editorOpen = $state(false);
+  function edit(account: Account) {
+    onEdit(account);
+    editorOpen = true;
+  }
+  function add() {
+    onReset();
+    editorOpen = true;
+  }
+  async function save(event: SubmitEvent) {
+    const result = await onSave(event);
+    if (result !== false) editorOpen = false;
+  }
+  const selectedAccount = $derived(
+    accounts.find((a) => a.id === editingAccountId) ?? null,
+  );
 </script>
 
-<div class="accounts-layout">
-  <section class="accounts-panel" aria-label="Accounts">
-    <div class="panel-title">
-      <div>
-        <h2>Account sources</h2>
-        <p>{enabledAccountCount(accounts)} enabled of {accounts.length}</p>
-      </div>
-      <div class="panel-actions">
-        <UiButton
-          variant="secondary"
-          size="small"
-          disabled={loading || saving}
-          onclick={onReload}
+<section class="accounts-panel" aria-label="Accounts">
+  <PageHeader title="Accounts"
+    ><Button variant="text" disabled={loading || saving} onclick={onReload}
+      >Reload</Button
+    ><Button
+      disabled={loading || jobsLoading || syncAllDisabled}
+      onclick={onSyncAll}>Sync all</Button
+    ><Button variant="primary" disabled={saving} onclick={add}
+      >Add account</Button
+    ></PageHeader
+  >
+  <p class="dm:mb-4 dm:text-sm dm:text-draft-dim">
+    {enabledAccountCount(accounts)} enabled · {accounts.length} accounts · {syncingCount}
+    syncing
+  </p>
+  {#if loading}<p
+      role="status"
+      class="dm:py-10 dm:text-center dm:text-draft-dim"
+    >
+      Loading…
+    </p>{:else if !accounts.length}<p
+      class="dm:py-10 dm:text-center dm:text-draft-dim"
+    >
+      No accounts
+    </p>{:else}
+    {#each accounts as account (account.id)}<AccountSourceRow
+        {account}
+        selected={editingAccountId === account.id && editorOpen}
+        statusLabel={getStatusLabel(account)}
+        statusTone={getStatusTone(account)}
+        activeSyncJob={getActiveSyncJob(account.id)}
+        {onToggleEnabled}
+        onSelect={edit}
+        {onSync}
+        {onCancelSync}
+        {onRemove}
+      />{/each}
+  {/if}
+</section>
+{#if editorOpen}
+  <Modal
+    title={editingAccountId ? "Edit account" : "Add account"}
+    dismissible={!saving}
+    onClose={() => (editorOpen = false)}
+  >
+    <AccountEditor
+      editing={Boolean(editingAccountId)}
+      {saving}
+      bind:label
+      bind:loginName
+      bind:password
+      {onReset}
+      onSave={save}
+    />
+    {#if selectedAccount}<div
+        class="dm:mt-5 dm:flex dm:items-center dm:justify-between dm:gap-3 dm:border-0 dm:border-t dm:border-solid dm:border-draft-line dm:pt-4"
+      >
+        <label class="dm:flex dm:items-center dm:gap-2 dm:text-sm"
+          ><input
+            type="checkbox"
+            checked={selectedAccount.enabled}
+            disabled={saving || Boolean(getActiveSyncJob(selectedAccount.id))}
+            onchange={(e) =>
+              selectedAccount &&
+              onToggleEnabled(selectedAccount, e.currentTarget.checked)}
+          />Enable sync</label
         >
-          Reload
-        </UiButton>
-        <UiButton
-          size="small"
-          disabled={loading || jobsLoading || syncAllDisabled}
-          onclick={onSyncAll}
+        <Button
+          tone="error"
+          variant="text"
+          disabled={saving || Boolean(getActiveSyncJob(selectedAccount.id))}
+          onclick={() => {
+            if (selectedAccount) {
+              onRemove(selectedAccount);
+              editorOpen = false;
+            }
+          }}>Remove account</Button
         >
-          Sync All
-        </UiButton>
-      </div>
-    </div>
-
-    <div class="account-summary-strip" aria-label="Account summary">
-      <div class="account-stat">
-        <span>{accounts.length}</span>
-        <small>Total</small>
-      </div>
-      <div class="account-stat">
-        <span>{enabledAccountCount(accounts)}</span>
-        <small>Enabled</small>
-      </div>
-      <div class="account-stat">
-        <span>{credentialedAccountCount(accounts)}</span>
-        <small>Credentials</small>
-      </div>
-      <div class="account-stat">
-        <span>{syncingCount}</span>
-        <small>Syncing</small>
-      </div>
-    </div>
-
-    <div class="account-list">
-      {#if loading}
-        <div class="empty-state">Loading</div>
-      {:else if accounts.length === 0}
-        <div class="empty-state">No accounts</div>
-      {:else}
-        {#each accounts as account (account.id)}
-          <AccountSourceRow
-            {account}
-            selected={editingAccountId === account.id}
-            statusLabel={getStatusLabel(account)}
-            statusTone={getStatusTone(account)}
-            activeSyncJob={getActiveSyncJob(account.id)}
-            {onToggleEnabled}
-            onSelect={onEdit}
-            {onSync}
-            {onCancelSync}
-            {onRemove}
-          />
-        {/each}
-      {/if}
-    </div>
-  </section>
-
-  <AccountEditor
-    editing={Boolean(editingAccountId)}
-    {saving}
-    bind:label
-    bind:loginName
-    bind:password
-    {onReset}
-    {onSave}
-  />
-</div>
-
-<style>
-  .accounts-layout {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
-    gap: 18px;
-    align-items: start;
-    min-height: 0;
-    overflow: auto;
-  }
-
-  .accounts-panel {
-    min-width: 0;
-    padding: 18px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--panel);
-    box-shadow: 0 16px 40px rgb(0 0 0 / 18%);
-  }
-
-  .panel-title,
-  .panel-actions {
-    display: flex;
-    align-items: center;
-  }
-
-  .panel-title {
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 10px;
-    margin-bottom: 14px;
-  }
-
-  .panel-title > div {
-    min-width: 0;
-  }
-
-  .panel-actions {
-    gap: 8px;
-  }
-
-  h2 {
-    margin: 0;
-    color: var(--text-strong);
-    font-size: 17px;
-    font-weight: 700;
-  }
-
-  .panel-title p {
-    margin: 4px 0 0;
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 1.35;
-  }
-
-  .account-summary-strip {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 1px;
-    margin-bottom: 14px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--border);
-    overflow: hidden;
-  }
-
-  .account-stat {
-    display: grid;
-    gap: 2px;
-    padding: 10px 12px;
-    background: var(--panel-soft);
-  }
-
-  .account-stat span {
-    color: var(--text-strong);
-    font-size: 18px;
-    font-weight: 700;
-    line-height: 1;
-  }
-
-  .account-stat small {
-    color: var(--muted);
-    font-size: 12px;
-  }
-
-  .account-list {
-    display: grid;
-    gap: 8px;
-  }
-
-  .empty-state {
-    padding: 16px 8px;
-    color: var(--muted);
-    text-align: center;
-  }
-
-  @media (max-width: 980px) {
-    .accounts-layout {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  @media (max-width: 720px) {
-    .panel-title,
-    .panel-actions {
-      align-items: stretch;
-      flex-direction: column;
-    }
-
-    .account-summary-strip {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-  }
-</style>
+      </div>{/if}
+  </Modal>
+{/if}

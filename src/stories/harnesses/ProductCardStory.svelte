@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { runningDownloadJob } from "../fixtures/jobs";
   import ProductCard from "$lib/features/library/ProductCard.svelte";
   import type { Product, ProductCreditField } from "$lib/model/types";
 
@@ -33,21 +34,11 @@
   <section class="card-frame">
     <ProductCard
       {product}
-      {downloadLabel}
-      {downloadTitle}
-      {downloadDisabled}
+      activeJob={downloadDisabled
+        ? { ...runningDownloadJob, metadata: { workId: product.workId } }
+        : null}
       {detailLoading}
-      {menuOpen}
-      onPreview={() => action(`Preview ${product.workId}`)}
       onOpenDetails={() => action(`Open details for ${product.workId}`)}
-      onCopyWorkId={() => action(`Copy ${product.workId}`)}
-      onCopyCredit={copyCredit}
-      onShowTooltip={(text) => action(text)}
-      onMoveTooltip={() => {}}
-      onHideTooltip={() => {}}
-      onOpenDlsite={() => action(`Open ${product.workId} on DLsite`)}
-      onDownload={() => action(`${downloadLabel} ${product.workId}`)}
-      onToggleMenu={() => action(`Toggle actions for ${product.workId}`)}
     />
   </section>
   <p aria-live="polite">{lastAction}</p>

@@ -1,8 +1,21 @@
 <script lang="ts">
-  import UiButton from "$lib/components/ui/Button.svelte";
+  import JobDetails from "./JobDetails.svelte";
+  import PageHeader from "$lib/components/workspace/PageHeader.svelte";
+  import Button from "$lib/components/workspace/Button.svelte";
+  import Choices from "$lib/components/workspace/ChoiceGroup.svelte";
+  import Search from "$lib/components/workspace/SearchField.svelte";
+  import Row from "$lib/components/workspace/ListRow.svelte";
+  import Modal from "$lib/components/workspace/Modal.svelte";
+  import Icon from "$lib/components/workspace/Icon.svelte";
+  import {
+    isActiveJob,
+    isDownloadQueueJob,
+    jobLabel,
+    auditDetail,
+    auditOutcomeLabel,
+  } from "$lib/utils/jobs";
+  import { shortDate } from "$lib/utils/format";
   import type { AuditEvent, JobSnapshot } from "$lib/model/types";
-  import AuditLogList from "./AuditLogList.svelte";
-  import JobList from "./JobList.svelte";
   import DiagnosticsPanel from "./DiagnosticsPanel.svelte";
 
   let {
@@ -32,120 +45,207 @@
     onOpenAuditFolder: () => void;
     onReloadAudit: () => void;
   } = $props();
+
+  let tab = $state("history");
+  let filter = $state("all");
+  let search = $state("");
+  let selectedJobId = $state<string | null>(null);
+  let selectedEvent = $state<AuditEvent | null>(null);
+  let exporting = $state(false);
+  let diagnosticOperation = $state("");
+  const selectedJob = $derived(
+    jobs.find((j) => j.id === selectedJobId) ?? null,
+  );
+  const history = $derived(
+    jobs.filter((j) => !isActiveJob(j) || !isDownloadQueueJob(j)),
+  );
+  const visibleJobs = $derived(
+    history.filter((j) => filter !== "errors" || j.status === "failed"),
+  );
+  const visibleEvents = $derived(
+    auditEvents.filter(
+      (e) =>
+        (filter !== "errors" || e.level === "error") &&
+        `${e.message} ${e.operation} ${e.errorMessage ?? ""}`
+          .toLowerCase()
+          .includes(search.toLowerCase()),
+    ),
+  );
+  function closeDetail() {
+    selectedJobId = null;
+    selectedEvent = null;
+  }
+  function exportFor(operationId = "") {
+    diagnosticOperation = operationId;
+    exporting = true;
+    closeDetail();
+  }
 </script>
 
-<div class="activity-layout">
-  <DiagnosticsPanel events={auditEvents} />
-  <section class="activity-panel" aria-label="Jobs">
-    <div class="panel-title">
-      <h2>Jobs</h2>
-      <div class="panel-actions">
-        <UiButton variant="secondary" size="small" disabled={jobLoading} onclick={onReloadJobs}>
-          Reload
-        </UiButton>
-        <UiButton size="small" disabled={jobLoading} onclick={onClearJobs}>Clear</UiButton>
-      </div>
-    </div>
-    <JobList
-      {jobs}
-      loading={jobLoading}
-      getTitle={getJobTitle}
-      getDetail={getJobDetail}
-      onCancel={onCancelJob}
+<div class="activity-layout dm:min-w-0">
+  <PageHeader title="Activity">
+    <Button
+      variant="text"
+      disabled={tab === "history" ? jobLoading : auditLoading}
+      onclick={tab === "history" ? onReloadJobs : onReloadAudit}>Reload</Button
+    >
+    {#if tab === "history"}<Button
+        variant="text"
+        disabled={jobLoading || !jobs.some((j) => !isActiveJob(j))}
+        onclick={onClearJobs}>Clear finished</Button
+      >{/if}
+    <Button onclick={() => exportFor()}
+      ><Icon name="downloads" />Export diagnostics</Button
+    >
+  </PageHeader>
+  <Choices
+    variant="tabs"
+    label="Activity view"
+    value={tab}
+    onchange={(v) => {
+      tab = v;
+      filter = "all";
+    }}
+    options={[
+      { value: "history", label: "Work history", count: history.length },
+      { value: "logs", label: "Application logs", count: auditEvents.length },
+    ]}
+  />
+  <div class="dm:mb-3 dm:flex dm:flex-wrap dm:items-center dm:gap-3">
+    <Choices
+      label="Activity filter"
+      value={filter}
+      onchange={(v) => (filter = v)}
+      options={[
+        { value: "all", label: "All" },
+        { value: "errors", label: "Errors" },
+      ]}
     />
-  </section>
-
-  <section class="activity-panel" aria-label="Audit log">
-    <div class="panel-title">
-      <div>
-        <h2>Audit log</h2>
-        <p>{auditLogDir || "App log directory"}</p>
-      </div>
-      <div class="panel-actions">
-        <UiButton
-          variant="secondary"
-          size="small"
-          disabled={!auditLogDir}
-          onclick={onOpenAuditFolder}
-        >
-          Open Folder
-        </UiButton>
-        <UiButton variant="secondary" size="small" disabled={auditLoading} onclick={onReloadAudit}>
-          Reload
-        </UiButton>
-      </div>
+    {#if tab === "logs"}<Search
+        bind:value={search}
+        label="Search logs"
+        placeholder="Search logs…"
+        compact
+      /><Button
+        variant="text"
+        disabled={!auditLogDir}
+        onclick={onOpenAuditFolder}>Open log folder</Button
+      >{/if}
+  </div>
+  {#if tab === "history"}
+    {#if jobLoading}<p
+        role="status"
+        class="dm:py-10 dm:text-center dm:text-draft-dim"
+      >
+        Loading…
+      </p>{:else if !visibleJobs.length}<p
+        class="dm:py-10 dm:text-center dm:text-draft-dim"
+      >
+        No matching work
+      </p>{/if}
+    <div aria-label="Work history">
+      {#each visibleJobs as job (job.id)}
+        <Row onclick={() => (selectedJobId = job.id)}>
+          {#snippet leading()}<span
+              class={`dm:grid dm:size-8 dm:shrink-0 dm:place-items-center dm:rounded-full ${job.status === "failed" ? "dm:bg-draft-error-bg dm:text-draft-error" : "dm:bg-draft-selected dm:text-draft-accent"}`}
+              ><Icon
+                name={job.status === "failed"
+                  ? "info"
+                  : job.status === "succeeded"
+                    ? "check"
+                    : "refresh"}
+              /></span
+            >{/snippet}
+          <strong>{getJobTitle(job)}</strong><span
+            class="dm:text-sm dm:text-draft-dim">{getJobDetail(job)}</span
+          >
+          {#snippet trailing()}<span
+              class={job.status === "failed" ? "dm:text-draft-error" : ""}
+              >{jobLabel(job)}</span
+            ><time class="dm:text-xs"
+              >{shortDate(
+                job.finishedAt ?? job.startedAt ?? job.createdAt,
+              )}</time
+            >{/snippet}
+        </Row>
+      {/each}
     </div>
-    <AuditLogList events={auditEvents} loading={auditLoading} />
-  </section>
+  {:else}
+    {#if auditLoading}<p
+        role="status"
+        class="dm:py-10 dm:text-center dm:text-draft-dim"
+      >
+        Loading…
+      </p>{:else if !visibleEvents.length}<p
+        class="dm:py-10 dm:text-center dm:text-draft-dim"
+      >
+        No matching events
+      </p>{/if}
+    <div aria-label="Application logs">
+      {#each visibleEvents as event, i (`${event.at}-${i}`)}
+        <Row onclick={() => (selectedEvent = event)}>
+          {#snippet leading()}<span
+              class={`dm:w-12 dm:shrink-0 dm:text-xs dm:uppercase ${event.level === "error" ? "dm:text-draft-error" : "dm:text-draft-dim"}`}
+              >{event.level}</span
+            >{/snippet}
+          <strong>{auditDetail(event)}</strong><span
+            class="dm:text-sm dm:text-draft-dim"
+            >{event.operation} · {auditOutcomeLabel(event.outcome)}</span
+          >
+          {#snippet trailing()}<time class="dm:text-xs"
+              >{shortDate(event.at)}</time
+            >{/snippet}
+        </Row>
+      {/each}
+    </div>
+  {/if}
 </div>
-
-<style>
-  .activity-layout {
-    display: grid;
-    flex: 1 1 auto;
-    grid-template-rows: auto minmax(220px, 0.42fr) minmax(220px, 1fr);
-    gap: 18px;
-    min-width: 0;
-    min-height: 0;
-    overflow: auto;
-    scrollbar-gutter: stable;
-  }
-
-  .activity-panel {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    padding: 18px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--panel);
-    box-shadow: 0 16px 40px rgb(0 0 0 / 18%);
-    overflow: hidden;
-  }
-
-  .panel-title,
-  .panel-actions {
-    display: flex;
-    align-items: center;
-  }
-
-  .panel-title {
-    flex: 0 0 auto;
-    justify-content: space-between;
-    gap: 10px;
-    margin-bottom: 14px;
-  }
-
-  .panel-title > div {
-    min-width: 0;
-  }
-
-  .panel-actions {
-    gap: 8px;
-  }
-
-  h2 {
-    margin: 0;
-    color: var(--text-strong);
-    font-size: 17px;
-    font-weight: 700;
-  }
-
-  p {
-    margin: 4px 0 0;
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 1.35;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  @media (max-width: 720px) {
-    .panel-title,
-    .panel-actions {
-      align-items: stretch;
-      flex-direction: column;
-    }
-  }
-</style>
+{#if selectedJob || selectedEvent}
+  <Modal title="Activity details" onClose={closeDetail}>
+    {#if selectedJob}<JobDetails
+        job={selectedJob}
+        title={getJobTitle(selectedJob)}
+        detail={getJobDetail(selectedJob)}
+      />
+    {:else if selectedEvent}<h3 class="dm:mt-0 dm:wrap-anywhere">
+        {selectedEvent.operation}
+      </h3>
+      <p>{auditOutcomeLabel(selectedEvent.outcome)}</p>
+      <p class="dm:wrap-anywhere">{auditDetail(selectedEvent)}</p>
+      <details>
+        <summary class="dm:draft-focus-row dm:p-3">Operation details</summary>
+        <pre
+          class="dm:whitespace-pre-wrap dm:wrap-anywhere dm:text-xs">{JSON.stringify(
+            selectedEvent.details,
+            null,
+            2,
+          )}</pre>
+      </details>{/if}
+    {#snippet actions()}
+      {#if selectedJob && isActiveJob(selectedJob)}<Button
+          disabled={!selectedJob.cancellable ||
+            selectedJob.status === "cancelling"}
+          onclick={() => selectedJob && onCancelJob(selectedJob)}
+          >Cancel work</Button
+        >{/if}
+      <Button
+        onclick={() =>
+          exportFor(
+            selectedEvent?.operationId ??
+              auditEvents.find((e) => e.details?.jobId === selectedJob?.id)
+                ?.operationId ??
+              "",
+          )}>Export diagnostics</Button
+      >
+    {/snippet}
+  </Modal>
+{/if}
+{#if exporting}<Modal
+    title="Export diagnostics"
+    wide
+    onClose={() => (exporting = false)}
+    ><DiagnosticsPanel
+      events={auditEvents}
+      initialOperationId={diagnosticOperation}
+    /></Modal
+  >{/if}

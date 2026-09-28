@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Account } from "$lib/model/types";
-  import Button from "./DraftButton.svelte";
+  import Button from "$lib/components/workspace/Button.svelte";
   let { account, onEdit }: { account: Account; onEdit: () => void } = $props();
 </script>
 

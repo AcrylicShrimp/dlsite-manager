@@ -6,6 +6,7 @@ license = "MIT"
 publish = false
 
 [dependencies]
+reqwest = { version = "0.13.5", features = ["stream"] }
 tracing = "0.1.44"
 async-trait = "0.1.92"
 chrono = "0.4.45"

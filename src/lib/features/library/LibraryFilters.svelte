@@ -1,5 +1,10 @@
 <script lang="ts">
-  import { AGE_FILTERS, SORT_OPTIONS, SOURCE_FILTERS, TYPE_FILTERS } from "$lib/model/constants";
+  import {
+    AGE_FILTERS,
+    SORT_OPTIONS,
+    SOURCE_FILTERS,
+    TYPE_FILTERS,
+  } from "$lib/model/constants";
   import type { Account, ProductFilterFacets } from "$lib/model/types";
 
   let {
@@ -64,7 +69,11 @@
     <span>Sort</span>
     <div class="toggle-row">
       {#each SORT_OPTIONS as [value, label] (value)}
-        <button class:active={sort === value} type="button" onclick={() => onSetSort?.(value)}>
+        <button
+          class:active={sort === value}
+          type="button"
+          onclick={() => onSetSort?.(value)}
+        >
           <span class="filter-chip-label">{label}</span>
         </button>
       {/each}
@@ -74,7 +83,11 @@
   <div class="filter-group">
     <span>Accounts</span>
     <div class="toggle-row">
-      <button class:active={selectedAccountIds.length === 0} type="button" onclick={onClearAccounts}>
+      <button
+        class:active={selectedAccountIds.length === 0}
+        type="button"
+        onclick={onClearAccounts}
+      >
         <span class="filter-chip-label">All</span>
       </button>
       {#each accounts as account (account.id)}
@@ -93,7 +106,11 @@
   <div class="filter-group">
     <span>Source</span>
     <div class="toggle-row">
-      <button class:active={selectedSources.length === 0} type="button" onclick={onClearSources}>
+      <button
+        class:active={selectedSources.length === 0}
+        type="button"
+        onclick={onClearSources}
+      >
         <span class="filter-chip-label">Any</span>
       </button>
       {#each SOURCE_FILTERS as [value, label] (value)}
@@ -112,7 +129,11 @@
   <div class="filter-group">
     <span>Age</span>
     <div class="toggle-row">
-      <button class:active={selectedAges.length === 0} type="button" onclick={onClearAges}>
+      <button
+        class:active={selectedAges.length === 0}
+        type="button"
+        onclick={onClearAges}
+      >
         <span class="filter-chip-label">Any</span>
       </button>
       {#each AGE_FILTERS as [value, label] (value)}
@@ -131,7 +152,11 @@
   <div class="filter-group">
     <span>Type</span>
     <div class="toggle-row">
-      <button class:active={selectedTypes.length === 0} type="button" onclick={onClearTypes}>
+      <button
+        class:active={selectedTypes.length === 0}
+        type="button"
+        onclick={onClearTypes}
+      >
         <span class="filter-chip-label">Any</span>
       </button>
       {#each TYPE_FILTERS as [value, label] (value)}
@@ -150,7 +175,11 @@
   <div class="filter-group maker-filter">
     <span>Makers</span>
     <div class="toggle-row">
-      <button class:active={selectedMakers.length === 0} type="button" onclick={onClearMakers}>
+      <button
+        class:active={selectedMakers.length === 0}
+        type="button"
+        onclick={onClearMakers}
+      >
         <span class="filter-chip-label">Any</span>
       </button>
       {#each facets.makers as maker (maker.name)}
@@ -171,7 +200,8 @@
     <span>Custom Tags</span>
     <div class="toggle-row">
       <button
-        class:active={selectedCustomTags.length === 0 && excludedCustomTags.length === 0}
+        class:active={selectedCustomTags.length === 0 &&
+          excludedCustomTags.length === 0}
         type="button"
         onclick={onClearCustomTags}
       >
@@ -190,7 +220,9 @@
               : `Click to include ${tag.name}; click again to exclude.`}
           onclick={() => onCycleCustomTag?.(tag.name)}
         >
-          <span class="filter-chip-label">{state === "exclude" ? `Not ${tag.name}` : tag.name}</span>
+          <span class="filter-chip-label"
+            >{state === "exclude" ? `Not ${tag.name}` : tag.name}</span
+          >
           <small>{tag.count}</small>
         </button>
       {/each}
@@ -261,8 +293,8 @@
   }
 
   .toggle-row button:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
+    outline: none;
+    box-shadow: var(--focus-ring);
   }
 
   .toggle-row button.active {
@@ -276,7 +308,11 @@
   .toggle-row button[data-type-filter] {
     --filter-color: #8b949e;
     --filter-soft: rgb(139 148 158 / 12%);
-    border-color: color-mix(in srgb, var(--filter-color) 22%, var(--border-strong));
+    border-color: color-mix(
+      in srgb,
+      var(--filter-color) 22%,
+      var(--border-strong)
+    );
     color: color-mix(in srgb, var(--filter-color) 28%, var(--text-subtle));
     background: color-mix(in srgb, var(--filter-soft) 24%, var(--field));
   }
@@ -284,7 +320,11 @@
   .toggle-row button[data-age-filter]:hover:not(:disabled),
   .toggle-row button[data-source-filter]:hover:not(:disabled),
   .toggle-row button[data-type-filter]:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--filter-color) 72%, var(--border-strong));
+    border-color: color-mix(
+      in srgb,
+      var(--filter-color) 72%,
+      var(--border-strong)
+    );
     color: color-mix(in srgb, var(--filter-color) 82%, var(--text-strong));
   }
 
@@ -297,15 +337,42 @@
   }
 
   .toggle-row button[data-age-filter="all"],
-  .toggle-row button[data-source-filter="owned"] { --filter-color: #9bc89f; --filter-soft: rgb(112 165 120 / 14%); }
-  .toggle-row button[data-age-filter="r15"] { --filter-color: #d2b56c; --filter-soft: rgb(204 166 61 / 14%); }
-  .toggle-row button[data-age-filter="r18"] { --filter-color: #d77b7b; --filter-soft: rgb(185 64 64 / 16%); }
-  .toggle-row button[data-source-filter="localOnly"] { --filter-color: #64b5d9; --filter-soft: rgb(100 181 217 / 14%); }
-  .toggle-row button[data-type-filter="audio"] { --filter-color: #d8a62d; --filter-soft: rgb(216 166 45 / 14%); }
-  .toggle-row button[data-type-filter="video"] { --filter-color: #d64b92; --filter-soft: rgb(214 75 146 / 14%); }
-  .toggle-row button[data-type-filter="game"] { --filter-color: #9863df; --filter-soft: rgb(152 99 223 / 15%); }
-  .toggle-row button[data-type-filter="image"] { --filter-color: #4fb85b; --filter-soft: rgb(79 184 91 / 14%); }
-  .toggle-row button[data-type-filter="other"] { --filter-color: #8b949e; --filter-soft: rgb(139 148 158 / 12%); }
+  .toggle-row button[data-source-filter="owned"] {
+    --filter-color: #9bc89f;
+    --filter-soft: rgb(112 165 120 / 14%);
+  }
+  .toggle-row button[data-age-filter="r15"] {
+    --filter-color: #d2b56c;
+    --filter-soft: rgb(204 166 61 / 14%);
+  }
+  .toggle-row button[data-age-filter="r18"] {
+    --filter-color: #d77b7b;
+    --filter-soft: rgb(185 64 64 / 16%);
+  }
+  .toggle-row button[data-source-filter="localOnly"] {
+    --filter-color: #64b5d9;
+    --filter-soft: rgb(100 181 217 / 14%);
+  }
+  .toggle-row button[data-type-filter="audio"] {
+    --filter-color: #d8a62d;
+    --filter-soft: rgb(216 166 45 / 14%);
+  }
+  .toggle-row button[data-type-filter="video"] {
+    --filter-color: #d64b92;
+    --filter-soft: rgb(214 75 146 / 14%);
+  }
+  .toggle-row button[data-type-filter="game"] {
+    --filter-color: #9863df;
+    --filter-soft: rgb(152 99 223 / 15%);
+  }
+  .toggle-row button[data-type-filter="image"] {
+    --filter-color: #4fb85b;
+    --filter-soft: rgb(79 184 91 / 14%);
+  }
+  .toggle-row button[data-type-filter="other"] {
+    --filter-color: #8b949e;
+    --filter-soft: rgb(139 148 158 / 12%);
+  }
 
   .toggle-row button.excluded {
     border-color: rgb(248 113 113 / 52%);
@@ -340,6 +407,59 @@
 
     .toggle-row button {
       flex: 1 1 130px;
+    }
+  }
+  /* Adapt the preserved production filters to the draft's semantic palette. */
+  .toggle-row button[data-age-filter],
+  .toggle-row button[data-type-filter],
+  .toggle-row button[data-source-filter] {
+    --filter-color: var(--dm-color-kind-other-text);
+    --filter-soft: var(--dm-color-kind-other-bg);
+  }
+  .toggle-row button[data-age-filter="all"] {
+    --filter-color: var(--dm-color-age-all-text);
+    --filter-soft: var(--dm-color-age-all-bg);
+  }
+  .toggle-row button[data-age-filter="r15"] {
+    --filter-color: var(--dm-color-age-r15-text);
+    --filter-soft: var(--dm-color-age-r15-bg);
+  }
+  .toggle-row button[data-age-filter="r18"] {
+    --filter-color: var(--dm-color-age-r18-text);
+    --filter-soft: var(--dm-color-age-r18-bg);
+  }
+  .toggle-row button[data-type-filter="audio"] {
+    --filter-color: var(--dm-color-kind-audio-text);
+    --filter-soft: var(--dm-color-kind-audio-bg);
+  }
+  .toggle-row button[data-type-filter="video"] {
+    --filter-color: var(--dm-color-kind-video-text);
+    --filter-soft: var(--dm-color-kind-video-bg);
+  }
+  .toggle-row button[data-type-filter="game"] {
+    --filter-color: var(--dm-color-kind-game-text);
+    --filter-soft: var(--dm-color-kind-game-bg);
+  }
+  .toggle-row button[data-type-filter="image"] {
+    --filter-color: var(--dm-color-kind-image-text);
+    --filter-soft: var(--dm-color-kind-image-bg);
+  }
+  .toggle-row button[data-type-filter="other"] {
+    --filter-color: var(--dm-color-kind-other-text);
+    --filter-soft: var(--dm-color-kind-other-bg);
+  }
+  .toggle-row button[data-source-filter="owned"] {
+    --filter-color: var(--dm-color-source-owned-text);
+    --filter-soft: var(--dm-color-source-owned-bg);
+  }
+  .toggle-row button[data-source-filter="localOnly"] {
+    --filter-color: var(--dm-color-source-local-text);
+    --filter-soft: var(--dm-color-source-local-bg);
+  }
+  @media (forced-colors: active) {
+    .toggle-row button:focus-visible {
+      outline: 1px solid Highlight;
+      outline-offset: -2px;
     }
   }
 </style>

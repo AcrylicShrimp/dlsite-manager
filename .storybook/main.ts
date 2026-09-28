@@ -1,5 +1,4 @@
 import type { StorybookConfig } from "@storybook/sveltekit";
-import tailwindcss from "@tailwindcss/vite";
 
 const config: StorybookConfig = {
   stories: ["../src/**/*.stories.@(js|ts|svelte)"],
@@ -8,10 +7,6 @@ const config: StorybookConfig = {
     name: "@storybook/sveltekit",
     options: {},
   },
-  viteFinal: async (config) => ({
-    ...config,
-    plugins: [...(config.plugins ?? []), tailwindcss()],
-  }),
   staticDirs: ["../static"],
 };
 

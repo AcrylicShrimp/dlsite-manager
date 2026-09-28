@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import Button from "./DraftButton.svelte";
-  import Icon from "./DraftIcon.svelte";
+  import Button from "$lib/components/workspace/Button.svelte";
+  import Icon from "$lib/components/workspace/Icon.svelte";
 
   let {
     src,

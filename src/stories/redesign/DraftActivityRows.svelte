@@ -1,8 +1,8 @@
 <script lang="ts">
   import type { AuditEvent, JobSnapshot } from "$lib/model/types";
   import { jobDetail } from "../fixtures/redesign";
-  import Row from "./DraftListRow.svelte";
-  import Icon from "./DraftIcon.svelte";
+  import Row from "$lib/components/workspace/ListRow.svelte";
+  import Icon from "$lib/components/workspace/Icon.svelte";
   let {
     jobs = [],
     events = [],

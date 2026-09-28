@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isDownloadQueueJob } from "$lib/utils/jobs";
   import { onMount } from "svelte";
   import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
   import AppShell from "$lib/components/AppShell.svelte";
@@ -33,7 +34,7 @@
     $props();
   const data = $derived(makeFixture(scenario));
   const downloads = $derived(
-    data.jobs.filter((j) => j.kind !== "accountSync" && isActive(j)),
+    data.jobs.filter((j) => isDownloadQueueJob(j) && isActive(j)),
   );
   let ready = $state(false);
   let search = $state("");
@@ -119,7 +120,7 @@
 </script>
 
 {#if ready}
-  <AppShell activeView={view} {onNavigate}>
+  <AppShell jobs={data.jobs} version="3.4.0" activeView={view} {onNavigate}>
     {#if view === "library"}
       <LibraryView
         {products}
@@ -137,10 +138,8 @@
         excludedCustomTags={filters.excludedTags}
         rangeLabel={`${products.length} products`}
         pageLabel="Page 1 of 1"
-        getDownloadLabel={(p) =>
-          p.download.status === "downloaded" ? "Open" : "Download"}
-        getDownloadTitle={(p) => p.title}
-        getDownloadDisabled={() => false}
+        getActiveJob={(p) =>
+          downloads.find((j) => j.metadata.workId === p.workId) ?? null}
         onSearch={() => (query = search)}
         onReset={() => {
           search = "";
@@ -172,19 +171,10 @@
         onCycleCustomTag={(value) => cycleTag(filters, value)}
         onPreviousPage={noop}
         onNextPage={noop}
-        onPreview={(p) => (imagePreview = p)}
         onOpenDetails={(p) => {
           detailId = p.workId;
           customTagInput = "";
         }}
-        onCopyWorkId={() => action("Copy ID")}
-        onCopyCredit={() => action("Copy credit")}
-        onShowTooltip={noop}
-        onMoveTooltip={noop}
-        onHideTooltip={noop}
-        onOpenDlsite={() => action("Open DLsite")}
-        onDownload={(p) => action(`Download ${p.title}`)}
-        onToggleMenu={() => action("Product menu")}
       />
     {:else if view === "downloads"}
       <DownloadsView
@@ -221,7 +211,7 @@
           data.jobs.find(
             (j) => j.kind === "accountSync" && j.metadata.accountId === id,
           ) ?? null}
-        getStatusLabel={(a) => (a.enabled ? "Connected" : "Disabled")}
+        getStatusLabel={(a) => (a.enabled ? "Enabled" : "Disabled")}
         getStatusTone={(a) => (a.enabled ? "synced" : "disabled")}
         onReload={() => action("Reload")}
         onSyncAll={() => action("Sync all")}
@@ -296,6 +286,7 @@
   />
 {/if}
 {#if imagePreview?.thumbnailUrl}<ProductImagePreview
+    onSave={async () => true}
     preview={{
       workId: imagePreview.workId,
       title: imagePreview.title,

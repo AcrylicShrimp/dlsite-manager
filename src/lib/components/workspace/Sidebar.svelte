@@ -1,12 +1,14 @@
 <script lang="ts">
   import type { JobSnapshot, View } from "$lib/model/types";
-  import { views, labels, progress } from "../fixtures/redesign";
+  import { views, labels } from "$lib/model/navigation";
+  import { downloadQueueProgressPercent as progress } from "$lib/utils/jobs";
   import Button from "$lib/components/workspace/Button.svelte";
   import AppMark from "$lib/components/workspace/AppMark.svelte";
   import Icon from "$lib/components/workspace/Icon.svelte";
   import Progress from "$lib/components/workspace/Progress.svelte";
   let {
     view,
+    version = "",
     running,
     queuedCount,
     activeCount,
@@ -16,6 +18,7 @@
     onFailure,
   }: {
     view: View;
+    version?: string;
     running: JobSnapshot[];
     queuedCount: number;
     activeCount: number;
@@ -77,7 +80,7 @@
         class="dm:text-lg dm:text-draft-ink">{queuedCount}</strong
       > queued
     </p>
-    {#each running as job}<Button
+    {#each running.slice(0, 2) as job}<Button
         variant="sidebar"
         class="mini-job"
         onclick={onRunning}
@@ -86,7 +89,7 @@
           ><span class="dm:flex dm:justify-between dm:gap-2 dm:text-[10px]"
             ><span class="dm:truncate">{job.title}</span><b
               class="dm:shrink-0 dm:font-medium dm:text-draft-accent"
-              >{progress(job)}%</b
+              >{progress(job) === null ? "…" : `${progress(job)}%`}</b
             ></span
           ><Progress
             compact
@@ -95,6 +98,9 @@
           /></span
         ></Button
       >{/each}
+    {#if running.length > 2}<Button variant="sidebar" onclick={onRunning}
+        >+{running.length - 2} more active</Button
+      >{/if}
     {#if !activeCount}<p
         class="dm:mx-0 dm:my-2 dm:px-2.5 dm:text-xs dm:text-draft-dim"
       >
@@ -114,6 +120,6 @@
   </div>
   <span
     class="version dm:flex dm:justify-between dm:text-[9px] dm:text-draft-dim dm:max-[620px]:hidden"
-    >DLsite Manager <span>3.4.0</span></span
+    >DLsite Manager <span>{version}</span></span
   >
 </aside>

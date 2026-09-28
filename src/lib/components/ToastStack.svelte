@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { notificationPortal } from "./workspace/modal-stack";
   import type { Toast } from "$lib/model/types";
 
   let {
@@ -11,7 +12,12 @@
 </script>
 
 {#if toasts.length > 0}
-  <section class="toast-stack" aria-label="Notifications" aria-live="polite">
+  <section
+    use:notificationPortal
+    class="toast-stack"
+    aria-label="Notifications"
+    aria-live="polite"
+  >
     {#each toasts as toast (toast.id)}
       <article
         class="toast"

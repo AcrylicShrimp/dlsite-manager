@@ -17,11 +17,11 @@
     jobDetail,
     type Scenario,
   } from "../fixtures/redesign";
-  import Icon from "./DraftIcon.svelte";
-  import Button from "./DraftButton.svelte";
-  import AppMark from "./DraftAppMark.svelte";
-  import SearchField from "./DraftSearchField.svelte";
-  import ChoiceGroup from "./DraftChoiceGroup.svelte";
+  import Icon from "$lib/components/workspace/Icon.svelte";
+  import Button from "$lib/components/workspace/Button.svelte";
+  import AppMark from "$lib/components/workspace/AppMark.svelte";
+  import SearchField from "$lib/components/workspace/SearchField.svelte";
+  import ChoiceGroup from "$lib/components/workspace/ChoiceGroup.svelte";
   import ActivityRows from "./DraftActivityRows.svelte";
   import Sidebar from "./DraftSidebar.svelte";
   import DownloadRow from "./DraftDownloadRow.svelte";
@@ -35,7 +35,7 @@
     filterCount,
     makeDetail,
   } from "./library-preview";
-  import WorkBadges from "./DraftWorkBadges.svelte";
+  import WorkBadges from "$lib/components/workspace/WorkBadges.svelte";
 
   let {
     view,

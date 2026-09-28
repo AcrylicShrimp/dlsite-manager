@@ -1,8 +1,8 @@
 <script lang="ts">
   import type { JobSnapshot } from "$lib/model/types";
   import { progress, jobDetail } from "../fixtures/redesign";
-  import Button from "./DraftButton.svelte";
-  import Progress from "./DraftProgress.svelte";
+  import Button from "$lib/components/workspace/Button.svelte";
+  import Progress from "$lib/components/workspace/Progress.svelte";
   let {
     job,
     onDetails,

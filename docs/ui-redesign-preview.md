@@ -1,7 +1,9 @@
 # Workspace redesign preview — 2026-09-28
 
-Status: visual direction accepted by the maintainer on 2026-09-28. Checkpoint
-before production cutover; this Storybook implementation still uses fixtures.
+Status: visual direction accepted on 2026-09-28; production cutover implemented
+in the working tree. The comparison retains the approved prototype beside current
+production components. App / Production workspace mounts the real route/controllers
+against isolated native IPC fixtures, including server-style pagination.
 
 The maintainer authorized a Storybook prototype and one-to-one comparison after
 the reference discussion. Heroic informs layout only, not visual styling. The
@@ -27,8 +29,9 @@ Run `pnpm storybook`, then open **Redesign / Compare / Side By Side**:
   succeeds; other nonempty codes trigger a cleared retry prompt. No authentication
   request is sent. The submitting scenario stays busy for visual inspection.
 - **Current** composes actual working-tree production views and AppShell. This
-  includes the earlier, uncommitted Activity overflow patch, not the released
-  3.4.0 layout. **Draft** is isolated under `src/stories/redesign/`.
+  now reflects the cutover, not the released 3.4.0 layout. **Draft** retains the
+  approved prototype under `src/stories/redesign/`. The checkpoint is available in
+  commit `79683c9`; A is no longer an old-layout baseline.
 
 ## Draft choices to evaluate
 
@@ -203,7 +206,7 @@ The sidebar uses the same mark component at a smaller size.
 
 ## Semantic colors and Tailwind boundary
 
-`src/stories/redesign/draft.css` owns the draft palette. Use semantic utilities or
+`src/lib/styles/workspace.css` owns the draft palette. Use semantic utilities or
 CSS variables, not literal color values in components. Roles include:
 
 | Role | Token family |
@@ -292,3 +295,30 @@ not change the app route, theme, native APIs, release version or production view
 Next: cut over the accepted visuals to production components and existing native
 controllers. Preserve the capability matrix and real loading/error/cancellation
 flows; fixture actions, test MFA codes and hardcoded versions must stay in stories.
+
+
+## Production cutover — 2026-09-28
+
+- Shared Tailwind controls and semantic tokens now live under `src/lib/components/workspace`
+  and `src/lib/styles/workspace.css`. Both Vite and Storybook use the same plugin/theme.
+  `PageHeader`, buttons, choices, rows, tags, badges, progress and native modals own
+  their geometry; product metadata and filters retain scoped feature layout.
+- AppShell owns the single content scroller, per-view positions, Back to top and
+  actual concurrent-download overview. Library retains server queries, pagination,
+  all facets and state controllers; thumbnail cards only open full work details.
+- Account credentials, per-account sync/cancel, enable/remove confirmation, real
+  job classification/nullable progress, active-work guards, diagnostics recovery,
+  updater phases and MFA queue/retry behavior are connected to the existing APIs.
+  History and logs render all records loaded by their APIs instead of slicing
+  them to a second arbitrary UI limit. Job details retain output and bulk results.
+- Native dialogs share focus/Escape handling. Notifications move into the active
+  modal so failures remain visible and interactive above the native top layer.
+- Cover saving resolves the cached URL by work ID in the adapter, fetches an HTTPS
+  image without account credentials in `dm-library::cover`, limits response size
+  and timeout, identifies supported image bytes, then asks for a native destination.
+  JPEG/PNG/GIF/WebP are supported; unsupported images and write failures remain
+  visible in the image popup. The adapter never accepts an arbitrary frontend path.
+- ProductionAppStory mounts the real route with 216 synthetic works, native command
+  fixtures and mocked Tauri events. It is an integration workbench, not a backend
+  implementation. Native file dialogs and packaged-platform rendering still need
+  a release smoke test; browser IPC mocks cannot verify those behaviors.

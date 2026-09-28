@@ -23,13 +23,16 @@
   );
 </script>
 
-<section class="update-panel" aria-labelledby="update-panel-title" aria-busy={busy}>
+<section
+  class="update-panel"
+  aria-labelledby="update-panel-title"
+  aria-busy={busy}
+>
   <div class="update-copy">
     <div class="title-row">
       <span class:active={busy} class="status-dot" aria-hidden="true"></span>
       <h3 id="update-panel-title">Updates</h3>
     </div>
-    <p>Updates are checked only when you press this button.</p>
     {#if message}
       <p class="update-status" aria-live="polite">{message}</p>
     {/if}
@@ -50,7 +53,9 @@
     border-top: 1px solid var(--border);
   }
 
-  .update-copy { min-width: 0; }
+  .update-copy {
+    min-width: 0;
+  }
 
   .title-row {
     display: flex;
@@ -70,11 +75,25 @@
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
   }
 
-  h3 { margin: 0; color: var(--text-strong); font-size: 14px; }
-  p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.35; }
-  .update-status { color: var(--accent); }
+  h3 {
+    margin: 0;
+    color: var(--text-strong);
+    font-size: 14px;
+  }
+  p {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.35;
+  }
+  .update-status {
+    color: var(--accent);
+  }
 
   @media (max-width: 720px) {
-    .update-panel { align-items: stretch; flex-direction: column; }
+    .update-panel {
+      align-items: stretch;
+      flex-direction: column;
+    }
   }
 </style>

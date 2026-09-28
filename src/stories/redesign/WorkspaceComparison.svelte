@@ -66,7 +66,7 @@
   <header>
     <div>
       <span class="eyebrow">WORKSPACE STUDY / 01</span>
-      <h1>같은 앱, 두 가지 구성.</h1>
+      <h1>실제 구현과 승인한 디자인.</h1>
       <p>동일한 데이터와 창 크기. 메뉴 이동은 양쪽에 함께 적용됩니다.</p>
     </div>
     <span class="preview-badge"
@@ -123,11 +123,11 @@
         <button
           class:active={variant === "current"}
           aria-pressed={variant === "current"}
-          onclick={() => (variant = "current")}>A · 현재 UI</button
+          onclick={() => (variant = "current")}>A · Cutover 구현</button
         ><button
           class:active={variant === "draft"}
           aria-pressed={variant === "draft"}
-          onclick={() => (variant = "draft")}>B · 새 초안</button
+          onclick={() => (variant = "draft")}>B · 승인한 초안</button
         >
       </div>{/if}
   </div>
@@ -144,7 +144,10 @@
           style:width={`${frameWidth}px`}
         >
           <div class="frame-label">
-            <strong>{item === "current" ? "A · 현재 UI" : "B · 새 초안"}</strong
+            <strong
+              >{item === "current"
+                ? "A · Cutover 구현"
+                : "B · 승인한 초안"}</strong
             ><span
               >{item === "current"
                 ? "현재 작업 트리의 실제 컴포넌트"
@@ -158,7 +161,7 @@
           >
             {#if item === "current"}<iframe
                 bind:this={currentFrame}
-                title="현재 UI"
+                title="Cutover 구현"
                 src="./iframe.html?id=redesign-workspace--current&viewMode=story"
                 style:width={`${width}px`}
                 style:height={`${height}px`}
@@ -166,7 +169,7 @@
               ></iframe>
             {:else}<iframe
                 bind:this={draftFrame}
-                title="새 초안"
+                title="승인한 초안"
                 src="./iframe.html?id=redesign-workspace--draft&viewMode=story"
                 style:width={`${width}px`}
                 style:height={`${height}px`}
@@ -183,12 +186,13 @@
     </p>
     <p>
       초안의 검색·필터·탭·대화상자·대기열·계정 편집은 메모리에서 동작합니다.
-      현재 UI의 업무 동작은 알림으로 표시하며, 네이티브 호출은 모의 응답입니다.
+      Cutover 구현의 업무 동작은 알림으로 표시하며, 네이티브 호출은 모의
+      응답입니다.
     </p>
     <a
       href="./iframe.html?id=redesign-workspace--draft&viewMode=story"
       target="_blank"
-      rel="noreferrer">새 초안 전체 창으로 열기 ↗</a
+      rel="noreferrer">승인한 초안 전체 창으로 열기 ↗</a
     >
   </footer>
 </main>

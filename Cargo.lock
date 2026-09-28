@@ -1129,6 +1129,7 @@ dependencies = [
  "dm-download",
  "dm-jobs",
  "dm-storage",
+ "reqwest",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",

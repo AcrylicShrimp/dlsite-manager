@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import type { TwoFactorRequest } from "$lib/model/types";
-  import Button from "./DraftButton.svelte";
-  import Icon from "./DraftIcon.svelte";
+  import Button from "$lib/components/workspace/Button.svelte";
+  import Icon from "$lib/components/workspace/Icon.svelte";
 
   let {
     request,

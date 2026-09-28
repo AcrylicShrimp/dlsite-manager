@@ -3,12 +3,12 @@
     value,
     label,
     compact = false,
-  }: { value: number; label: string; compact?: boolean } = $props();
+  }: { value: number | null; label: string; compact?: boolean } = $props();
 </script>
 
 <progress
   max="100"
-  {value}
+  value={value ?? undefined}
   aria-label={label}
   class={`dm:block dm:w-full dm:appearance-none dm:border-0 dm:rounded dm:overflow-hidden dm:bg-draft-progress-track dm:text-draft-accent ${compact ? "dm:h-0.5" : "dm:h-1"}`}
 ></progress>

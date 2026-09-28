@@ -1046,3 +1046,49 @@
   creation, text login IDs, download phases and busy/cancel guards; the second
   reviewer independently reproduced the passing browser checks. Review fixes
   remain uncommitted after the checkpoint; no production cutover or release.
+
+
+- Started the maintainer-authorized production cutover after committing independent
+  review fixes as 9af167b. Promoted accepted Tailwind controls and semantic tokens
+  from Storybook to shared application code; all five production views now use
+  the redesigned shell, headers, lists, tabs and native dialogs.
+- Preserved controller/query pagination, complete filters/details/tag mutations,
+  account operations and confirmations, actual job classification/progress/cancel,
+  diagnostic export recovery, updater and MFA events. Removed unreachable card-menu
+  plumbing after moving those actions into work details. Notifications now portal
+  into the active native modal; error toasts remain visible above nested dialogs.
+- Added real cover Save image: work-ID-only adapter resolves cached metadata,
+  bounded credentialless HTTPS fetch in dm-library, detected image extension,
+  native save destination and visible save/cancel/error state. Added diagnostics
+  command vocabulary and focused image-byte validation test.
+- Added App/Production workspace to mount the real route/controllers against 216
+  synthetic works and isolated IPC/events. Updated comparison labels and design
+  notes: Current now means production cutover, not old released layout.
+- Validation so far: Svelte check zero diagnostics; all 13 frontend tests; app and
+  Storybook builds; cargo check -p dlsite-manager; cover test; all 13 dm-audit tests.
+  Chromium/WebKit integration passed at 1200/800/390px: pagination, scroll, detail
+  guards, tag mutation, stacked image/confirmation Escape, account save error toast,
+  diagnostics/updater and no horizontal overflow. Both engines passed real MFA
+  controller event queueing, submitting lock, late completion, rejected retry and
+  diagnostic export/clipboard failure recovery. Native platform save dialogs are
+  not exercised by IPC mocks; packaged smoke tests remain before release.
+- First independent cutover review found one blocking account-identity regression
+  and two navigation omissions. Verified and fixed all: Activity uses resolved
+  account labels; native-shaped fixture titles expose regressions; shared main/
+  detail BackToTop focuses headings and honors reduced motion; filters regain
+  Show results. Also restored forced-colors focus fallback for filters/TextInput.
+  Chromium/WebKit targeted checks passed (forced-colors checked in Chromium).
+  Review record: docs/reviews/2026-09-28-production-cutover.md.
+
+- Second fresh cutover review passed with no findings; reviewer independently ran
+  all 13 frontend tests and both navigation/edge browser drivers. Final local card
+  state audit found one stored-downloading fallback omission, reproduced it, and
+  fixed it without changing active-job precedence or local-path availability.
+  A third bounded fresh review passed that follow-up and additional state cases
+  in Chromium/WebKit. No reviewer edited files and no findings were rejected.
+- Final validation: Svelte check zero diagnostics, app and Storybook builds, all
+  13 frontend tests, cargo check -p dlsite-manager, cover byte-validation test,
+  all 13 dm-audit tests and git diff --check passed. Browser coverage and native
+  limits are recorded in docs/reviews/2026-09-28-production-cutover.md. Requested
+  the App/Production workspace Storybook tab in Codex. Cutover is complete as a
+  local implementation; native packaged smoke tests remain before release.

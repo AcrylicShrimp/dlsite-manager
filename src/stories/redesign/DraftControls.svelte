@@ -1,13 +1,12 @@
 <script lang="ts">
-  import "./draft.css";
-  import Button from "./DraftButton.svelte";
-  import Choices from "./DraftChoiceGroup.svelte";
-  import Row from "./DraftListRow.svelte";
-  import Tag from "./DraftTagChip.svelte";
-  import Badges from "./DraftWorkBadges.svelte";
-  import Icon from "./DraftIcon.svelte";
-  import Disclosure from "./DraftDisclosure.svelte";
-  import SearchField from "./DraftSearchField.svelte";
+  import Button from "$lib/components/workspace/Button.svelte";
+  import Choices from "$lib/components/workspace/ChoiceGroup.svelte";
+  import Row from "$lib/components/workspace/ListRow.svelte";
+  import Tag from "$lib/components/workspace/TagChip.svelte";
+  import Badges from "$lib/components/workspace/WorkBadges.svelte";
+  import Icon from "$lib/components/workspace/Icon.svelte";
+  import Disclosure from "$lib/components/workspace/Disclosure.svelte";
+  import SearchField from "$lib/components/workspace/SearchField.svelte";
   let query = $state("");
   let filter = $state("all");
   let tab = $state("history");

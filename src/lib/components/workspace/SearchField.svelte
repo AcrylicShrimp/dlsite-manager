@@ -1,18 +1,22 @@
 <script lang="ts">
-  import Button from "./DraftButton.svelte";
-  import Icon from "./DraftIcon.svelte";
+  import Button from "$lib/components/workspace/Button.svelte";
+  import Icon from "$lib/components/workspace/Icon.svelte";
   let {
     value = $bindable(""),
     label,
     placeholder,
     compact = false,
     clearable = false,
+    disabled = false,
+    onClear,
   }: {
     value: string;
     label: string;
     placeholder: string;
     compact?: boolean;
     clearable?: boolean;
+    disabled?: boolean;
+    onClear?: () => void;
   } = $props();
   let input: HTMLInputElement;
 </script>
@@ -28,6 +32,7 @@
     bind:value
     aria-label={label}
     {placeholder}
+    {disabled}
     class={`dm:min-w-0 dm:w-full dm:border-0 dm:bg-transparent dm:py-0 dm:pl-0 ${clearable ? "dm:pr-0" : "dm:pr-2"} dm:font-[inherit] dm:text-draft-ink dm:outline-none dm:placeholder:text-draft-placeholder ${compact ? "dm:h-8 dm:text-xs" : "dm:h-9 dm:text-base"}`}
   />
   {#if clearable}<span
@@ -36,9 +41,11 @@
           variant="field-icon"
           tone="muted"
           aria-label="Clear search"
+          {disabled}
           onclick={() => {
             value = "";
             input.focus();
+            onClear?.();
           }}><Icon name="close" /></Button
         >{/if}</span
     >{/if}

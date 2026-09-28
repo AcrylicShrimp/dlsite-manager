@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Icon from "./DraftIcon.svelte";
+  import Icon from "$lib/components/workspace/Icon.svelte";
   let {
     name,
     oncopy,

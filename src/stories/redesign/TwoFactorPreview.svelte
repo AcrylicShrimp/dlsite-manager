@@ -3,7 +3,7 @@
   import type { TwoFactorRequest } from "$lib/model/types";
   import CurrentDialog from "$lib/components/TwoFactorDialog.svelte";
   import DraftDialog from "./DraftTwoFactorDialog.svelte";
-  import Button from "./DraftButton.svelte";
+  import Button from "$lib/components/workspace/Button.svelte";
   let {
     variant,
     previewState = "mfa",

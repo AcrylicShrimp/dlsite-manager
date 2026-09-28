@@ -9,13 +9,15 @@
   import ToastStack from "$lib/components/ToastStack.svelte";
   import TwoFactorDialog from "$lib/components/TwoFactorDialog.svelte";
   import { JobController } from "$lib/controllers/job-controller.svelte";
-  import { LibraryQueryController, RequestGeneration } from "$lib/controllers/library-query-controller";
+  import {
+    LibraryQueryController,
+    RequestGeneration,
+  } from "$lib/controllers/library-query-controller";
   import { TwoFactorController } from "$lib/controllers/two-factor-controller.svelte";
   import AccountsView from "$lib/features/accounts/AccountsView.svelte";
   import ActivityView from "$lib/features/activity/ActivityView.svelte";
   import DownloadsView from "$lib/features/downloads/DownloadsView.svelte";
   import LibraryView from "$lib/features/library/LibraryView.svelte";
-  import ProductActionMenuView from "$lib/features/library/ProductActionMenu.svelte";
   import ProductDetailDialog from "$lib/features/library/ProductDetailDialog.svelte";
   import ProductImagePreviewView from "$lib/features/library/ProductImagePreview.svelte";
   import SettingsView from "$lib/features/settings/SettingsView.svelte";
@@ -38,22 +40,17 @@
     jobWorkId,
     metadataNumber,
   } from "$lib/utils/jobs";
-  import {
-    ageTooltip,
-    creditTextForKind,
-  } from "$lib/utils/products";
+  import { ageTooltip, creditTextForKind } from "$lib/utils/products";
   import type {
     Account,
     AppInfo,
     AuditEvent,
     BulkDownloadDialog,
     BulkWorkDownloadPreview,
-    ChipTooltip,
     ConfirmationDialog,
     JobEvent,
     JobSnapshot,
     Product,
-    ProductActionMenu,
     ProductCreditField,
     ProductCustomTag,
     ProductDetail,
@@ -81,7 +78,9 @@
   let settingsSaving = $state(false);
   let appInfo = $state<AppInfo | null>(null);
   let appInfoLoading = $state(true);
-  let updatePhase = $state<"idle" | "checking" | "downloading" | "installing">("idle");
+  let updatePhase = $state<"idle" | "checking" | "downloading" | "installing">(
+    "idle",
+  );
   let updateProgressMessage = $state("");
 
   let accounts = $state<Account[]>([]);
@@ -105,7 +104,10 @@
   let selectedMakerNames = $state<string[]>([]);
   let selectedCustomTagNames = $state<string[]>([]);
   let excludedCustomTagNames = $state<string[]>([]);
-  let productFilterFacets = $state<ProductFilterFacets>({ makers: [], customTags: [] });
+  let productFilterFacets = $state<ProductFilterFacets>({
+    makers: [],
+    customTags: [],
+  });
   let productSort = $state("latestPurchaseDesc");
   let libraryFiltersOpen = $state(false);
 
@@ -115,20 +117,28 @@
   let auditLogDir = $state("");
   let toasts = $state<Toast[]>([]);
   let productImagePreview = $state<ProductImagePreview | null>(null);
-  let productActionMenu = $state<ProductActionMenu | null>(null);
   let productDetail = $state<ProductDetail | null>(null);
   let productDetailLoadingWorkId = $state<string | null>(null);
   let customTagInput = $state("");
-  let chipTooltip = $state<ChipTooltip | null>(null);
   let bulkDownloadDialog = $state<BulkDownloadDialog | null>(null);
   let confirmationDialog = $state<ConfirmationDialog | null>(null);
-  const twoFactor = new TwoFactorController(error => notifyError(errorMessage(error)));
+  const twoFactor = new TwoFactorController((error) =>
+    notifyError(errorMessage(error)),
+  );
   const detailGeneration = new RequestGeneration();
   const libraryQuery = new LibraryQueryController(commands, {
-    loading: value => { productsLoading = value; },
-    page: (page, index) => { products = page.products; totalProducts = page.totalCount; productPageIndex = index; },
-    facets: value => { productFilterFacets = value; },
-    error: error => notifyError(errorMessage(error)),
+    loading: (value) => {
+      productsLoading = value;
+    },
+    page: (page, index) => {
+      products = page.products;
+      totalProducts = page.totalCount;
+      productPageIndex = index;
+    },
+    facets: (value) => {
+      productFilterFacets = value;
+    },
+    error: (error) => notifyError(errorMessage(error)),
   });
 
   let toastSequence = 0;
@@ -153,7 +163,9 @@
     };
 
     register(jobController.listen(handleJobEvent));
-    register(native.listenToTwoFactorRequests(request => twoFactor.enqueue(request)));
+    register(
+      native.listenToTwoFactorRequests((request) => twoFactor.enqueue(request)),
+    );
     register(
       native.listenToTwoFactorClosures((closed) => {
         // The job stopped waiting (timeout, cancellation, or another window answered).
@@ -238,18 +250,25 @@
     updateProgressMessage = "Checking for updates";
 
     try {
-      const version = await native.downloadAndInstallAvailableUpdate((progress) => {
-        updatePhase = progress.phase;
+      const version = await native.downloadAndInstallAvailableUpdate(
+        (progress) => {
+          updatePhase = progress.phase;
 
-        if (progress.phase === "installing") {
-          updateProgressMessage = `Installing ${progress.version}`;
-        } else if (progress.contentLength && progress.contentLength > 0) {
-          const percent = Math.min(100, Math.floor((progress.downloadedBytes / progress.contentLength) * 100));
-          updateProgressMessage = `Downloading ${progress.version} ${percent}%`;
-        } else {
-          updateProgressMessage = `Downloading ${progress.version} ${formatBytes(progress.downloadedBytes)}`;
-        }
-      });
+          if (progress.phase === "installing") {
+            updateProgressMessage = `Installing ${progress.version}`;
+          } else if (progress.contentLength && progress.contentLength > 0) {
+            const percent = Math.min(
+              100,
+              Math.floor(
+                (progress.downloadedBytes / progress.contentLength) * 100,
+              ),
+            );
+            updateProgressMessage = `Downloading ${progress.version} ${percent}%`;
+          } else {
+            updateProgressMessage = `Downloading ${progress.version} ${formatBytes(progress.downloadedBytes)}`;
+          }
+        },
+      );
 
       if (!version) {
         updateProgressMessage = "";
@@ -295,7 +314,10 @@
       const selected = await native.chooseDirectory({
         canCreateDirectories: true,
         defaultPath: currentRoot.trim() || fallbackRoot || undefined,
-        title: kind === "library" ? "Choose library folder" : "Choose download staging folder",
+        title:
+          kind === "library"
+            ? "Choose library folder"
+            : "Choose download staging folder",
       });
 
       if (!selected) {
@@ -358,8 +380,10 @@
       editAccount(account);
       accountPassword = "";
       await loadAccounts();
+      return true;
     } catch (err) {
       notifyError(errorMessage(err));
+      return false;
     } finally {
       accountSaving = false;
     }
@@ -398,7 +422,9 @@
         resetAccountForm();
       }
 
-      selectedAccountIds = selectedAccountIds.filter((accountId) => accountId !== account.id);
+      selectedAccountIds = selectedAccountIds.filter(
+        (accountId) => accountId !== account.id,
+      );
 
       await Promise.all([loadAccounts(), loadProducts({ resetPage: true })]);
     } catch (err) {
@@ -476,7 +502,9 @@
 
   function productRangeLabel() {
     if (productsLoading) {
-      return totalProducts > 0 ? `Loading ${productTotalLabel()}` : "Loading products";
+      return totalProducts > 0
+        ? `Loading ${productTotalLabel()}`
+        : "Loading products";
     }
 
     if (totalProducts === 0 || products.length === 0) {
@@ -560,12 +588,18 @@
   }
 
   async function toggleAgeFilter(ageCategory: string) {
-    selectedAgeCategories = toggleFilterValue(selectedAgeCategories, ageCategory);
+    selectedAgeCategories = toggleFilterValue(
+      selectedAgeCategories,
+      ageCategory,
+    );
     await loadProducts({ resetPage: true });
   }
 
   async function toggleProductSourceFilter(sourceGroup: string) {
-    selectedProductSources = toggleFilterValue(selectedProductSources, sourceGroup);
+    selectedProductSources = toggleFilterValue(
+      selectedProductSources,
+      sourceGroup,
+    );
     await loadProducts({ resetPage: true });
   }
 
@@ -591,12 +625,18 @@
 
     if (state === "none") {
       selectedCustomTagNames = [...selectedCustomTagNames, tagName];
-      excludedCustomTagNames = excludedCustomTagNames.filter((name) => name !== tagName);
+      excludedCustomTagNames = excludedCustomTagNames.filter(
+        (name) => name !== tagName,
+      );
     } else if (state === "include") {
-      selectedCustomTagNames = selectedCustomTagNames.filter((name) => name !== tagName);
+      selectedCustomTagNames = selectedCustomTagNames.filter(
+        (name) => name !== tagName,
+      );
       excludedCustomTagNames = [...excludedCustomTagNames, tagName];
     } else {
-      excludedCustomTagNames = excludedCustomTagNames.filter((name) => name !== tagName);
+      excludedCustomTagNames = excludedCustomTagNames.filter(
+        (name) => name !== tagName,
+      );
     }
 
     await loadProducts({ resetPage: true });
@@ -676,7 +716,6 @@
     }
   }
 
-
   function setProductDownload(workId: string, download: ProductDownload) {
     invalidateLibrary();
     products = products.map((product) =>
@@ -684,7 +723,7 @@
         ? {
             ...product,
             download,
-        }
+          }
         : product,
     );
 
@@ -696,7 +735,10 @@
     }
   }
 
-  function patchProductCustomTags(workId: string, customTags: ProductCustomTag[]) {
+  function patchProductCustomTags(
+    workId: string,
+    customTags: ProductCustomTag[],
+  ) {
     products = products.map((product) =>
       product.workId === workId
         ? {
@@ -756,7 +798,10 @@
       return;
     }
 
-    const nextNames = [...productDetail.customTags.map((tag) => tag.name), ...additions];
+    const nextNames = [
+      ...productDetail.customTags.map((tag) => tag.name),
+      ...additions,
+    ];
     const workId = productDetail.workId;
 
     try {
@@ -808,13 +853,21 @@
 
     try {
       await navigator.clipboard.writeText(field.value);
-      notifySuccess(workId ? `Copied ${field.label} for ${workId}` : `Copied ${field.label}`);
+      notifySuccess(
+        workId
+          ? `Copied ${field.label} for ${workId}`
+          : `Copied ${field.label}`,
+      );
     } catch (err) {
       notifyError(errorMessage(err));
     }
   }
 
-  async function copyText(label: string, value: string | null | undefined, workId?: string) {
+  async function copyText(
+    label: string,
+    value: string | null | undefined,
+    workId?: string,
+  ) {
     const normalized = value?.trim();
 
     if (!normalized) {
@@ -823,14 +876,15 @@
 
     try {
       await navigator.clipboard.writeText(normalized);
-      notifySuccess(workId ? `Copied ${label} for ${workId}` : `Copied ${label}`);
+      notifySuccess(
+        workId ? `Copied ${label} for ${workId}` : `Copied ${label}`,
+      );
     } catch (err) {
       notifyError(errorMessage(err));
     }
   }
 
   async function openProductDetail(product: Product) {
-    closeProductActionMenu();
     await loadProductDetail(product.workId);
   }
 
@@ -844,7 +898,8 @@
     } catch (err) {
       if (detailGeneration.current(generation)) notifyError(errorMessage(err));
     } finally {
-      if (detailGeneration.current(generation)) productDetailLoadingWorkId = null;
+      if (detailGeneration.current(generation))
+        productDetailLoadingWorkId = null;
     }
   }
 
@@ -868,59 +923,11 @@
   }
 
   function openProductImageFromDetail(detail: ProductDetail) {
-    openProductImage({
-      workId: detail.workId,
-      title: detail.title,
-      makerName: detail.makerName,
-      workType: detail.workType,
-      ageCategory: detail.ageCategory,
-      thumbnailUrl: detail.thumbnailUrl,
-      publishedAt: detail.publishedAt,
-      updatedAt: detail.updatedAt,
-      earliestPurchasedAt: detail.earliestPurchasedAt,
-      latestPurchasedAt: detail.latestPurchasedAt,
-      creditGroups: detail.creditGroups,
-      customTags: detail.customTags,
-      download: detail.download,
-      owners: detail.owners,
-    });
+    openProductImage(detail);
   }
 
   function closeProductImage() {
     productImagePreview = null;
-  }
-
-  function handleWindowKeydown(event: KeyboardEvent) {
-    if (event.key !== "Escape") {
-      return;
-    }
-
-    if (confirmationDialog) {
-      closeConfirmationDialog(false);
-      return;
-    }
-
-    if (bulkDownloadDialog) {
-      closeBulkDownloadDialog(false);
-      return;
-    }
-
-    if (productActionMenu) {
-      closeProductActionMenu();
-    }
-
-    if (productImagePreview) {
-      closeProductImage();
-      return;
-    }
-
-    if (productDetail) {
-      closeProductDetail();
-    }
-  }
-
-  function handleWindowClick() {
-    closeProductActionMenu();
   }
 
   async function syncAccount(account: Account): Promise<boolean> {
@@ -963,7 +970,10 @@
     await cancelJob(job);
   }
 
-  async function startWorkDownload(product: Product, options: StartWorkDownloadOptions = {}) {
+  async function startWorkDownload(
+    product: Product,
+    options: StartWorkDownloadOptions = {},
+  ) {
     if (activeWorkDownloadJob(product.workId)) {
       return;
     }
@@ -989,7 +999,8 @@
     bulkDownloadPlanning = true;
 
     try {
-      const preview = await commands.previewBulkWorkDownload(productBulkRequest());
+      const preview =
+        await commands.previewBulkWorkDownload(productBulkRequest());
 
       if (preview.requestedCount === 0) {
         await showBulkDownloadDialog(preview, "notice");
@@ -1002,7 +1013,8 @@
         return;
       }
 
-      const response = await commands.startBulkWorkDownload(productBulkRequest());
+      const response =
+        await commands.startBulkWorkDownload(productBulkRequest());
       notifyInfo("Bulk download queued");
       jobController.setMessage(response.jobId, "Bulk download queued");
       await loadJobs();
@@ -1026,7 +1038,6 @@
   }
 
   async function downloadProductArchivesOnly(product: Product) {
-    closeProductActionMenu();
     await startWorkDownload(product, {
       unpackPolicy: "keepArchives",
       queuedMessage: "Archive-only download queued",
@@ -1034,8 +1045,6 @@
   }
 
   async function redownloadProduct(product: Product) {
-    closeProductActionMenu();
-
     const confirmed = await showConfirmationDialog({
       eyebrow: "Re-download",
       title: `Re-download ${product.workId}?`,
@@ -1061,8 +1070,6 @@
   }
 
   async function deleteDownloadedProduct(product: Product) {
-    closeProductActionMenu();
-
     const confirmed = await showConfirmationDialog({
       eyebrow: "Delete Download",
       title: `Delete downloaded files for ${product.workId}?`,
@@ -1088,8 +1095,6 @@
   }
 
   async function markProductDownloaded(product: Product) {
-    closeProductActionMenu();
-
     try {
       const fallbackRoot = libraryRoot.trim() || (await systemDownloadRoot());
       const selected = await native.chooseDirectory({
@@ -1102,7 +1107,10 @@
         return;
       }
 
-      const download = await commands.markWorkDownloaded(product.workId, selected);
+      const download = await commands.markWorkDownloaded(
+        product.workId,
+        selected,
+      );
       notifySuccess(`Marked ${product.workId} as downloaded`);
       setProductDownload(product.workId, download);
       await refreshLibraryAfterMutation();
@@ -1111,44 +1119,15 @@
     }
   }
 
-  function toggleProductActionMenu(product: Product, event: MouseEvent) {
-    event.stopPropagation();
-
-    if (productActionMenu?.workId === product.workId) {
-      closeProductActionMenu();
-      return;
-    }
-
-    const target = event.currentTarget;
-    if (!(target instanceof HTMLElement)) {
-      return;
-    }
-
-    const rect = target.getBoundingClientRect();
-    const menuWidth = 220;
-    const menuHeight = 150;
-    productActionMenu = {
-      workId: product.workId,
-      left: Math.max(12, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12)),
-      top: Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - menuHeight - 12)),
-    };
-  }
-
-  function closeProductActionMenu() {
-    productActionMenu = null;
-  }
-
-  function productActionMenuProduct() {
-    return productActionMenu
-      ? products.find((product) => product.workId === productActionMenu?.workId) ?? null
-      : null;
-  }
-
   async function cancelJob(job: JobSnapshot) {
     try {
       await commands.cancelJob(job.id);
       const workId = jobWorkId(job) ?? jobOutputString(job, "workId");
-      notifyInfo(workId ? `Cancellation requested for ${workId}` : "Cancellation requested");
+      notifyInfo(
+        workId
+          ? `Cancellation requested for ${workId}`
+          : "Cancellation requested",
+      );
       await loadJobs();
     } catch (err) {
       notifyError(errorMessage(err));
@@ -1266,7 +1245,8 @@
   }
 
   function syncingAccountCount() {
-    return accounts.filter((account) => activeAccountSyncJob(account.id)).length;
+    return accounts.filter((account) => activeAccountSyncJob(account.id))
+      .length;
   }
 
   function accountSyncJobs(accountId: string) {
@@ -1297,7 +1277,9 @@
     return (
       [...jobController.jobs]
         .reverse()
-        .find((job) => job.kind === "bulkWorkDownloadPreview" && isActiveJob(job)) ?? null
+        .find(
+          (job) => job.kind === "bulkWorkDownloadPreview" && isActiveJob(job),
+        ) ?? null
     );
   }
 
@@ -1311,32 +1293,38 @@
     return planningJob ? jobLabel(planningJob) : "Planning";
   }
 
-  function visibleJobs(limit = 20) {
-    return [...jobController.jobs].reverse().slice(0, limit);
+  function visibleJobs() {
+    return [...jobController.jobs].reverse();
   }
 
-  function visibleDownloadJobs(limit = 50) {
-    return [...currentDownloadJobs()].reverse().slice(0, limit);
+  function visibleDownloadJobs() {
+    return [...currentDownloadJobs()].reverse();
   }
 
   function currentDownloadJobs() {
-    return jobController.jobs.filter((job) => isDownloadQueueJob(job) && isActiveJob(job));
+    return jobController.jobs.filter(
+      (job) => isDownloadQueueJob(job) && isActiveJob(job),
+    );
   }
 
   function queuedDownloadJobCount() {
-    return currentDownloadJobs().filter((job) => job.status === "queued").length;
+    return currentDownloadJobs().filter((job) => job.status === "queued")
+      .length;
   }
 
   function runningDownloadJobCount() {
-    return currentDownloadJobs().filter((job) => job.status === "running").length;
+    return currentDownloadJobs().filter((job) => job.status !== "queued")
+      .length;
   }
 
-  function visibleAuditEvents(limit = 30) {
-    return auditEvents.slice(0, limit);
+  function visibleAuditEvents() {
+    return auditEvents;
   }
 
   function hasSyncableEnabledAccount() {
-    return accounts.some((account) => account.enabled && !activeAccountSyncJob(account.id));
+    return accounts.some(
+      (account) => account.enabled && !activeAccountSyncJob(account.id),
+    );
   }
 
   function jobAccountLabel(job: JobSnapshot) {
@@ -1378,14 +1366,18 @@
 
   function downloadQueueTitle(job: JobSnapshot) {
     if (job.kind === "bulkWorkDownload") {
-      const requested = jobOutputNumber(job, "requestedCount") ?? metadataNumber(job, "reservedCount");
+      const requested =
+        jobOutputNumber(job, "requestedCount") ??
+        metadataNumber(job, "reservedCount");
       return typeof requested === "number" && requested > 0
         ? `Bulk download (${requested} works)`
         : "Bulk download";
     }
 
     const workId = jobWorkId(job) ?? jobOutputString(job, "workId");
-    const product = workId ? products.find((item) => item.workId === workId) : null;
+    const product = workId
+      ? products.find((item) => item.workId === workId)
+      : null;
     return product?.title ?? workId ?? job.title;
   }
 
@@ -1411,7 +1403,6 @@
     resolve?.(confirmed);
   }
 
-
   function showConfirmationDialog(dialog: ConfirmationDialog) {
     if (confirmationDialogResolve) {
       confirmationDialogResolve(false);
@@ -1431,49 +1422,14 @@
     resolve?.(confirmed);
   }
 
-  function productDownloadActionLabel(product: Product, job: JobSnapshot | null) {
-    if (job) {
-      if (job.status === "queued") {
-        return "Queued";
-      }
-
-      if (job.status === "cancelling") {
-        return "Cancelling";
-      }
-
-      return jobLabel(job);
-    }
-
-    switch (product.download.status) {
-      case "downloaded":
-        return "Open";
-      case "failed":
-      case "cancelled":
-      case "downloading":
-        return "Retry";
-      default:
-        return "Download";
-    }
-  }
-
-  function productDownloadActionTitle(product: Product, job: JobSnapshot | null) {
-    if (job) {
-      return jobLabel(job);
-    }
-
-    if (product.download.status === "downloaded" && product.download.localPath) {
-      return `Open ${product.download.localPath}`;
-    }
-
-    if (product.download.errorMessage) {
-      return product.download.errorMessage;
-    }
-
-    return "Download this work";
-  }
-
-  function productDownloadActionDisabled(product: Product, job: JobSnapshot | null) {
-    return !!job || (product.download.status === "downloaded" && !product.download.localPath);
+  function productDownloadActionDisabled(
+    product: Product,
+    job: JobSnapshot | null,
+  ) {
+    return (
+      !!job ||
+      (product.download.status === "downloaded" && !product.download.localPath)
+    );
   }
 
   async function runProductDownloadAction(product: Product) {
@@ -1483,21 +1439,6 @@
     }
 
     await startWorkDownload(product);
-  }
-
-  function showChipTooltip(text: string, event: MouseEvent) {
-    moveChipTooltip(text, event);
-  }
-
-  function moveChipTooltip(text: string, event: MouseEvent) {
-    const maxWidth = 320;
-    const left = Math.max(12, Math.min(event.clientX + 12, window.innerWidth - maxWidth - 12));
-    const top = Math.max(12, Math.min(event.clientY + 14, window.innerHeight - 54));
-    chipTooltip = { text, left, top };
-  }
-
-  function hideChipTooltip() {
-    chipTooltip = null;
   }
 
   function notifySuccess(message: string) {
@@ -1542,149 +1483,146 @@
       }
     }
   }
-
 </script>
 
 <svelte:head>
   <title>dlsite-manager</title>
 </svelte:head>
 
-<svelte:window onclick={handleWindowClick} onkeydown={handleWindowKeydown} />
+<AppShell
+  {activeView}
+  jobs={jobController.jobs}
+  version={appInfo?.version ?? ""}
+  onNavigate={(view) => (activeView = view)}
+>
+  {#if activeView === "library"}
+    <LibraryView
+      {products}
+      loading={productsLoading}
+      bind:search={productSearch}
+      filtersOpen={libraryFiltersOpen}
+      {accounts}
+      facets={productFilterFacets}
+      sort={productSort}
+      {selectedAccountIds}
+      selectedSources={selectedProductSources}
+      selectedAges={selectedAgeCategories}
+      selectedTypes={selectedProductTypes}
+      selectedMakers={selectedMakerNames}
+      selectedCustomTags={selectedCustomTagNames}
+      excludedCustomTags={excludedCustomTagNames}
+      rangeLabel={productRangeLabel()}
+      pageLabel={productPageLabel()}
+      previousDisabled={productsLoading || !hasPreviousProductPage()}
+      nextDisabled={productsLoading || !hasNextProductPage()}
+      syncDisabled={accountsLoading ||
+        jobController.loading ||
+        !hasSyncableEnabledAccount()}
+      bulkDisabled={bulkDownloadPlanning ||
+        productsLoading ||
+        jobController.loading ||
+        totalProducts === 0}
+      bulkLabel={bulkDownloadButtonLabel()}
+      detailLoadingWorkId={productDetailLoadingWorkId}
+      getActiveJob={(product) => activeWorkDownloadJob(product.workId)}
+      onSearch={searchProducts}
+      onReset={resetLibraryFilters}
+      onToggleFilters={() => (libraryFiltersOpen = !libraryFiltersOpen)}
+      onReload={reloadProducts}
+      onSync={syncEnabledAccounts}
+      onBulkDownload={startBulkWorkDownload}
+      onSetSort={setProductSort}
+      onClearAccounts={clearAccountFilters}
+      onToggleAccount={toggleAccountFilter}
+      onClearSources={clearSourceFilters}
+      onToggleSource={toggleProductSourceFilter}
+      onClearAges={clearAgeFilters}
+      onToggleAge={toggleAgeFilter}
+      onClearTypes={clearTypeFilters}
+      onToggleType={toggleProductTypeFilter}
+      onClearMakers={clearMakerFilters}
+      onToggleMaker={toggleMakerFilter}
+      onClearCustomTags={clearCustomTagFilters}
+      onCycleCustomTag={cycleCustomTagFilter}
+      onPreviousPage={goToPreviousProductPage}
+      onNextPage={goToNextProductPage}
+      onOpenDetails={openProductDetail}
+    />
+  {:else if activeView === "downloads"}
+    <DownloadsView
+      jobs={visibleDownloadJobs()}
+      loading={jobController.loading}
+      queuedCount={queuedDownloadJobCount()}
+      runningCount={runningDownloadJobCount()}
+      getTitle={downloadQueueTitle}
+      getDetail={jobDetail}
+      onReload={loadJobs}
+      onCancel={cancelJob}
+    />
+  {:else if activeView === "accounts"}
+    <AccountsView
+      {accounts}
+      loading={accountsLoading}
+      saving={accountSaving}
+      jobsLoading={jobController.loading}
+      {editingAccountId}
+      bind:label={accountLabel}
+      bind:loginName={accountLoginName}
+      bind:password={accountPassword}
+      syncingCount={syncingAccountCount()}
+      syncAllDisabled={!hasSyncableEnabledAccount()}
+      getActiveSyncJob={activeAccountSyncJob}
+      getStatusLabel={accountStatusLabel}
+      getStatusTone={accountStatusTone}
+      onReload={loadAccounts}
+      onSyncAll={syncEnabledAccounts}
+      onToggleEnabled={setAccountEnabled}
+      onEdit={editAccount}
+      onSync={syncAccount}
+      onCancelSync={cancelAccountSync}
+      onRemove={removeAccount}
+      onReset={resetAccountForm}
+      onSave={saveAccount}
+    />
+  {:else if activeView === "activity"}
+    <ActivityView
+      jobs={visibleJobs()}
+      jobLoading={jobController.loading}
+      auditEvents={visibleAuditEvents()}
+      {auditLoading}
+      {auditLogDir}
+      getJobTitle={jobAccountLabel}
+      getJobDetail={jobDetail}
+      onReloadJobs={loadJobs}
+      onClearJobs={clearFinishedJobs}
+      onCancelJob={cancelJob}
+      onOpenAuditFolder={openAuditLogDir}
+      onReloadAudit={loadAuditEvents}
+    />
+  {:else}
+    <SettingsView
+      bind:libraryRoot
+      bind:downloadRoot
+      loading={settingsLoading}
+      saving={settingsSaving}
+      {appInfo}
+      {appInfoLoading}
+      {updatePhase}
+      {updateProgressMessage}
+      onReload={loadSettings}
+      onChooseDirectory={chooseSettingsDirectory}
+      onUseDefaultDownloadRoot={useDefaultDownloadRoot}
+      onSave={saveSettings}
+      onOpenGitHub={() => openExternalUrl(GITHUB_URL, "GitHub")}
+      onOpenDlsite={() => openExternalUrl(DLSITE_URL, "DLsite")}
+      onCheckForUpdates={checkForUpdates}
+    />
+  {/if}
 
-<AppShell {activeView} onNavigate={(view) => (activeView = view)}>
-
-    {#if activeView === "library"}
-      <LibraryView
-        {products}
-        loading={productsLoading}
-        bind:search={productSearch}
-        filtersOpen={libraryFiltersOpen}
-        {accounts}
-        facets={productFilterFacets}
-        sort={productSort}
-        {selectedAccountIds}
-        selectedSources={selectedProductSources}
-        selectedAges={selectedAgeCategories}
-        selectedTypes={selectedProductTypes}
-        selectedMakers={selectedMakerNames}
-        selectedCustomTags={selectedCustomTagNames}
-        excludedCustomTags={excludedCustomTagNames}
-        rangeLabel={productRangeLabel()}
-        pageLabel={productPageLabel()}
-        previousDisabled={productsLoading || !hasPreviousProductPage()}
-        nextDisabled={productsLoading || !hasNextProductPage()}
-        syncDisabled={accountsLoading || jobController.loading || !hasSyncableEnabledAccount()}
-        bulkDisabled={bulkDownloadPlanning || productsLoading || jobController.loading || totalProducts === 0}
-        bulkLabel={bulkDownloadButtonLabel()}
-        detailLoadingWorkId={productDetailLoadingWorkId}
-        openMenuWorkId={productActionMenu?.workId ?? null}
-        getDownloadLabel={(product) => productDownloadActionLabel(product, activeWorkDownloadJob(product.workId))}
-        getDownloadTitle={(product) => productDownloadActionTitle(product, activeWorkDownloadJob(product.workId))}
-        getDownloadDisabled={(product) => productDownloadActionDisabled(product, activeWorkDownloadJob(product.workId))}
-        onSearch={searchProducts}
-        onReset={resetLibraryFilters}
-        onToggleFilters={() => (libraryFiltersOpen = !libraryFiltersOpen)}
-        onReload={reloadProducts}
-        onSync={syncEnabledAccounts}
-        onBulkDownload={startBulkWorkDownload}
-        onSetSort={setProductSort}
-        onClearAccounts={clearAccountFilters}
-        onToggleAccount={toggleAccountFilter}
-        onClearSources={clearSourceFilters}
-        onToggleSource={toggleProductSourceFilter}
-        onClearAges={clearAgeFilters}
-        onToggleAge={toggleAgeFilter}
-        onClearTypes={clearTypeFilters}
-        onToggleType={toggleProductTypeFilter}
-        onClearMakers={clearMakerFilters}
-        onToggleMaker={toggleMakerFilter}
-        onClearCustomTags={clearCustomTagFilters}
-        onCycleCustomTag={cycleCustomTagFilter}
-        onPreviousPage={goToPreviousProductPage}
-        onNextPage={goToNextProductPage}
-        onPreview={openProductImage}
-        onOpenDetails={openProductDetail}
-        onCopyWorkId={copyWorkId}
-        onCopyCredit={copyCreditField}
-        onShowTooltip={showChipTooltip}
-        onMoveTooltip={moveChipTooltip}
-        onHideTooltip={hideChipTooltip}
-        onOpenDlsite={openDlsiteProductPage}
-        onDownload={runProductDownloadAction}
-        onToggleMenu={toggleProductActionMenu}
-      />
-    {:else if activeView === "downloads"}
-      <DownloadsView
-        jobs={visibleDownloadJobs()}
-        loading={jobController.loading}
-        queuedCount={queuedDownloadJobCount()}
-        runningCount={runningDownloadJobCount()}
-        getTitle={downloadQueueTitle}
-        getDetail={jobDetail}
-        onReload={loadJobs}
-        onCancel={cancelJob}
-      />
-    {:else if activeView === "accounts"}
-      <AccountsView
-        {accounts}
-        loading={accountsLoading}
-        saving={accountSaving}
-        jobsLoading={jobController.loading}
-        {editingAccountId}
-        bind:label={accountLabel}
-        bind:loginName={accountLoginName}
-        bind:password={accountPassword}
-        syncingCount={syncingAccountCount()}
-        syncAllDisabled={!hasSyncableEnabledAccount()}
-        getActiveSyncJob={activeAccountSyncJob}
-        getStatusLabel={accountStatusLabel}
-        getStatusTone={accountStatusTone}
-        onReload={loadAccounts}
-        onSyncAll={syncEnabledAccounts}
-        onToggleEnabled={setAccountEnabled}
-        onEdit={editAccount}
-        onSync={syncAccount}
-        onCancelSync={cancelAccountSync}
-        onRemove={removeAccount}
-        onReset={resetAccountForm}
-        onSave={saveAccount}
-      />
-    {:else if activeView === "activity"}
-      <ActivityView
-        jobs={visibleJobs()}
-        jobLoading={jobController.loading}
-        auditEvents={visibleAuditEvents()}
-        {auditLoading}
-        {auditLogDir}
-        getJobTitle={jobAccountLabel}
-        getJobDetail={jobDetail}
-        onReloadJobs={loadJobs}
-        onClearJobs={clearFinishedJobs}
-        onCancelJob={cancelJob}
-        onOpenAuditFolder={openAuditLogDir}
-        onReloadAudit={loadAuditEvents}
-      />
-    {:else}
-      <SettingsView
-        bind:libraryRoot
-        bind:downloadRoot
-        loading={settingsLoading}
-        saving={settingsSaving}
-        {appInfo}
-        {appInfoLoading}
-        {updatePhase}
-        {updateProgressMessage}
-        onReload={loadSettings}
-        onChooseDirectory={chooseSettingsDirectory}
-        onUseDefaultDownloadRoot={useDefaultDownloadRoot}
-        onSave={saveSettings}
-        onOpenGitHub={() => openExternalUrl(GITHUB_URL, "GitHub")}
-        onOpenDlsite={() => openExternalUrl(DLSITE_URL, "DLsite")}
-        onCheckForUpdates={checkForUpdates}
-      />
-    {/if}
-
-  <ConfirmationDialogView dialog={confirmationDialog} onClose={closeConfirmationDialog} />
+  <ConfirmationDialogView
+    dialog={confirmationDialog}
+    onClose={closeConfirmationDialog}
+  />
 
   <TwoFactorDialog
     request={twoFactor.active}
@@ -1692,9 +1630,29 @@
     onSubmit={(code) => void twoFactor.submit(code)}
     onCancel={() => void twoFactor.cancel()}
   />
-  <BulkDownloadDialogView dialog={bulkDownloadDialog} onClose={closeBulkDownloadDialog} />
+  <BulkDownloadDialogView
+    dialog={bulkDownloadDialog}
+    onClose={closeBulkDownloadDialog}
+  />
   <ProductDetailDialog
     detail={productDetail}
+    activeJob={productDetail
+      ? activeWorkDownloadJob(productDetail.workId)
+      : null}
+    downloadDisabled={productDetail
+      ? productDownloadActionDisabled(
+          productDetail,
+          activeWorkDownloadJob(productDetail.workId),
+        )
+      : true}
+    onDownload={() => productDetail && runProductDownloadAction(productDetail)}
+    onDownloadArchives={() =>
+      productDetail && downloadProductArchivesOnly(productDetail)}
+    onMarkDownloaded={() =>
+      productDetail && markProductDownloaded(productDetail)}
+    onRedownload={() => productDetail && redownloadProduct(productDetail)}
+    onDeleteDownload={() =>
+      productDetail && deleteDownloadedProduct(productDetail)}
     bind:customTagInput
     onClose={closeProductDetail}
     onPreview={openProductImageFromDetail}
@@ -1707,36 +1665,11 @@
   />
 
   {#if productImagePreview}
-    <ProductImagePreviewView preview={productImagePreview} onClose={closeProductImage} />
-  {/if}
-
-  {#if chipTooltip}
-    <div
-      class="chip-tooltip"
-      role="tooltip"
-      style={`left: ${chipTooltip.left}px; top: ${chipTooltip.top}px;`}
-    >
-      {chipTooltip.text}
-    </div>
-  {/if}
-
-  {#if productActionMenu}
-    {@const menuProduct = productActionMenuProduct()}
-    {#if menuProduct}
-      {@const menuDownloadJob = activeWorkDownloadJob(menuProduct.workId)}
-      <ProductActionMenuView
-        workId={menuProduct.workId}
-        downloadStatus={menuProduct.download.status}
-        busy={!!menuDownloadJob}
-        left={productActionMenu.left}
-        top={productActionMenu.top}
-        onClose={closeProductActionMenu}
-        onDownloadArchives={() => downloadProductArchivesOnly(menuProduct)}
-        onMarkDownloaded={() => markProductDownloaded(menuProduct)}
-        onRedownload={() => redownloadProduct(menuProduct)}
-        onDeleteDownload={() => deleteDownloadedProduct(menuProduct)}
-      />
-    {/if}
+    <ProductImagePreviewView
+      onSave={commands.saveProductCover}
+      preview={productImagePreview}
+      onClose={closeProductImage}
+    />
   {/if}
 
   <ToastStack {toasts} onDismiss={dismissToast} />
@@ -1752,21 +1685,4 @@
   :global(body) {
     margin: 0;
   }
-
-  .chip-tooltip {
-    position: fixed;
-    z-index: 50;
-    max-width: 320px;
-    padding: 7px 9px;
-    border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    color: var(--text);
-    background: color-mix(in srgb, var(--panel-raised) 94%, black);
-    box-shadow: 0 12px 28px rgb(0 0 0 / 34%);
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 1.35;
-    pointer-events: none;
-  }
-
 </style>

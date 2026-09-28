@@ -1,9 +1,12 @@
-/* Story-only utilities: prefixed tokens/classes, no global Preflight reset. */
+/* Shared application and Storybook tokens/utilities, without a Preflight reset. */
 @import "tailwindcss/theme.css" layer(theme) prefix(dm);
 @import "tailwindcss/utilities.css" source(none);
-@source "./";
+@source "../components";
+@source "../features";
+@source "../../routes";
+@source "../../stories";
 
-/* Edit roles here to restyle the draft without changing component markup. */
+/* Edit roles here to restyle the application without changing component markup. */
 @theme static {
   --spacing: 4px;
   --text-xs: 11px;

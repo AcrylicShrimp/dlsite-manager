@@ -13,22 +13,14 @@
   save/cancel/retry, complete diagnostic ZIP and actual log-folder opening. Support
   summary automatic copy fell back to a text field in this session. Verify native
   clipboard support, startup-failure export, browser links and other desktop systems.
-- The redesign checkpoint includes the earlier Activity overflow patch,
-  but the maintainer rejected its cramped, nested-scroll UX. Redesign scrolling,
-  navigation and list/detail flows consistently across the app before treating
-  that patch as release-ready. Reference research: `docs/ui-reference-research.md`.
-  The redesign direction is now accepted for cutover; the published 3.4.0 remains unchanged.
-- Five-screen Storybook redesign draft and equal-viewport A/B comparison are now
-  available under Redesign/Compare; see `docs/ui-redesign-preview.md`. The maintainer
-  accepted this visual checkpoint on 2026-09-28 and authorized production cutover. Thumbnail/title/maker grid
-  direction is accepted; full filtering and product detail preservation is required
-  and restored in the prototype, along with Back to top. Production integration must preserve native action
-  flows, loading/error states, query pagination and job cancellation.
-  The draft now uses Tailwind-based shared controls and semantic colors in
-  `src/stories/redesign/draft.css`; inspect Redesign/Controls alongside the A/B
-  workbench. Tailwind is currently enabled for Storybook only; production setup is part of cutover.
-
-- MFA is now represented in the redesign comparison (initial/rejected/submitting
-  scenarios and interactive retry/cancel flow). During production integration,
-  connect the accepted dialog to the existing TwoFactorController/native events;
-  do not carry over the Storybook test-code simulation.
+- Production UI cutover is implemented from the approved checkpoint: shared Tailwind
+  controls and semantic colors, one main scroller, compact library/full detail,
+  account edit/MFA, download queue, Activity tabs and Settings tabs. See
+  `docs/ui-redesign-preview.md`. Published 3.4.0 remains unchanged.
+- App/Production workspace now mounts the real route/controllers against isolated
+  IPC fixtures; Redesign/Compare is current cutover versus the approved prototype,
+  not a frozen old-layout comparison. Shared tokens live in
+  `src/lib/styles/workspace.css`; Tailwind is enabled in production too.
+- Before a release, smoke-test the packaged app on native platforms, especially
+  cover Save image (download, save/cancel/write errors), MFA above other dialogs,
+  and webview focus/scroll rendering. Browser coverage uses mocked native IPC.
