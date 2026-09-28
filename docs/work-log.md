@@ -746,3 +746,284 @@
   serves 3.4.0 and the three expected platforms. Updated release/QA notes and next
   steps. Issue #47 reporter environment, real update installation, live accounts,
   Wayland/GPU and native Windows UI remain unverified; no issue comment was sent.
+
+- Fixed Activity overflow after the maintainer requested it. `ActivityView.svelte`
+  now scrolls the complete view and keeps both job/audit grid rows at least 220px
+  high, preserving their internal list scrolling and distributing spare height on
+  larger windows. Removed the inconsistent narrow-width row override. Added an
+  InAppShell Storybook variant using the actual sidebar/header and documented the
+  scroll boundary in the workbench design. #47 remains upstream-waiting as directed.
+- Validation: Svelte check (0 errors/warnings), production frontend build and diff
+  check passed. Browser-driven Storybook checks in Chromium and WebKit covered
+  800×600, 1440×1100 and 390×700 with exported-path status plus support-summary text
+  expanded. Wheel scrolling exposed Open Folder; a real coordinate click reached
+  its callback; audit-list scrolling and absence of horizontal overflow were checked.
+  Reapplying the old CSS at 800px reproduced the blocked outer wheel scroll in both
+  engines. Native diagnostic commands were fixture responses for these layout checks.
+  No Rust change or new unit test; no packaged AppImage rebuild, commit or release.
+
+- The maintainer rejected the nested-scroll Activity layout and requested an
+  application-wide UI/UX redesign. Entered design-only discussion; recorded
+  official Heroic, qBittorrent, Zotero, calibre and HandBrake references in
+  `docs/ui-reference-research.md`, separating observations from proposals. Viewed
+  official Heroic library/download, qBittorrent and HandBrake queue screenshots;
+  product wheel behavior was not tested. calibre browser navigation timed out,
+  but its official manual was available through web retrieval. Updated next steps
+  so the prior scroll patch is not mistaken for an accepted release-ready design.
+  No source changes or runtime tests in this research step; documentation diff
+  checked for whitespace. Navigation/details decisions remain open.
+
+- Built the explicitly requested five-screen Storybook redesign prototype and
+  A/B workbench under `src/stories/redesign/`, with shared synthetic fixtures and
+  Redesign/Compare + Redesign/Workspace stories. The baseline composes working-tree
+  production views; the draft uses a common single content scroller, concurrent
+  download overview, separated history/log views and on-demand details/export.
+  Equal-sized iframes support side-by-side or same-position switching, synchronized
+  navigation/scenarios and 800×600, 1200×800, 390×700 viewport selection. Recorded
+  prototype limits and non-final design choices in `docs/ui-redesign-preview.md`.
+- Validation: Svelte check passed with zero diagnostics; Storybook production
+  bundle passed. Chromium/WebKit checks covered all five views at all three sizes,
+  long/empty data, real wheel scrolling, preserved scroll on dialog/navigation
+  return, search, failure-to-export flow, account/settings edits, and synchronized
+  comparison canvases. Fixed stale preview notifications intercepting next-view
+  controls. A narrow WebKit check needed settled layout before wheel input; the
+  complete rerun passed. Scoped axe WCAG 2 A/AA checks found no violations on the
+  five default draft workspaces. Native actions remain simulated; no production
+  integration, packaged runtime validation, commit or release in this step.
+
+- Addressed maintainer feedback on the Storybook draft: retain the accepted
+  thumbnail/title/maker grid while restoring all production filter groups and
+  the complete product-detail field/action surface. `DraftLibraryFilters` reuses
+  production `LibraryFilters`; both comparison canvases now have functional
+  fixture search/filter/sort and details. Added a shared story-only query/detail
+  projection, richer multi-owner/local-only/failed-work fixtures, and
+  `DraftProductDetail` with credits, identity, dates, ownership, download paths,
+  error information, translated variants, cover preview, copy and custom tags.
+  Tags update the grid, search and facet counts in memory. Native actions remain
+  simulated. Added conditional Back to top with reduced-motion handling and
+  heading focus; detail close stays visible during long scrolling.
+- Recorded a capability preservation matrix and clarified that visual simplification
+  does not authorize dropping functionality. Validation: Svelte check has zero
+  diagnostics; Storybook build passed. Chromium/WebKit checks at 800×600,
+  1200×800 and 390×700 exercised filter combinations/tag cycling, tag edit/search,
+  full/sparse/error details, baseline detail access, and top navigation. Full
+  five-view comparison/scroll-return checks also passed; scoped axe checks found
+  no WCAG 2 A/AA violations in expanded filters/detail. Browser tests were rerun
+  after formatting HMR and initial Storybook args interfered with fixture setup;
+  final tests explicitly wait for mounting before selecting their scenario.
+  No production API changes, packaged runtime test, commit or release.
+
+- Refined the Storybook draft after visual feedback: fixed zero horizontal padding
+  on shared text actions and sidebar download buttons; kept row-title hover
+  text-only. Main Back to top is now an icon-only 40px circle with accessible name
+  and tooltip. Reorganized `DraftProductDetail` around identity/status and visible
+  custom/DLsite tags, compact credits, and initially collapsed metadata groups;
+  retained every field/action and kept download errors visible near the top.
+  Added `DraftWorkBadges` shared by covers/details, preserving existing kind hues
+  and showing age ratings alongside them; moved downloaded markers away from badges.
+- Validation: `pnpm check` has zero errors/warnings; Storybook build passed.
+  Chromium/WebKit at 800×600, 1200×800 and 390×700 passed hover padding, badge
+  colors/fit, visible tags, tag add/dedup/remove, metadata disclosure/field access,
+  visible download error, dialog overflow and icon-only Back to top behavior.
+  Visually checked desktop and narrow WebKit detail captures. Driver/captures are
+  ignored under `.linux-qa/`; `git diff --check` passed. Production UI is unchanged.
+
+- Replaced the draft library's completed checkmark with requested status icons:
+  unmarked when not downloaded, clock when queued, download arrow / open box
+  while downloading / unpacking, folder when available locally. Added state
+  tooltips and accessible names. Active jobs override saved product state;
+  cancelling a preview download clears its stale in-progress state. Shared
+  fixtures now include an unpacking job, with matching file-progress text.
+- Validation: Svelte check passed without diagnostics. Chromium/WebKit at 800px
+  and 390px passed state/icon counts, badge separation, queue addition,
+  running/queued cancellation and no horizontal overflow. Visually inspected
+  the desktop capture; `git diff --check` passed. Storybook prototype only.
+
+- Refined draft custom-tag chips: removed the rounded inner divider that made
+  removal look like a second attached button. Chips now have one outer outline,
+  a compact label and inset 24px remove target with hover/focus feedback.
+  Chromium/WebKit checks passed Korean tag addition, keyboard removal and narrow
+  layout with a 64-character Korean tag; visually checked the hover capture.
+  CSS-only change; no additional build needed. `git diff --check` passed.
+
+- Removed redundant explanatory copy from the Storybook draft following maintainer
+  feedback: logging assurance/export introduction, page and brand taglines,
+  download destination/future-list text, duplicate waiting-state text, account
+  credential reassurance and obvious library-folder description. Export retains
+  scope selection/action; staging-folder distinction, recovery guidance, errors,
+  bulk scope and prototype-only notices remain. Removed orphaned CSS and adjusted
+  settings/footer spacing. Recorded the copy rule in `docs/ui-redesign-preview.md`.
+- Validation: Svelte check passed with zero diagnostics after removing an unused
+  About paragraph selector. Chromium/WebKit at 800px and 390px passed all five
+  view layouts, export scope/action and retained settings controls/explanation.
+  `git diff --check` passed. Draft only; no production UI changes.
+
+- Corrected the previous padding fixes: oversized sidebar children/negative
+  offsets and tag hover backgrounds attached to unpadded text caused inconsistent
+  bounds. Introduced story-only `DraftButton` for repeated sidebar/text/icon
+  controls and `DraftTagChip` for padded copy/remove hit areas; migrated their
+  workspace/detail usages. Menu and queue rows now share container width and
+  horizontal insets. Adjusted sidebar parent spacing to fit 800×600 without
+  overflow. Removed negative version spacing and tab underline offsets.
+- Replaced the detail header's negative padding compensation with an unpadded
+  dialog containing separately padded sticky header/body. Documented primitive
+  ownership and the no-overflow-compensation layout rule in preview/workbench notes.
+- Validation: Svelte check and Storybook build passed. Chromium/WebKit at 800×600,
+  1200×800 and 390×700 passed exact sidebar boundary/padding comparisons, five-view
+  layout, tag hover geometry/long Korean labels/keyboard removal, sticky header
+  visibility and actual close clicks, export and account dialogs. Initial driver
+  used an exact Activity name that omitted its failed-job accessible label; updated
+  locator and reran successfully. Desktop hover captures visually checked;
+  `git diff --check` passed. No production control replacement or release.
+
+- Added Tailwind 4.3.3 and its Vite plugin for the Storybook draft after maintainer
+  feedback that per-screen CSS was repeatedly missing control padding. Utilities
+  and variables use the `dm` prefix with no Preflight reset. Production app theme
+  and the Current comparison canvas remain separate. Restarted Storybook after
+  installing the plugin so the running workbench compiled utilities correctly.
+- Expanded shared controls: primary/secondary/text/icon/navigation buttons,
+  tabs/filter choices, padded clickable history/log rows, download/account rows,
+  sidebar, progress, tags and work/age badges. Moved ordinary dialog/form actions
+  onto the button primitive. History/log, download and account rows use 16px
+  insets; removed the redundant active-download location hint. Added the
+  Redesign/Controls/Shared story for hover/focus/disabled/narrow inspection.
+- Centralized literal draft colors in `src/stories/redesign/draft.css` as semantic
+  surface/text/border/action/selection/error roles, separate kind/age/source/tag
+  palettes, and status colors. Remaining scoped page/detail CSS references the
+  same tokens. A scoped bridge themes the reused production LibraryFilters,
+  including excluded tags, without altering the baseline. Native actions remain
+  simulated. Documented the theme boundary and component ownership in design notes.
+- Validation: Svelte check passed with zero diagnostics; all 13 frontend tests
+  passed; Storybook and application builds passed. Chromium/WebKit at 800×600,
+  1200×800 and 390×700 passed five-view interactions, actual wheel scrolling,
+  scroll restoration, A/B data/navigation/viewport synchronization, sidebar bounds,
+  tag hit areas/long labels/removal, and sticky dialogs. Additional checks passed
+  semantic-token propagation across surfaces, unchanged kind colors/baseline,
+  shared-control hover/focus/disabled behavior, all library filters and tag
+  editing/search, filter theme overrides and destructive-action tone. Color
+  assertions wait for the production filter's 120ms transition before sampling.
+  Visually checked desktop rows and narrow controls/detail captures.
+  `git diff --check` passed; no raw colors or compensating negative margins remain
+  in Draft components. No production UI migration, commit or release.
+
+- Replaced duplicate library/log search markup with `DraftSearchField`. Removed
+  the input's inset rectangular focus outline; the existing outer border changes
+  color on focus, preserving keyboard visibility without adding another box.
+  Clearing a library query now returns focus to the input. Uses shared Tailwind
+  spacing and semantic colors; other form fields retain their focus styles.
+- Validation: Svelte check passed. Chromium/WebKit at 800px and 390px passed
+  keyboard entry, no inner outline, stable field bounds, filtering, clear/refocus
+  and log search; visually checked the focused search capture. An overbroad
+  markup replacement was caught by the compiler and restored before validation;
+  full five-view/A-B checks at all three sizes and library filter/tag checks were
+  rerun successfully. Query test uses a unique work ID because fixture titles
+  repeat; filter color checks await the actual transition result rather than a
+  fixed delay. `git diff --check` passed. Storybook draft only.
+
+- Aligned the search clear control with the leading search icon using equal 32px
+  slots and parent padding. Added the shared button's field-icon variant: no hover
+  fill, semantic text hover and inset keyboard focus. Reserved the clear slot so
+  typing/clearing does not change the input's width; clearing retains input focus.
+- Validation: Svelte check passed with zero diagnostics. Chromium/WebKit at 800px
+  and 390px passed symmetric icon positions, vertical centering, transparent hover,
+  stable input width, keyboard clear/refocus and restored results. Visually checked
+  the hovered desktop capture; `git diff --check` passed. Storybook draft only.
+- WebKit's default Tab navigation skips buttons; its keyboard check uses Option+Tab
+  to include the clear button. That check passed at both widths, including Enter
+  activation and focus returning to the input.
+
+- Removed the redundant Back to library button from the draft detail dialog; the
+  sticky close control remains. Moved archive-only, mark downloaded, re-download
+  and delete actions beside the primary Download/Open folder action above tags,
+  preserving state-dependent availability and simulated callbacks. The renamed
+  Download details disclosure now contains information only.
+- Added shared Tailwind `DraftDisclosure` for detail metadata: padded summaries,
+  subtle keyboard background/text/underline focus, native Enter/Space behavior,
+  and arrows scoped to each disclosure's own open state. Updated the preview
+  preservation matrix and control rules.
+- Validation: Svelte check passed with zero diagnostics. Chromium/WebKit at 800px
+  and 390px passed queued/not-downloaded/downloaded/failed action states, visible
+  placement, simulated re-download callback, disclosure keyboard toggles and
+  nested arrow states, sticky close and no horizontal overflow. Visually checked
+  desktop actions and narrow focused metadata. `git diff --check` passed.
+  Storybook draft only; no production migration or release.
+
+- Replaced inline detail-cover expansion with the shared story-only
+  `DraftImagePreview` native modal. The underlying detail layout/scroll stays
+  fixed; close and Escape dismiss only the image and return focus to the cover.
+  Added Save image with an in-popup simulated save-dialog response, keeping
+  actual image fetching/file persistence outside this acceptance prototype.
+- Close updates preview state synchronously to avoid a delayed native close event
+  racing an immediate reopen. Explicitly restore cover focus without scrolling
+  because WebKit does not focus clicked buttons consistently. Save feedback stays
+  in the image dialog rather than adding a second message to the underlying detail.
+- Validation: Svelte check passed with zero diagnostics. Chromium/WebKit at 800px
+  and 390px passed popup/image bounds, unchanged detail geometry, save feedback,
+  Escape and button dismissal, immediate keyboard reopen, and focus restoration.
+  The initial driver located the parent by its transient product-dialog class
+  after closing it; switched to the stable dialog identity. Visually checked
+  desktop and narrow captures; `git diff --check` passed. Storybook draft only.
+
+- Centralized draft focus in Tailwind utilities and semantic focus/shadow tokens.
+  Removed separate outer-outline rules from buttons, tabs, tags, rows, text links,
+  cover controls, disclosures and page-specific forms. Controls use inset bottom
+  markers, rows use background/left markers, text uses underlines, covers use a
+  bottom overlay, and fields reuse existing borders. Primary controls have a
+  contrasting on-accent marker. The reused production filters receive the same
+  scoped treatment; Current comparison styling remains unchanged.
+- Added forced-colors system-outline fallbacks and search/disclosure examples to
+  the shared-controls story. Documented focus ownership in preview/workbench notes.
+  Field border variables avoid scoped CSS overriding the shared focus color;
+  primary shadow has its own token because inherited shadow variables resolve
+  referenced colors before local color overrides.
+- Validation: Svelte check (zero diagnostics), Storybook build and diff checks
+  passed. Chromium/WebKit at 800px and 390px checked 201/181 enabled controls each
+  across five views, filters and dialogs for visible focus without outer outlines.
+  Additional checks passed pointer-versus-keyboard behavior, primary contrast,
+  and Chromium forced-colors fallbacks. Visually inspected row and popup focus.
+  The driver opens metadata before auditing nested controls to avoid WebKit's
+  misleading visibility result inside closed details. Storybook draft only.
+
+- Corrected the draft sidebar's temporary dm mark from mismatched height/width
+  to a nonshrinking square: 32px desktop, 24px narrow, including the border.
+- Validation: Chromium/WebKit confirmed exact square bounds at 800px and 390px;
+  `git diff --check` passed. Styling-only adjustment; no new tests or build needed.
+
+- Reworked draft Settings/About into a compact identity row: square mark beside
+  name/version, update action alongside with natural wrapping, and project/license
+  links below a divider. Extracted `DraftAppMark` so About and the sidebar share
+  square geometry, border and colors instead of duplicating placeholder markup.
+- Validation: Svelte check passed with zero diagnostics. Chromium/WebKit at 800px
+  and 390px passed square bounds, centered identity, title/version alignment,
+  no overflow, update/link callbacks; desktop and narrow captures visually checked.
+  `git diff --check` passed. Storybook draft only.
+
+- Restored missing MFA coverage in the redesign prototype. Added a native draft
+  verification dialog using existing TwoFactorRequest data and shared controls,
+  with account identity, automatic code focus, rejected-code reset/retry, busy
+  state and cancellation. The scenario harness simulates success for 123456 and
+  rejection otherwise; it never calls authentication APIs or persists/logs codes.
+- Added initial/rejected/submitting scenarios to the A/B selector and dedicated
+  workspace stories. Current renders the existing TwoFactorDialog; Draft renders
+  the new dialog. Timers are cleaned up on scenario changes; success/cancel can be
+  replayed through the harness. Documented production-controller integration as
+  follow-up. Named the harness prop previewState to avoid Svelte's state/$state
+  store-rune ambiguity caught by the first compiler check.
+- Validation: Svelte check passed with zero diagnostics, all 13 frontend tests
+  passed, Storybook build and diff checks passed. Chromium/WebKit at 800px and
+  390px passed focus, initial/rejected/submitting, duplicate-submit prevention,
+  success, cancel/Escape, empty-code reset and overflow checks. Both engines
+  passed A/B scenario synchronization and removal; screenshots visually checked.
+  Storybook draft only; production authentication behavior remains unchanged.
+
+- Maintainer accepted the visual direction and requested a checkpoint commit
+  before production cutover. Updated preview status and next steps accordingly.
+  Checkpoint includes the original Activity scroll investigation, equal-viewport
+  A/B workbench, reference notes, shared Tailwind/semantic controls and all reviewed
+  detail/filter/MFA refinements. Production controllers remain the integration
+  boundary; fixture queries, fake native actions, MFA test codes and fixed version
+  text must not enter the application during cutover.
+- Checkpoint validation: Svelte check passed with zero diagnostics, all 13 frontend
+  tests passed, application build passed; latest Storybook build and browser
+  checks are recorded above. `git diff --check` passed. Local commit only; no
+  release or remote push requested in this step.

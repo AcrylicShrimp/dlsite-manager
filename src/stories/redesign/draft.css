@@ -1,0 +1,160 @@
+/* Story-only utilities: prefixed tokens/classes, no global Preflight reset. */
+@import "tailwindcss/theme.css" layer(theme) prefix(dm);
+@import "tailwindcss/utilities.css" source(none);
+@source "./";
+
+/* Edit roles here to restyle the draft without changing component markup. */
+@theme static {
+  --spacing: 4px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --color-draft-background: #171b1c;
+  --color-draft-sidebar: #111516;
+  --color-draft-surface: #1c2221;
+  --color-draft-surface-muted: #15191a;
+  --color-draft-elevated: #232a2b;
+  --color-draft-input: #141a18;
+  --color-draft-ink: #ecf0eb;
+  --color-draft-dim: #a2aba6;
+  --color-draft-placeholder: #85918a;
+  --color-draft-line: #354039;
+  --color-draft-line-subtle: #2b3233;
+  --color-draft-line-strong: #46514a;
+  --color-draft-accent: #afc9ab;
+  --color-draft-focus: var(--dm-color-draft-accent);
+  --color-draft-focus-bg: var(--dm-color-draft-selected);
+  --shadow-draft-focus-control: inset 0 -2px 0 var(--dm-color-draft-focus);
+  --shadow-draft-focus-on-accent: inset 0 -2px 0 var(--dm-color-draft-on-accent);
+  --color-draft-accent-hover: #c0d7bd;
+  --color-draft-on-accent: #17221b;
+  --color-draft-hover: #303839;
+  --color-draft-row-hover: #1e2524;
+  --color-draft-selected: #29342e;
+  --color-draft-selected-text: #d9e5d6;
+  --color-draft-selected-strong: #334438;
+  --color-draft-selected-border: #63795f;
+  --color-draft-error: #e4ae99;
+  --color-draft-error-bg: #382c26;
+  --color-draft-error-border: #493b30;
+  --color-draft-available: #bddeb8;
+  --color-draft-queued: #e7d4a8;
+  --color-draft-in-progress: #b2d8f1;
+  --color-draft-status-bg: #101918ed;
+  --color-draft-tag-bg: #353047;
+  --color-draft-tag-border: #65587e;
+  --color-draft-tag-text: #ded1f5;
+  --color-draft-tag-hover: #514361;
+  --color-draft-genre-bg: #293c37;
+  --color-draft-genre-border: #446256;
+  --color-draft-genre-text: #c0dfcd;
+  --color-draft-progress-track: #333c36;
+  --color-draft-backdrop: #070b0bba;
+  --color-draft-shadow: #0005;
+  --color-draft-shadow-strong: #0008;
+  --color-kind-other-bg: #29302e;
+  --color-kind-other-border: #616a68;
+  --color-kind-other-text: #d5dcd8;
+  --color-kind-audio-bg: #3c321b;
+  --color-kind-audio-border: #947126;
+  --color-kind-audio-text: #f0cc70;
+  --color-kind-image-bg: #233c29;
+  --color-kind-image-border: #438b4c;
+  --color-kind-image-text: #a0e2a8;
+  --color-kind-video-bg: #42283a;
+  --color-kind-video-border: #a54b7c;
+  --color-kind-video-text: #f0b5d4;
+  --color-kind-game-bg: #342947;
+  --color-kind-game-border: #8258b6;
+  --color-kind-game-text: #d3b4f6;
+  --color-kind-voice-comic-bg: #223943;
+  --color-kind-voice-comic-border: #448fa8;
+  --color-kind-voice-comic-text: #a7dcef;
+  --color-source-owned-bg: #233a34;
+  --color-source-owned-text: #b1ddcc;
+  --color-source-local-bg: #223943;
+  --color-source-local-text: #a7dcef;
+  --color-age-all-bg: #233a34;
+  --color-age-all-border: #4a7e6e;
+  --color-age-all-text: #b1ddcc;
+  --color-age-r15-bg: #433322;
+  --color-age-r15-border: #997244;
+  --color-age-r15-text: #efd0a1;
+  --color-age-r18-bg: #462a2d;
+  --color-age-r18-border: #ac5c63;
+  --color-age-r18-text: #f1b9bd;
+}
+
+/* Shared keyboard focus: keep indicators inside the control's existing bounds. */
+@utility draft-focus-control {
+  &:focus-visible {
+    outline: none;
+    box-shadow: var(--dm-shadow-draft-focus-control);
+  }
+  @media (forced-colors: active) {
+    &:focus-visible {
+      outline: 1px solid Highlight;
+      outline-offset: -2px;
+    }
+  }
+}
+
+@utility draft-focus-row {
+  &:focus-visible {
+    outline: none;
+    background-color: var(--dm-color-draft-focus-bg);
+    box-shadow: inset 2px 0 0 var(--dm-color-draft-focus);
+  }
+  @media (forced-colors: active) {
+    &:focus-visible {
+      outline: 1px solid Highlight;
+      outline-offset: -2px;
+    }
+  }
+}
+
+@utility draft-focus-text {
+  &:focus-visible {
+    outline: none;
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 4px;
+  }
+}
+
+@utility draft-focus-field {
+  &:focus {
+    --draft-field-border: var(--dm-color-draft-focus);
+    outline: none;
+    border-color: var(--dm-color-draft-focus);
+    box-shadow: none;
+  }
+  @media (forced-colors: active) {
+    &:focus {
+      outline: 1px solid Highlight;
+      outline-offset: -2px;
+    }
+  }
+}
+
+@utility draft-focus-image {
+  position: relative;
+  &:focus-visible {
+    outline: none;
+  }
+  &:focus-visible::after {
+    content: "";
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    height: 3px;
+    background: var(--dm-color-draft-focus);
+    pointer-events: none;
+  }
+  @media (forced-colors: active) {
+    &:focus-visible {
+      outline: 1px solid Highlight;
+      outline-offset: -2px;
+    }
+  }
+}

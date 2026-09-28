@@ -83,11 +83,12 @@
   .activity-layout {
     display: grid;
     flex: 1 1 auto;
-    grid-template-rows: auto minmax(120px, 0.42fr) minmax(0, 1fr);
+    grid-template-rows: auto minmax(220px, 0.42fr) minmax(220px, 1fr);
     gap: 18px;
     min-width: 0;
     min-height: 0;
-    overflow: hidden;
+    overflow: auto;
+    scrollbar-gutter: stable;
   }
 
   .activity-panel {
@@ -141,11 +142,6 @@
   }
 
   @media (max-width: 720px) {
-    .activity-layout {
-      grid-template-rows: auto auto;
-      overflow: auto;
-    }
-
     .panel-title,
     .panel-actions {
       align-items: stretch;

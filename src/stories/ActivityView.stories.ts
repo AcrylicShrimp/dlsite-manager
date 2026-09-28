@@ -15,3 +15,4 @@ export const Populated: Story = {};
 export const Loading: Story = { args: { viewState: "loading" } };
 export const Empty: Story = { args: { viewState: "empty" } };
 export const MissingAuditDirectory: Story = { args: { withAuditDirectory: false } };
+export const InAppShell: Story = { args: { inAppShell: true } };

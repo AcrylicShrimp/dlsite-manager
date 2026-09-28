@@ -1,5 +1,6 @@
 <script lang="ts">
   import ActivityView from "$lib/features/activity/ActivityView.svelte";
+  import AppShell from "$lib/components/AppShell.svelte";
   import type { AuditEvent, JobSnapshot } from "$lib/model/types";
   import { accountSyncJob } from "../fixtures/accounts";
   import { failedDownloadJob } from "../fixtures/jobs";
@@ -7,9 +8,11 @@
   let {
     viewState = "populated",
     withAuditDirectory = true,
+    inAppShell = false,
   }: {
     viewState?: "populated" | "loading" | "empty";
     withAuditDirectory?: boolean;
+    inAppShell?: boolean;
   } = $props();
 
   const completedJob: JobSnapshot = {
@@ -43,7 +46,7 @@
   let lastAction = $state("No action yet");
 </script>
 
-<main class="story-surface">
+{#snippet activity()}
   <ActivityView
     {jobs}
     jobLoading={viewState === "loading"}
@@ -58,8 +61,19 @@
     onOpenAuditFolder={() => (lastAction = "Open audit folder")}
     onReloadAudit={() => (lastAction = "Reload audit")}
   />
-  <p aria-live="polite">{lastAction}</p>
-</main>
+{/snippet}
+
+{#if inAppShell}
+  <AppShell activeView="activity" onNavigate={(view) => (lastAction = `Navigate ${view}`)}>
+    {@render activity()}
+  </AppShell>
+  <p class="shell-action" aria-live="polite">{lastAction}</p>
+{:else}
+  <main class="story-surface">
+    {@render activity()}
+    <p aria-live="polite">{lastAction}</p>
+  </main>
+{/if}
 
 <style>
   .story-surface {
@@ -72,6 +86,8 @@
   }
 
   p { margin: 0; color: var(--text-subtle); font-size: 12px; text-align: right; }
+
+  .shell-action { position: fixed; bottom: 2px; left: 4px; pointer-events: none; }
 
   @media (max-width: 720px) {
     .story-surface { width: calc(100vw - 24px); height: auto; min-height: calc(100vh - 24px); margin: 12px auto; }
