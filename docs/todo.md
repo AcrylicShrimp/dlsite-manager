@@ -6,10 +6,11 @@
   then [edit priority in Settings](plans/2026-10-19.02-edit-name-language-priority-in-settings.md).
   All three steps are complete. Database upgrade, Rust/frontend checks, builds, and mocked-IPC browser regression checks passed.
 
-- Preparing 3.6.0 for the name-language preference feature; see
-  [release notes](releases/3.6.0.md). Version metadata is synchronized and local
-  workspace/frontend release checks passed. Platform artifacts will be built
-  into a draft release; native desktop acceptance remains pending.
+- 3.6.0 is prepared as a draft for the name-language preference feature; see
+  [release notes](releases/3.6.0.md). Main/release CI and all platform builds
+  passed. All 13 assets, checksums, updater signatures/manifest and macOS app
+  signature/version are verified. Native desktop acceptance and publication
+  remain pending; the public latest release is still 3.5.0.
 
 - Stable 3.5.0 is published with the redesigned workspace and native-QA fixes.
   All platform builds and uploaded artifact signatures/checksums passed; public

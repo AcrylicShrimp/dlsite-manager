@@ -1273,3 +1273,17 @@
   real-account access. Frontend scripts used the previously documented pnpm
   version-switch workaround. Release automation will assemble a draft from
   the explicit tag after main/release are pushed.
+
+- Pushed main/release to `d10e0f5` and annotated `v3.6.0` there. Main CI
+  `39217161092`, release branch CI `39217164967`, and every platform/publish
+  job in release run `39217176536` passed. Created the 3.6.0 draft with the
+  authored release notes; the workflow attached all 13 expected files.
+  `gh release download v3.6.0` plus a temporary Node verifier checked all
+  SHA-256 manifests, four Ed25519/BLAKE2b updater signatures, signed version
+  comments and all three latest.json entries against the configured public
+  key. The downloaded macOS app passed `codesign --verify --deep --strict`
+  and its plist reports 3.6.0. Verification files are in
+  `/tmp/dlsite-manager-3.6.0-release.diPc7y`. Updated release/todo notes with
+  actual results. Native desktop acceptance/updater installation remain
+  unverified; public Latest remains 3.5.0 and 3.6.0 remains a draft as requested
+  by the release-preparation scope.
