@@ -2,6 +2,7 @@ import type { ProductCreditFieldDefinition, ProductTypeCodeDetail } from "./type
 
 export const GITHUB_URL = "https://github.com/AcrylicShrimp/dlsite-manager";
 export const DLSITE_URL = "https://www.dlsite.com/";
+export const DEFAULT_LANGUAGE_PRIORITY = ["en_US", "ja_JP", "ko_KR", "zh_TW", "zh_CN"];
 
 export const TYPE_FILTERS = [
   ["audio", "Audio"],

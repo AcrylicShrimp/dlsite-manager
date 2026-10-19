@@ -96,7 +96,7 @@
     onClearTypes: () => void;
     onToggleType: (value: string) => void;
     onClearMakers: () => void;
-    onToggleMaker: (name: string) => void;
+    onToggleMaker: (key: string) => void;
     onClearCustomTags: () => void;
     onCycleCustomTag: (name: string) => void;
     onPreviousPage: () => void;

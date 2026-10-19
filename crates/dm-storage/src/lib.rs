@@ -1,4 +1,7 @@
 use serde::Deserialize;
+mod names;
+use names::{preferred_name, product_query, push_valid_name_map};
+pub use names::{LanguagePriority, DEFAULT_LANGUAGE_PRIORITY};
 mod finalization;
 pub use finalization::DownloadFinalization;
 use sqlx::{
@@ -14,6 +17,7 @@ use std::{
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 const LIBRARY_ROOT_KEY: &str = "library_root";
 const DOWNLOAD_ROOT_KEY: &str = "download_root";
+const LANGUAGE_PRIORITY_KEY: &str = "language_priority";
 const MISSING_WORK_DETAIL_STATUS: &str = "missing_from_content_works";
 const CUSTOM_TAG_MAX_CHARS: usize = 64;
 pub const LOCAL_PRODUCT_OWNER_ID: &str = "__local__";
@@ -35,6 +39,8 @@ pub enum StorageError {
     InvalidStoredValue { field: &'static str, value: String },
     #[error("invalid custom tag {tag:?}: {reason}")]
     InvalidCustomTag { tag: String, reason: &'static str },
+    #[error("invalid language priority: {0}")]
+    InvalidLanguagePriority(&'static str),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,6 +154,14 @@ pub struct LocalWorkDownloadImport {
 pub struct AppSettings {
     pub library_root: Option<String>,
     pub download_root: Option<String>,
+    pub language_priority: LanguagePriority,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AppSettingsPatch {
+    pub library_root: Option<String>,
+    pub download_root: Option<String>,
+    pub language_priority: Option<LanguagePriority>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,10 +189,8 @@ pub struct AccountUpsert {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CachedWork {
     pub work_id: String,
-    pub title: String,
     pub title_json: String,
     pub maker_id: Option<String>,
-    pub maker_name: Option<String>,
     pub maker_json: Option<String>,
     pub work_type: Option<String>,
     pub age_category: Option<String>,
@@ -328,7 +340,8 @@ pub struct ProductListQuery {
     pub age_category: Option<ProductAgeCategory>,
     pub age_categories: Vec<ProductAgeCategory>,
     pub source_groups: Vec<ProductSourceGroup>,
-    pub maker_names: Vec<String>,
+    pub maker_keys: Vec<String>,
+    pub language_priority: LanguagePriority,
     pub custom_tag_names: Vec<String>,
     pub excluded_custom_tag_names: Vec<String>,
     pub sort: ProductSort,
@@ -347,7 +360,8 @@ impl Default for ProductListQuery {
             age_category: None,
             age_categories: Vec::new(),
             source_groups: Vec::new(),
-            maker_names: Vec::new(),
+            maker_keys: Vec::new(),
+            language_priority: LanguagePriority::default(),
             custom_tag_names: Vec::new(),
             excluded_custom_tag_names: Vec::new(),
             sort: ProductSort::LatestPurchaseDesc,
@@ -371,6 +385,7 @@ pub struct ProductFilterFacets {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductMakerFacet {
+    pub key: String,
     pub name: String,
     pub count: u64,
 }
@@ -513,6 +528,9 @@ impl Storage {
             match key.as_str() {
                 LIBRARY_ROOT_KEY => settings.library_root = Some(value),
                 DOWNLOAD_ROOT_KEY => settings.download_root = Some(value),
+                LANGUAGE_PRIORITY_KEY => {
+                    settings.language_priority = LanguagePriority::from_stored(&value)?
+                }
                 _ => {}
             }
         }
@@ -520,18 +538,43 @@ impl Storage {
         Ok(settings)
     }
 
-    pub async fn save_app_settings(&self, settings: &AppSettings) -> Result<()> {
+    pub async fn save_app_settings_patch(&self, patch: &AppSettingsPatch) -> Result<AppSettings> {
         let mut transaction = self.begin_write().await?;
-
+        let priority = if let Some(priority) = &patch.language_priority {
+            priority.clone()
+        } else {
+            let connection = transaction
+                .transaction
+                .as_mut()
+                .ok_or(StorageError::TransactionFinished)?;
+            let stored: Option<String> =
+                sqlx::query_scalar("SELECT value FROM app_settings WHERE key = ?")
+                    .bind(LANGUAGE_PRIORITY_KEY)
+                    .fetch_optional(&mut **connection)
+                    .await?;
+            stored
+                .as_deref()
+                .map(LanguagePriority::from_stored)
+                .transpose()?
+                .unwrap_or_default()
+        };
         transaction
-            .set_setting(LIBRARY_ROOT_KEY, settings.library_root.as_deref())
+            .set_setting(LIBRARY_ROOT_KEY, patch.library_root.as_deref())
             .await?;
         transaction
-            .set_setting(DOWNLOAD_ROOT_KEY, settings.download_root.as_deref())
+            .set_setting(DOWNLOAD_ROOT_KEY, patch.download_root.as_deref())
             .await?;
+        if patch.language_priority.is_some() {
+            transaction
+                .set_setting(LANGUAGE_PRIORITY_KEY, Some(&priority.to_json()))
+                .await?;
+        }
         transaction.commit().await?;
-
-        Ok(())
+        Ok(AppSettings {
+            library_root: patch.library_root.clone(),
+            download_root: patch.download_root.clone(),
+            language_priority: priority,
+        })
     }
 
     pub async fn accounts(&self) -> Result<Vec<Account>> {
@@ -720,7 +763,7 @@ impl Storage {
 
     pub async fn work_needs_local_metadata_hydration(&self, work_id: &str) -> Result<bool> {
         let row = sqlx::query(
-            "SELECT title, maker_name, raw_json
+            "SELECT title_json, maker_json, raw_json
              FROM works
              WHERE work_id = ?1",
         )
@@ -732,8 +775,10 @@ impl Storage {
             return Ok(true);
         };
 
-        let title: String = row.try_get("title")?;
-        let maker_name: Option<String> = row.try_get("maker_name")?;
+        let title_json: String = row.try_get("title_json")?;
+        let maker_json: Option<String> = row.try_get("maker_json")?;
+        let title = preferred_name(Some(&title_json)).unwrap_or_else(|| work_id.to_owned());
+        let maker_name = preferred_name(maker_json.as_deref());
         let raw_json: String = row.try_get("raw_json")?;
 
         Ok(cached_work_needs_local_metadata_hydration(
@@ -779,25 +824,55 @@ impl Storage {
         })
     }
 
+    pub async fn available_name_languages(&self) -> Result<Vec<String>> {
+        let mut builder = QueryBuilder::<Sqlite>::new("");
+        for (index, column) in ["w.title_json", "w.maker_json"].iter().enumerate() {
+            if index > 0 {
+                builder.push(" UNION ");
+            }
+            builder.push("SELECT name.key AS code FROM works w, json_each(");
+            push_valid_name_map(&mut builder, column);
+            builder.push(") AS name WHERE name.type = 'text' AND trim(name.value) <> '' AND trim(name.key) <> ''");
+        }
+        builder.push(" ORDER BY code COLLATE BINARY");
+        Ok(builder.build_query_scalar().fetch_all(&self.pool).await?)
+    }
+
     pub async fn product_filter_facets(
         &self,
         query: &ProductListQuery,
     ) -> Result<ProductFilterFacets> {
-        let mut builder = QueryBuilder::<Sqlite>::new(
-            "SELECT
-                w.maker_name AS maker_name,
-                COUNT(DISTINCT w.work_id) AS work_count
-             FROM works w
-             WHERE 1 = 1",
+        let mut builder = product_query(&query.language_priority);
+        builder.push(
+            ", matching_makers AS (
+                SELECT w.work_id, w.maker_key, w.maker_json
+                FROM named_works w WHERE w.maker_key IS NOT NULL",
         );
-
         push_product_visibility_filter(&mut builder, query);
         push_product_filters_internal(&mut builder, query, false, true);
         builder.push(
-            " AND w.maker_name IS NOT NULL
-              AND trim(w.maker_name) <> ''
-             GROUP BY w.maker_name
-             ORDER BY work_count DESC, lower(w.maker_name) ASC, w.maker_name ASC",
+            "), maker_counts AS (
+                SELECT maker_key, COUNT(DISTINCT work_id) AS work_count
+                FROM matching_makers GROUP BY maker_key
+            ), maker_labels AS (
+                SELECT w.maker_key, trim(name.value) AS maker_label,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY w.maker_key
+                        ORDER BY priority.rank IS NULL, priority.rank,
+                            name.key COLLATE BINARY, trim(name.value) COLLATE BINARY
+                    ) AS label_rank
+                FROM matching_makers w JOIN json_each(",
+        );
+        push_valid_name_map(&mut builder, "w.maker_json");
+        builder.push(
+            ") AS name LEFT JOIN name_priority priority ON priority.code = name.key
+                WHERE name.type = 'text' AND trim(name.value) <> ''
+            )
+            SELECT counts.maker_key, labels.maker_label, counts.work_count
+            FROM maker_counts counts
+            JOIN maker_labels labels ON labels.maker_key = counts.maker_key AND labels.label_rank = 1
+            ORDER BY counts.work_count DESC, lower(labels.maker_label) ASC,
+                labels.maker_label COLLATE BINARY, counts.maker_key COLLATE BINARY",
         );
 
         let rows = builder.build().fetch_all(&self.pool).await?;
@@ -806,17 +881,19 @@ impl Storage {
             .map(|row| {
                 let count: i64 = row.try_get("work_count")?;
                 Ok(ProductMakerFacet {
-                    name: row.try_get("maker_name")?,
+                    key: row.try_get("maker_key")?,
+                    name: row.try_get("maker_label")?,
                     count: count.max(0) as u64,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let mut builder = QueryBuilder::<Sqlite>::new(
+        let mut builder = product_query(&query.language_priority);
+        builder.push(
             "SELECT
                 MIN(wct.name) AS tag_name,
                 COUNT(DISTINCT w.work_id) AS work_count
-             FROM works w
+             FROM named_works w
              JOIN work_custom_tags wct ON wct.work_id = w.work_id
              WHERE 1 = 1",
         );
@@ -846,8 +923,13 @@ impl Storage {
         })
     }
 
-    pub async fn product_detail(&self, work_id: &str) -> Result<ProductDetail> {
-        let row = sqlx::query(
+    pub async fn product_detail(
+        &self,
+        work_id: &str,
+        priority: &LanguagePriority,
+    ) -> Result<ProductDetail> {
+        let mut builder = product_query(priority);
+        builder.push(
             "SELECT
                 w.work_id,
                 w.title,
@@ -890,24 +972,29 @@ impl Storage {
                 wd.started_at AS download_started_at,
                 wd.completed_at AS download_completed_at,
                 wd.updated_at AS download_updated_at
-             FROM works w
+             FROM named_works w
              LEFT JOIN work_downloads wd ON wd.work_id = w.work_id
-             WHERE w.work_id = ?1
+             WHERE w.work_id = ",
+        );
+        builder.push_bind(work_id.to_owned());
+        builder.push(
+            "
                 AND COALESCE(
                     CASE
                         WHEN json_valid(w.raw_json) THEN json_extract(w.raw_json, '$.detail_status')
                     END,
                     ''
-                ) <> ?2",
-        )
-        .bind(work_id)
-        .bind(MISSING_WORK_DETAIL_STATUS)
-        .fetch_optional(&self.pool)
-        .await?
-        .ok_or_else(|| StorageError::NotFound {
-            entity: "product detail",
-            id: work_id.to_owned(),
-        })?;
+                ) <> ",
+        );
+        builder.push_bind(MISSING_WORK_DETAIL_STATUS);
+        let row = builder
+            .build()
+            .fetch_optional(&self.pool)
+            .await?
+            .ok_or_else(|| StorageError::NotFound {
+                entity: "product detail",
+                id: work_id.to_owned(),
+            })?;
 
         let raw_json: String = row.try_get("raw_json")?;
         let download = work_download_state_from_product_row(&row)?;
@@ -973,10 +1060,11 @@ impl Storage {
     }
 
     async fn count_products(&self, query: &ProductListQuery) -> Result<u64> {
-        let mut builder = QueryBuilder::<Sqlite>::new(
+        let mut builder = product_query(&query.language_priority);
+        builder.push(
             "SELECT COUNT(*) AS count FROM (
                  SELECT w.work_id
-                 FROM works w
+                 FROM named_works w
                  WHERE 1 = 1",
         );
 
@@ -991,8 +1079,9 @@ impl Storage {
     }
 
     async fn fetch_product_page(&self, query: &ProductListQuery) -> Result<Vec<ProductListItem>> {
-        let mut builder = QueryBuilder::<Sqlite>::new(
-            "WITH visible_works AS (
+        let mut builder = product_query(&query.language_priority);
+        builder.push(
+            ", visible_works AS (
                  SELECT
                     w.work_id,
                     lower(w.title) AS sort_title,
@@ -1013,7 +1102,7 @@ impl Storage {
                             AND owned_aw.is_current = 1
                             AND owned_a.enabled = 1
                     ) AS latest_purchased_at
-                 FROM works w
+                 FROM named_works w
                  WHERE 1 = 1",
         );
 
@@ -1054,7 +1143,7 @@ impl Storage {
                 a.label AS account_label,
                 aw.purchased_at
              FROM visible_works vw
-             JOIN works w ON w.work_id = vw.work_id
+             JOIN named_works w ON w.work_id = vw.work_id
              LEFT JOIN work_downloads wd ON wd.work_id = w.work_id
              LEFT JOIN account_works aw ON aw.work_id = w.work_id AND aw.is_current = 1
              LEFT JOIN accounts a ON a.id = aw.account_id AND a.enabled = 1
@@ -1622,18 +1711,16 @@ impl WriteTransaction<'_> {
 
         sqlx::query(
             "INSERT INTO works (
-                work_id, title, title_json, maker_id, maker_name, maker_json,
+                work_id, title_json, maker_id, maker_json,
                 work_type, age_category, thumbnail_url, registered_at,
                 published_at, updated_at, raw_json, last_detail_sync_at
              )
              VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12
              )
              ON CONFLICT(work_id) DO UPDATE SET
-                title = excluded.title,
                 title_json = excluded.title_json,
                 maker_id = excluded.maker_id,
-                maker_name = excluded.maker_name,
                 maker_json = excluded.maker_json,
                 work_type = excluded.work_type,
                 age_category = excluded.age_category,
@@ -1645,10 +1732,8 @@ impl WriteTransaction<'_> {
                 last_detail_sync_at = excluded.last_detail_sync_at",
         )
         .bind(&work.work_id)
-        .bind(&work.title)
         .bind(&work.title_json)
         .bind(&work.maker_id)
-        .bind(&work.maker_name)
         .bind(&work.maker_json)
         .bind(&work.work_type)
         .bind(&work.age_category)
@@ -1672,20 +1757,18 @@ impl WriteTransaction<'_> {
 
         sqlx::query(
             "INSERT INTO works (
-                work_id, title, title_json, maker_id, maker_name, maker_json,
+                work_id, title_json, maker_id, maker_json,
                 work_type, age_category, thumbnail_url, registered_at,
                 published_at, updated_at, raw_json, last_detail_sync_at
              )
              VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12
              )
              ON CONFLICT(work_id) DO NOTHING",
         )
         .bind(&work.work_id)
-        .bind(&work.title)
         .bind(&work.title_json)
         .bind(&work.maker_id)
-        .bind(&work.maker_name)
         .bind(&work.maker_json)
         .bind(&work.work_type)
         .bind(&work.age_category)
@@ -1945,14 +2028,14 @@ fn push_product_filters_internal(
         builder.push(")");
     }
 
-    let maker_names = product_maker_names(query);
-    if include_maker_filter && !maker_names.is_empty() {
-        builder.push(" AND w.maker_name IN (");
-        for (index, maker_name) in maker_names.iter().enumerate() {
+    let maker_keys = product_maker_keys(query);
+    if include_maker_filter && !maker_keys.is_empty() {
+        builder.push(" AND w.maker_key IN (");
+        for (index, maker_key) in maker_keys.iter().enumerate() {
             if index > 0 {
                 builder.push(", ");
             }
-            builder.push_bind((*maker_name).to_owned());
+            builder.push_bind((*maker_key).to_owned());
         }
         builder.push(")");
     }
@@ -2007,19 +2090,16 @@ fn push_product_filters_internal(
                 w.work_id LIKE ",
         );
         builder.push_bind(pattern.clone());
+        builder.push(" ESCAPE '\\'");
+        for column in ["w.title_json", "w.maker_json"] {
+            builder.push(" OR EXISTS (SELECT 1 FROM json_each(");
+            push_valid_name_map(builder, column);
+            builder.push(") AS name WHERE name.type = 'text' AND trim(name.value) <> '' AND name.value LIKE ");
+            builder.push_bind(pattern.clone());
+            builder.push(" ESCAPE '\\')");
+        }
         builder.push(
-            " ESCAPE '\\'
-                OR w.title LIKE ",
-        );
-        builder.push_bind(pattern.clone());
-        builder.push(
-            " ESCAPE '\\'
-                OR w.maker_name LIKE ",
-        );
-        builder.push_bind(pattern.clone());
-        builder.push(
-            " ESCAPE '\\'
-                OR EXISTS (
+            " OR EXISTS (
                     SELECT 1
                     FROM json_each(
                         CASE
@@ -2147,10 +2227,10 @@ fn product_source_groups(query: &ProductListQuery) -> Vec<ProductSourceGroup> {
     values
 }
 
-fn product_maker_names(query: &ProductListQuery) -> Vec<&str> {
+fn product_maker_keys(query: &ProductListQuery) -> Vec<&str> {
     let mut names = Vec::new();
 
-    for maker_name in &query.maker_names {
+    for maker_name in &query.maker_keys {
         let maker_name = maker_name.trim();
         if !maker_name.is_empty() {
             push_unique_str(&mut names, maker_name);
@@ -2456,14 +2536,14 @@ fn product_content_size_from_raw_json(raw_json: &str) -> Option<u64> {
 }
 
 fn product_text_values_from_json(raw_json: &str) -> Vec<ProductTextValue> {
-    let Ok(values) = serde_json::from_str::<BTreeMap<String, String>>(raw_json) else {
+    let Ok(values) = serde_json::from_str::<BTreeMap<String, serde_json::Value>>(raw_json) else {
         return Vec::new();
     };
 
     values
         .into_iter()
         .filter_map(|(language, value)| {
-            let value = value.trim();
+            let value = value.as_str()?.trim();
 
             if value.is_empty() {
                 None
@@ -2616,6 +2696,8 @@ fn ensure_changed(result: SqliteQueryResult, entity: &'static str, id: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod language_priority;
+    mod localized_names;
 
     async fn migrated_storage() -> Result<Storage> {
         let storage = Storage::open_in_memory().await?;
@@ -2646,10 +2728,8 @@ mod tests {
     ) -> CachedWork {
         CachedWork {
             work_id: work_id.to_owned(),
-            title: title.to_owned(),
             title_json: format!(r#"{{"ja_JP":"{title}"}}"#),
             maker_id: Some(format!("maker-{maker_name}")),
-            maker_name: Some(maker_name.to_owned()),
             maker_json: Some(format!(r#"{{"ja_JP":"{maker_name}"}}"#)),
             work_type: Some("SOU".to_owned()),
             age_category: Some(age_category.to_owned()),
@@ -2722,7 +2802,7 @@ mod tests {
             .fetch_one(&storage.pool)
             .await?;
 
-        assert_eq!(migration_count, 6);
+        assert_eq!(migration_count, 7);
 
         Ok(())
     }
@@ -2754,20 +2834,24 @@ mod tests {
         .await?;
         assert_eq!(recovery_table_count, 0);
 
-        let settings = AppSettings {
-            library_root: Some("/fixture/library".to_owned()),
-            download_root: Some("/fixture/staging".to_owned()),
-        };
-        storage.save_app_settings(&settings).await?;
-        storage.save_account(&account("upgrade", "Upgrade")).await?;
-        storage
-            .commit_account_sync(&sync_commit(
-                "upgrade",
-                "upgrade-sync",
-                vec![work("RJ000001", "既存の作品", "Maker", "2026-05-01")],
-                vec![account_work("RJ000001", "2026-05-02")],
-            ))
+        let settings = storage
+            .save_app_settings_patch(&AppSettingsPatch {
+                library_root: Some("/fixture/library".to_owned()),
+                download_root: Some("/fixture/staging".to_owned()),
+                ..Default::default()
+            })
             .await?;
+        storage.save_account(&account("upgrade", "Upgrade")).await?;
+        // Seed the old schema directly: current writes intentionally no longer
+        // populate the scalar name columns required by the legacy schema.
+        sqlx::raw_sql(
+            r#"INSERT INTO works (work_id, title, title_json, maker_name, maker_json, published_at, raw_json, last_detail_sync_at)
+               VALUES ('RJ000001', '既存の作品', '{"ja_JP":"既存の作品"}', 'Maker', '{"ja_JP":"Maker"}', '2026-05-01', '{}', '2026-05-26');
+               INSERT INTO sync_runs (id, account_id, status, started_at, completed_at)
+               VALUES ('upgrade-sync', 'upgrade', 'completed', '2026-05-26', '2026-05-26');
+               INSERT INTO account_works (account_id, work_id, purchased_at, first_seen_at, last_seen_at, last_seen_sync_run_id)
+               VALUES ('upgrade', 'RJ000001', '2026-05-02', '2026-05-26', '2026-05-26', 'upgrade-sync');"#,
+        ).execute(&storage.pool).await?;
         storage
             .save_work_download(&WorkDownloadUpdate {
                 work_id: "RJ000001".to_owned(),
@@ -2788,7 +2872,9 @@ mod tests {
             .set_work_custom_tags("RJ000001", &["保存済み".to_owned(), "Favorite".to_owned()])
             .await?;
         let accounts = storage.accounts().await?;
-        let detail = storage.product_detail("RJ000001").await?;
+        let detail = storage
+            .product_detail("RJ000001", &LanguagePriority::default())
+            .await?;
         let sync_runs = storage.sync_runs_for_account("upgrade").await?;
         storage.pool.close().await;
 
@@ -2800,7 +2886,12 @@ mod tests {
         let storage = Storage::open(&path).await?;
         assert_eq!(storage.app_settings().await?, settings);
         assert_eq!(storage.accounts().await?, accounts);
-        assert_eq!(storage.product_detail("RJ000001").await?, detail);
+        assert_eq!(
+            storage
+                .product_detail("RJ000001", &LanguagePriority::default())
+                .await?,
+            detail
+        );
         assert_eq!(storage.sync_runs_for_account("upgrade").await?, sync_runs);
         let upgraded_history: Vec<(i64, Vec<u8>)> = sqlx::query_as(
             "SELECT version, checksum FROM _sqlx_migrations WHERE version <= 20260512000000 ORDER BY version",
@@ -2914,12 +3005,13 @@ mod tests {
     #[tokio::test]
     async fn saves_app_settings_in_one_transaction() -> Result<()> {
         let storage = migrated_storage().await?;
-        let settings = AppSettings {
-            library_root: Some("/library".to_owned()),
-            download_root: Some("/downloads".to_owned()),
-        };
-
-        storage.save_app_settings(&settings).await?;
+        let settings = storage
+            .save_app_settings_patch(&AppSettingsPatch {
+                library_root: Some("/library".to_owned()),
+                download_root: Some("/downloads".to_owned()),
+                ..Default::default()
+            })
+            .await?;
 
         assert_eq!(storage.app_settings().await?, settings);
 
@@ -2931,15 +3023,17 @@ mod tests {
         let storage = migrated_storage().await?;
 
         storage
-            .save_app_settings(&AppSettings {
+            .save_app_settings_patch(&AppSettingsPatch {
                 library_root: Some("/library".to_owned()),
                 download_root: Some("/downloads".to_owned()),
+                ..Default::default()
             })
             .await?;
         storage
-            .save_app_settings(&AppSettings {
+            .save_app_settings_patch(&AppSettingsPatch {
                 library_root: Some("/library".to_owned()),
                 download_root: None,
+                ..Default::default()
             })
             .await?;
 
@@ -2948,6 +3042,7 @@ mod tests {
             AppSettings {
                 library_root: Some("/library".to_owned()),
                 download_root: None,
+                ..Default::default()
             }
         );
 
@@ -3462,7 +3557,9 @@ mod tests {
             })
             .await?;
 
-        let detail = storage.product_detail("RJ000001").await?;
+        let detail = storage
+            .product_detail("RJ000001", &LanguagePriority::default())
+            .await?;
 
         assert_eq!(detail.work_id, "RJ000001");
         assert_eq!(detail.content_size_bytes, Some(2048));
@@ -3668,7 +3765,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn product_list_search_and_sort_use_cached_columns() -> Result<()> {
+    async fn product_list_search_and_sort_use_localized_names() -> Result<()> {
         let storage = migrated_storage().await?;
         storage
             .save_account(&account("account-a", "Account A"))
@@ -3826,7 +3923,9 @@ mod tests {
         let facets = storage
             .product_filter_facets(&ProductListQuery::default())
             .await?;
-        let detail = storage.product_detail("RJ000001").await?;
+        let detail = storage
+            .product_detail("RJ000001", &LanguagePriority::default())
+            .await?;
 
         assert_eq!(
             first_tags,
@@ -3896,7 +3995,7 @@ mod tests {
 
         let facets = storage
             .product_filter_facets(&ProductListQuery {
-                maker_names: vec!["Maker 00".to_owned()],
+                maker_keys: vec!["id:maker-Maker 00".to_owned()],
                 ..ProductListQuery::default()
             })
             .await?;
@@ -4162,10 +4261,8 @@ mod tests {
             .import_local_work_downloads(&[LocalWorkDownloadImport {
                 work: CachedWork {
                     work_id: "RJ123456".to_owned(),
-                    title: "[RJ123456] Local Folder".to_owned(),
                     title_json: r#"{"en_US":"[RJ123456] Local Folder"}"#.to_owned(),
                     maker_id: None,
-                    maker_name: None,
                     maker_json: None,
                     work_type: None,
                     age_category: None,
@@ -4228,10 +4325,8 @@ mod tests {
             .import_local_work_downloads(&[LocalWorkDownloadImport {
                 work: CachedWork {
                     work_id: "RJ123456".to_owned(),
-                    title: "RJ123456".to_owned(),
                     title_json: r#"{"en_US":"RJ123456"}"#.to_owned(),
                     maker_id: None,
-                    maker_name: None,
                     maker_json: None,
                     work_type: None,
                     age_category: None,
@@ -4314,10 +4409,8 @@ mod tests {
             .import_local_work_downloads(&[LocalWorkDownloadImport {
                 work: CachedWork {
                     work_id: "RJ123456".to_owned(),
-                    title: "[RJ123456] Local Folder".to_owned(),
                     title_json: r#"{"en_US":"[RJ123456] Local Folder"}"#.to_owned(),
                     maker_id: None,
-                    maker_name: None,
                     maker_json: None,
                     work_type: None,
                     age_category: None,
@@ -4427,10 +4520,8 @@ mod tests {
             .import_local_work_downloads(&[LocalWorkDownloadImport {
                 work: CachedWork {
                     work_id: "RJ000001".to_owned(),
-                    title: "[RJ000001] Local Folder".to_owned(),
                     title_json: r#"{"en_US":"[RJ000001] Local Folder"}"#.to_owned(),
                     maker_id: None,
-                    maker_name: None,
                     maker_json: None,
                     work_type: None,
                     age_category: None,

@@ -1182,3 +1182,83 @@
 - Published 3.5.0 as non-draft, non-prerelease Latest at 2026-09-28 12:36:20 UTC.
   The public Latest API and downloaded latest.json match the verified release.
   Added final release validation notes and preserved deferred README screenshots.
+
+- Planned issue #49 without changing code. Added three ordered, independently
+  reviewed plans under `docs/plans/2026-10-19.*`: remove stored selected-name
+  columns in favor of localized JSON, search all language values, persist and
+  apply one work/maker language priority, then expose its editor in Settings.
+  The review found and resolved an omitted-priority save hazard by specifying
+  a transactional settings patch; it also clarified empty-name fallback and
+  stale-response checks. Round 2 verdicts: PASS_WITH_NOTES, PASS, PASS.
+  Updated `docs/todo.md` with the implementation sequence. Documentation-only
+  validation: plan format/link checks and whitespace check; no code tests or
+  builds run because no implementation was authorized.
+
+- Refined issue #49 plans after clarifying that the five named API language
+  codes are only the current default order; unknown codes remain representable.
+  Added discovery of cached language codes, stable priority snapshots for the
+  bulk candidate loop, and a Settings draft baseline so path-only and undone
+  reorder saves preserve the stored preference. Fresh-context reviews reached
+  PASS for plan 00 and PASS_WITH_NOTES for plans 01 and 02; the sole plan 01
+  heading note was rejected because `Execution Result` was already present.
+  Rechecked plan section order, local links, untracked-plan whitespace, and
+  `git diff --check`; all passed. No code tests/builds were run: these edits
+  only prepare implementation plans, and code work was not requested.
+
+- Refined the issue #49 Settings plan to show names from the complete pinned
+  Unicode CLDR 48.2.3 English language, territory, and script tables while
+  retaining each original code. The plan calls for unchanged local copies,
+  source/license attribution, exact source comparison, and code fallback for
+  unrecognized labels. Removed the arbitrary language-priority size caps from
+  the dependent backend plan so every discovered code can be reordered, and
+  specified one bound JSON array for constant-shape SQL ranking. Fresh-context
+  review after these revisions: PASS for both backend and Settings plans; all
+  three issue #49 plans are Ready. Checked plan format, links, whitespace, and
+  `git diff --check`. No code tests/builds were run because this was planning.
+
+- Recorded user approval of the three reviewed issue #49 plans in their status
+  sections and `docs/todo.md`. The proposals remain Ready/PASS and execution
+  remains not started, consistent with this session's planning scope. Checked
+  approval/status metadata and whitespace; no code tests/builds were needed
+  for this documentation-only status update.
+
+- Implemented issue #49 plan 00: a forward migration removes selected-name
+  columns/indexes, repairs unusable maps with `und`, and preserves work-linked
+  records. `dm-storage` now projects names from JSON before sort/pagination and
+  searches every localized string; `dm-library` stores only the name maps and
+  uses `und` for unlabeled sources. Updated design notes and upgrade fixtures.
+  Validation: 36 storage + 76 library tests, Tauri `cargo check`, and Rust format
+  passed. Disposable legacy-copy migration and foreign-key checks passed. A
+  10,000-row synthetic query-shape benchmark measured 18–30ms per JSON-backed
+  operation versus <1ms for scalar-only equivalents; documented the linear
+  overhead. Plan 00 is Completed; the priority backend step is In Progress.
+
+- Completed issue #49 plan 01: persisted a shared language priority through an
+  atomic settings patch, constant-shape JSON SQL ranking, cached-code discovery,
+  stable maker keys and preference-ranked facet labels. Core bulk selection and
+  Tauri candidate discovery share one snapshot/pagination path. Updated IPC/TS
+  contracts and filter fixtures. Validation: 39 storage, 77 library, 13 Tauri
+  and 15 frontend tests, Tauri check and frontend check passed. Browser smoke
+  testing confirmed maker-key selection survives a label change. Frontend
+  scripts use the existing pnpm with automatic version switching disabled
+  because the configured local 12.3.4 target is not executable; dependencies
+  and the package-manager declaration remain unchanged. Synthetic 10,000-row
+  sort/facet queries remained under 35ms. Settings implementation is next.
+
+- Completed issue #49 plan 02 and the approved chain. Settings now edits the
+  shared name-language order with baseline-aware saves, safe discovery retry,
+  failure/revert behavior and immediate generation-guarded Library refresh.
+  Vendored all English CLDR 48.2.3 language/territory/script maps unchanged,
+  with raw-code fallback, original license and full source/hash comparison;
+  the license is included in About. Updated stories, IPC fixtures and design
+  notes. Added repeatable `scripts/qa-name-language-settings.cjs` browser QA.
+  Validation: 21 frontend tests, zero-error/warning frontend check, app and
+  Storybook builds, 39 storage + 77 library + 13 Tauri tests, Tauri check,
+  relevant-package all-target Clippy with `-D warnings`, format and whitespace
+  checks passed. Browser checks on the real route with mocked IPC covered
+  save/reload/search/filter/paging, undo and failure preservation, discovery
+  retry, delayed old list/detail responses, and 320px long labels. Visually
+  inspected desktop/narrow captures and verified nondefault priority after
+  reopening a real SQLite file. No live account/native-WebView check was run;
+  that is outside this change's required mocked-IPC smoke gate. All three
+  plan files are Completed with actual evidence; no required work is deferred.

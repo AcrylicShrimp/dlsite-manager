@@ -52,7 +52,7 @@
     onClearTypes?: () => void;
     onToggleType?: (value: string) => void;
     onClearMakers?: () => void;
-    onToggleMaker?: (name: string) => void;
+    onToggleMaker?: (key: string) => void;
     onClearCustomTags?: () => void;
     onCycleCustomTag?: (name: string) => void;
   } = $props();
@@ -182,12 +182,12 @@
       >
         <span class="filter-chip-label">Any</span>
       </button>
-      {#each facets.makers as maker (maker.name)}
+      {#each facets.makers as maker (maker.key)}
         <button
-          class:active={selectedMakers.includes(maker.name)}
+          class:active={selectedMakers.includes(maker.key)}
           type="button"
           title={`${maker.name} (${maker.count})`}
-          onclick={() => onToggleMaker?.(maker.name)}
+          onclick={() => onToggleMaker?.(maker.key)}
         >
           <span class="filter-chip-label">{maker.name}</span>
           <small>{maker.count}</small>

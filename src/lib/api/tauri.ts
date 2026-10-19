@@ -17,6 +17,7 @@ import type {
 export type SaveSettingsRequest = {
   libraryRoot: string | null;
   downloadRoot: string | null;
+  languagePriority?: string[];
 };
 
 export type SaveAccountRequest = {
@@ -32,7 +33,7 @@ export type ProductListRequest = {
   typeGroups: string[];
   ageCategories: string[];
   sourceGroups: string[];
-  makerNames: string[];
+  makerKeys: string[];
   customTagNames: string[];
   excludedCustomTagNames: string[];
   sort: string;
@@ -67,6 +68,10 @@ export type ClearFinishedJobsResult = {
 
 export function getSettings() {
   return invoke<AppSettings>("get_settings");
+}
+
+export function listNameLanguages() {
+  return invoke<string[]>("list_name_languages");
 }
 
 export function saveSettings(settings: SaveSettingsRequest) {

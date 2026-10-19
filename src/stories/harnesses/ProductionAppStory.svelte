@@ -8,14 +8,22 @@
     emptyFilters,
     queryProducts,
     facetsFor,
+    type PreviewProduct,
   } from "../redesign/library-preview";
+  import { DEFAULT_LANGUAGE_PRIORITY } from "$lib/model/constants";
   import { isActiveJob } from "$lib/utils/jobs";
   import type {
     ProductListRequest,
     SaveAccountRequest,
     StartWorkDownloadRequest,
   } from "$lib/api/tauri";
-  import type { Account, Product, JobSnapshot } from "$lib/model/types";
+  import type {
+    Account,
+    AppSettings,
+    Product,
+    ProductTextValue,
+    JobSnapshot,
+  } from "$lib/model/types";
   let ready = $state(false);
   onMount(() => {
     const fixture = makeFixture("long");
@@ -32,10 +40,76 @@
       title:
         j.kind === "accountSync" ? `Sync ${j.metadata.accountId}` : j.title,
     }));
-    let settings = {
+    const settingsKey = "dlsite-manager-production-story-settings";
+    let settings: AppSettings = {
       libraryRoot: "/tmp/dlsite-library",
       downloadRoot: "/tmp/dlsite-downloads",
+      languagePriority: [...DEFAULT_LANGUAGE_PRIORITY],
     };
+    const storedSettings = sessionStorage.getItem(settingsKey);
+    if (storedSettings)
+      settings = { ...settings, ...JSON.parse(storedSettings) };
+    const makerNames: Record<string, string> = {
+      "North Window Studio": "北窓スタジオ",
+      "Quiet Coast": "静かな海岸",
+      "Paper Lantern": "紙灯籠",
+    };
+    function preferred(values: ProductTextValue[]) {
+      for (const code of settings.languagePriority) {
+        const value = values.find(
+          (entry) => entry.language === code && entry.value.trim(),
+        );
+        if (value) return value.value;
+      }
+      return [...values]
+        .sort((a, b) =>
+          a.language < b.language ? -1 : a.language > b.language ? 1 : 0,
+        )
+        .find((entry) => entry.value.trim())?.value;
+    }
+    function project(product: Product): PreviewProduct {
+      const local = product.owners.every(
+        (owner) => owner.accountId === "__local__",
+      );
+      const titleVariants = local
+        ? [{ language: "und", value: product.title }]
+        : [
+            { language: "en_US", value: product.title },
+            { language: "ja_JP", value: `静かな夜の物語 — ${product.workId}` },
+            {
+              language: "ko_KR",
+              value: `조용한 밤의 이야기 — ${product.workId}`,
+            },
+            { language: "zh_CN", value: `静夜故事 — ${product.workId}` },
+            { language: "zh_TW", value: `靜夜故事 — ${product.workId}` },
+            {
+              language: "pt_BR",
+              value: `Uma noite tranquila — ${product.workId}`,
+            },
+            {
+              language: "xx_XX",
+              value: `Unknown code title — ${product.workId}`,
+            },
+          ];
+      const names = product.makerName
+        ? [
+            { language: "en_US", value: product.makerName },
+            {
+              language: "ja_JP",
+              value:
+                makerNames[product.makerName] ?? `制作元 ${product.makerName}`,
+            },
+          ]
+        : [];
+      return {
+        ...product,
+        title: preferred(titleVariants) ?? product.workId,
+        makerName: preferred(names) ?? null,
+        makerKey: product.makerName ? `name:${product.makerName}` : undefined,
+        titleVariants,
+        makerNames: names,
+      };
+    }
     function filters(request: ProductListRequest) {
       return {
         ...emptyFilters(),
@@ -43,7 +117,7 @@
         types: request.typeGroups,
         ages: request.ageCategories,
         sources: request.sourceGroups,
-        makers: request.makerNames,
+        makers: request.makerKeys,
         tags: request.customTagNames,
         excludedTags: request.excludedCustomTagNames,
         sort: request.sort as ReturnType<typeof emptyFilters>["sort"],
@@ -61,8 +135,23 @@
         if (command === "plugin:path|resolve_directory")
           return "/tmp/Downloads";
         if (command === "get_settings") return settings;
+        if (command === "list_name_languages")
+          return [
+            "en_US",
+            "ja_JP",
+            "ko_KR",
+            "pt_BR",
+            "und",
+            "xx_XX",
+            "zh_CN",
+            "zh_TW",
+          ];
         if (command === "save_settings") {
-          settings = args.settings as typeof settings;
+          const patch = args.settings as Partial<AppSettings>;
+          if (patch.libraryRoot === "/fail-save")
+            throw new Error("Could not save settings (simulated)");
+          settings = { ...settings, ...patch };
+          sessionStorage.setItem(settingsKey, JSON.stringify(settings));
           return settings;
         }
         if (command === "list_accounts") return accounts;
@@ -72,9 +161,13 @@
         ) {
           const request = args.request as ProductListRequest;
           if (command === "list_product_filter_facets")
-            return facetsFor(products, request.search ?? "", filters(request));
+            return facetsFor(
+              products.map(project),
+              request.search ?? "",
+              filters(request),
+            );
           const matched = queryProducts(
-            products,
+            products.map(project),
             request.search ?? "",
             filters(request),
           );
@@ -91,7 +184,7 @@
             (p) => p.workId === (args.request as { workId: string }).workId,
           );
           if (!product) throw new Error("Work not found");
-          return makeDetail(product);
+          return makeDetail(project(product));
         }
         if (command === "set_product_custom_tags") {
           const request = args.request as { workId: string; tags: string[] };

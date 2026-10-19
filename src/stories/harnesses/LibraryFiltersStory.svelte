@@ -31,9 +31,9 @@
 
   const facets: ProductFilterFacets = {
     makers: [
-      { name: "North Window Studio", count: 18 },
-      { name: "An Especially Long Circle Name For Truncation", count: 7 },
-      { name: "Night Signal", count: 4 },
+      { key: "name:North Window Studio", name: "North Window Studio", count: 18 },
+      { key: "name:An Especially Long Circle Name For Truncation", name: "An Especially Long Circle Name For Truncation", count: 7 },
+      { key: "name:Night Signal", name: "Night Signal", count: 4 },
     ],
     customTags: [
       { name: "Favorites", count: 12 },
@@ -57,7 +57,7 @@
     selectedSources = active ? ["owned"] : [];
     selectedAges = active ? ["all"] : [];
     selectedTypes = active ? ["audio"] : [];
-    selectedMakers = active ? ["North Window Studio"] : [];
+    selectedMakers = active ? ["name:North Window Studio"] : [];
     selectedTags = active ? ["Favorites"] : [];
     excludedTags = active ? ["Needs Review"] : [];
   });

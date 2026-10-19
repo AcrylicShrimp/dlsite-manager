@@ -14,10 +14,11 @@ use dm_library::{
     WorkDownloadRequest,
 };
 use dm_storage::{
-    Account, AppSettings, ProductAgeCategory, ProductCreditGroup, ProductCustomTag,
-    ProductCustomTagFacet, ProductDetail, ProductFilterFacets, ProductListItem, ProductListPage,
-    ProductListQuery, ProductMakerFacet, ProductOwner, ProductSort, ProductSourceGroup, ProductTag,
-    ProductTextValue, ProductTypeGroup, Storage, WorkDownloadState, WorkDownloadStatus,
+    Account, AppSettings, AppSettingsPatch, LanguagePriority, ProductAgeCategory,
+    ProductCreditGroup, ProductCustomTag, ProductCustomTagFacet, ProductDetail,
+    ProductFilterFacets, ProductListItem, ProductListPage, ProductListQuery, ProductMakerFacet,
+    ProductOwner, ProductSort, ProductSourceGroup, ProductTag, ProductTextValue, ProductTypeGroup,
+    Storage, WorkDownloadState, WorkDownloadStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -163,6 +164,21 @@ async fn get_settings(state: State<'_, AppState>) -> Result<AppSettingsDto, Stri
 }
 
 #[tauri::command]
+async fn list_name_languages(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    state
+        .audit
+        .operation("list_name_languages")
+        .command(async {
+            state
+                .library
+                .available_name_languages()
+                .await
+                .map_err(command_error)
+        })
+        .await
+}
+
+#[tauri::command]
 async fn save_settings(
     state: State<'_, AppState>,
     settings: SaveSettingsRequest,
@@ -170,7 +186,7 @@ async fn save_settings(
     let diagnostic_operation = state.audit.operation("save_settings");
     diagnostic_operation
         .command(async {
-            let settings = match settings.into_app_settings() {
+            let settings = match settings.into_app_settings_patch() {
                 Ok(settings) => settings,
                 Err(error) => {
                     record_audit(
@@ -182,10 +198,10 @@ async fn save_settings(
                     return Err(error);
                 }
             };
-            let result = state.storage.save_app_settings(&settings).await;
+            let result = state.storage.save_app_settings_patch(&settings).await;
 
             match result {
-                Ok(()) => {
+                Ok(settings) => {
                     record_audit(
                         &state.audit,
                         AuditEvent::succeeded("settings.save", "Saved settings").with_details(
@@ -1139,7 +1155,7 @@ async fn start_bulk_work_download(
     };
     let unpack_policy = request.unpack_policy.unwrap_or_default().into();
     let skip_downloaded = request.skip_downloaded.unwrap_or(true);
-    let candidates = match bulk_download_candidates(&state.library, &query, skip_downloaded).await {
+    let candidates = match state.library.select_bulk_candidates(&query, skip_downloaded).await {
         Ok(candidates) => candidates,
         Err(error) => {
             let message = command_error(error);
@@ -1384,23 +1400,26 @@ async fn preview_bulk_work_download(
             }
 
             let skip_downloaded = request.skip_downloaded.unwrap_or(true);
-            let candidates =
-                match bulk_download_candidates(&state.library, &query, skip_downloaded).await {
-                    Ok(candidates) => candidates,
-                    Err(error) => {
-                        let message = command_error(error);
-                        record_audit(
-                            &state.audit,
-                            AuditEvent::failed(
-                                "work.bulkDownload.preview",
-                                "Failed to select bulk download products",
-                            )
-                            .with_error(Some("library"), message.clone()),
+            let candidates = match state
+                .library
+                .select_bulk_candidates(&query, skip_downloaded)
+                .await
+            {
+                Ok(candidates) => candidates,
+                Err(error) => {
+                    let message = command_error(error);
+                    record_audit(
+                        &state.audit,
+                        AuditEvent::failed(
+                            "work.bulkDownload.preview",
+                            "Failed to select bulk download products",
                         )
-                        .await;
-                        return Err(message);
-                    }
-                };
+                        .with_error(Some("library"), message.clone()),
+                    )
+                    .await;
+                    return Err(message);
+                }
+            };
             let reservation = state
                 .download_reservations
                 .split_available(&candidates.work_ids);
@@ -2090,6 +2109,7 @@ async fn open_external_url(
 struct AppSettingsDto {
     library_root: Option<String>,
     download_root: Option<String>,
+    language_priority: Vec<String>,
 }
 
 impl From<AppSettings> for AppSettingsDto {
@@ -2097,6 +2117,7 @@ impl From<AppSettings> for AppSettingsDto {
         Self {
             library_root: settings.library_root,
             download_root: settings.download_root,
+            language_priority: settings.language_priority.into_codes(),
         }
     }
 }
@@ -2106,6 +2127,7 @@ impl From<AppSettings> for AppSettingsDto {
 struct SaveSettingsRequest {
     library_root: Option<String>,
     download_root: Option<String>,
+    language_priority: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2202,7 +2224,7 @@ struct ListProductsRequest {
     age_category: Option<ProductAgeCategoryDto>,
     age_categories: Option<Vec<ProductAgeCategoryDto>>,
     source_groups: Option<Vec<ProductSourceGroupDto>>,
-    maker_names: Option<Vec<String>>,
+    maker_keys: Option<Vec<String>>,
     custom_tag_names: Option<Vec<String>>,
     excluded_custom_tag_names: Option<Vec<String>>,
     sort: Option<ProductSortDto>,
@@ -2236,10 +2258,11 @@ impl ListProductsRequest {
                 .into_iter()
                 .map(Into::into)
                 .collect(),
-            maker_names: normalize_optional_strings(self.maker_names)?,
+            maker_keys: normalize_optional_strings(self.maker_keys)?,
             custom_tag_names: normalize_optional_strings(self.custom_tag_names)?,
             excluded_custom_tag_names: normalize_optional_strings(self.excluded_custom_tag_names)?,
             sort: self.sort.unwrap_or_default().into(),
+            language_priority: LanguagePriority::default(),
             limit: self.limit.unwrap_or(100).clamp(1, 500),
             offset: self.offset.unwrap_or(0),
         })
@@ -2411,6 +2434,7 @@ impl From<ProductFilterFacets> for ProductFilterFacetsDto {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ProductMakerFacetDto {
+    key: String,
     name: String,
     count: u64,
 }
@@ -2418,6 +2442,7 @@ struct ProductMakerFacetDto {
 impl From<ProductMakerFacet> for ProductMakerFacetDto {
     fn from(facet: ProductMakerFacet) -> Self {
         Self {
+            key: facet.key,
             name: facet.name,
             count: facet.count,
         }
@@ -2786,7 +2811,7 @@ struct BulkWorkDownloadCommandRequest {
     age_category: Option<ProductAgeCategoryDto>,
     age_categories: Option<Vec<ProductAgeCategoryDto>>,
     source_groups: Option<Vec<ProductSourceGroupDto>>,
-    maker_names: Option<Vec<String>>,
+    maker_keys: Option<Vec<String>>,
     custom_tag_names: Option<Vec<String>>,
     excluded_custom_tag_names: Option<Vec<String>>,
     sort: Option<ProductSortDto>,
@@ -2823,12 +2848,13 @@ impl BulkWorkDownloadCommandRequest {
                 .into_iter()
                 .map(Into::into)
                 .collect(),
-            maker_names: normalize_optional_strings(self.maker_names.clone())?,
+            maker_keys: normalize_optional_strings(self.maker_keys.clone())?,
             custom_tag_names: normalize_optional_strings(self.custom_tag_names.clone())?,
             excluded_custom_tag_names: normalize_optional_strings(
                 self.excluded_custom_tag_names.clone(),
             )?,
             sort: self.sort.unwrap_or_default().into(),
+            language_priority: LanguagePriority::default(),
             limit: BULK_DOWNLOAD_PAGE_LIMIT,
             offset: 0,
         })
@@ -3245,10 +3271,15 @@ impl BulkWorkDownloadProgressSink for JobBulkWorkDownloadProgressSink {
 }
 
 impl SaveSettingsRequest {
-    fn into_app_settings(self) -> Result<AppSettings, String> {
-        Ok(AppSettings {
+    fn into_app_settings_patch(self) -> Result<AppSettingsPatch, String> {
+        Ok(AppSettingsPatch {
             library_root: normalize_path_setting(self.library_root)?,
             download_root: normalize_path_setting(self.download_root)?,
+            language_priority: self
+                .language_priority
+                .map(LanguagePriority::new)
+                .transpose()
+                .map_err(command_error)?,
         })
     }
 }
@@ -3583,55 +3614,6 @@ fn unpack_policy_label(policy: dm_download::UnpackPolicy) -> &'static str {
     }
 }
 
-struct BulkDownloadCandidates {
-    total_count: u64,
-    skipped_downloaded_count: usize,
-    work_ids: Vec<String>,
-}
-
-async fn bulk_download_candidates(
-    library: &Library,
-    query: &ProductListQuery,
-    skip_downloaded: bool,
-) -> dm_library::Result<BulkDownloadCandidates> {
-    let total_count = library.list_products(query).await?.total_count;
-    let mut query = query.clone();
-    query.limit = BULK_DOWNLOAD_PAGE_LIMIT;
-    query.offset = 0;
-
-    let mut seen = BTreeSet::new();
-    let mut work_ids = Vec::new();
-    let mut skipped_downloaded_count = 0usize;
-
-    loop {
-        let page = library.list_products(&query).await?;
-        let page_len = page.products.len();
-
-        for product in page.products {
-            if skip_downloaded && product.download.status == WorkDownloadStatus::Downloaded {
-                skipped_downloaded_count += 1;
-                continue;
-            }
-
-            if seen.insert(product.work_id.clone()) {
-                work_ids.push(product.work_id);
-            }
-        }
-
-        if page_len == 0 || page_len < query.limit as usize {
-            break;
-        }
-
-        query.offset = query.offset.saturating_add(page_len as u32);
-    }
-
-    Ok(BulkDownloadCandidates {
-        total_count,
-        skipped_downloaded_count,
-        work_ids,
-    })
-}
-
 fn bulk_download_output(
     report: &BulkWorkDownloadReport,
     skipped_queued_count: usize,
@@ -3866,6 +3848,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
+            list_name_languages,
             save_settings,
             list_accounts,
             save_account,
@@ -3913,6 +3896,51 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_request_preserves_omitted_priority_and_rejects_invalid_supplied_codes() {
+        let path_only: SaveSettingsRequest =
+            serde_json::from_value(json!({ "libraryRoot": "/library" })).unwrap();
+        assert!(path_only
+            .into_app_settings_patch()
+            .unwrap()
+            .language_priority
+            .is_none());
+        let supplied: SaveSettingsRequest =
+            serde_json::from_value(json!({ "languagePriority": ["pt_BR", "ja_JP"] })).unwrap();
+        assert_eq!(
+            supplied
+                .into_app_settings_patch()
+                .unwrap()
+                .language_priority
+                .unwrap()
+                .codes(),
+            &["pt_BR", "ja_JP"]
+        );
+        for value in [json!(["ja_JP", "ja_JP"]), json!([" "])] {
+            let invalid: SaveSettingsRequest =
+                serde_json::from_value(json!({ "languagePriority": value })).unwrap();
+            assert!(invalid.into_app_settings_patch().is_err());
+        }
+    }
+
+    #[test]
+    fn maker_key_contract_is_shared_by_list_bulk_and_facet_dtos() {
+        let request = json!({ "makerKeys": ["id:RG1"] });
+        let list: ListProductsRequest = serde_json::from_value(request.clone()).unwrap();
+        let bulk: BulkWorkDownloadCommandRequest = serde_json::from_value(request).unwrap();
+        assert_eq!(list.into_query().unwrap().maker_keys, vec!["id:RG1"]);
+        assert_eq!(bulk.to_query().unwrap().maker_keys, vec!["id:RG1"]);
+        let facet = ProductMakerFacetDto::from(ProductMakerFacet {
+            key: "id:RG1".into(),
+            name: "制作元".into(),
+            count: 2,
+        });
+        assert_eq!(
+            serde_json::to_value(facet).unwrap(),
+            json!({ "key": "id:RG1", "name": "制作元", "count": 2 })
+        );
+    }
 
     #[test]
     fn save_account_command_defaults_new_accounts_to_enabled() {

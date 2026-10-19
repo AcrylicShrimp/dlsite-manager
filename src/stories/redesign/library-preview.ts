@@ -2,10 +2,16 @@ import type {
   Product,
   ProductDetail,
   ProductFilterFacets,
+  ProductTextValue,
 } from "$lib/model/types";
 import { productIsLocalOnly, productType } from "$lib/utils/products";
 
 // Local Storybook projections only. Production queries remain owned by Rust.
+export type PreviewProduct = Product & {
+  makerKey?: string;
+  titleVariants?: ProductTextValue[];
+  makerNames?: ProductTextValue[];
+};
 export type PreviewFilters = {
   sort: string;
   accounts: string[];
@@ -53,7 +59,7 @@ export function filterCount(filters: PreviewFilters) {
   );
 }
 export function queryProducts(
-  products: Product[],
+  products: PreviewProduct[],
   search: string,
   filters: PreviewFilters,
 ) {
@@ -67,6 +73,8 @@ export function queryProducts(
       const haystack = [
         p.title,
         p.makerName,
+        ...(p.titleVariants ?? []).map((value) => value.value),
+        ...(p.makerNames ?? []).map((value) => value.value),
         p.workId,
         ...p.creditGroups.flatMap((g) => g.names),
         ...tags,
@@ -83,7 +91,10 @@ export function queryProducts(
         any(filters.sources, local ? "localOnly" : "owned") &&
         any(filters.ages, p.ageCategory ?? "") &&
         any(filters.types, tone === "voice-comic" ? "image" : tone) &&
-        any(filters.makers, p.makerName ?? "") &&
+        any(
+          filters.makers,
+          p.makerKey ?? (p.makerName ? `name:${p.makerName}` : ""),
+        ) &&
         (!filters.tags.length || filters.tags.some((t) => tags.includes(t))) &&
         !filters.excludedTags.some((t) => tags.includes(t))
       );
@@ -105,7 +116,7 @@ export function queryProducts(
     });
 }
 export function facetsFor(
-  products: Product[],
+  products: PreviewProduct[],
   search = "",
   filters = emptyFilters(),
 ): ProductFilterFacets {
@@ -127,32 +138,47 @@ export function facetsFor(
     tags: [],
     excludedTags: [],
   });
+  const makers = new Map<
+    string,
+    { key: string; name: string; count: number }
+  >();
+  for (const product of makerProducts) {
+    if (!product.makerName) continue;
+    const key = product.makerKey ?? `name:${product.makerName}`;
+    const facet = makers.get(key) ?? { key, name: product.makerName, count: 0 };
+    facet.count += 1;
+    makers.set(key, facet);
+  }
   return {
-    makers: count(
-      makerProducts.flatMap((p) => (p.makerName ? [p.makerName] : [])),
+    makers: [...makers.values()].sort(
+      (a, b) => b.count - a.count || a.name.localeCompare(b.name),
     ),
     customTags: count(
       tagProducts.flatMap((p) => p.customTags.map((t) => t.name)),
     ),
   };
 }
-export function makeDetail(product: Product): ProductDetail {
+export function makeDetail(product: PreviewProduct): ProductDetail {
   const local = productIsLocalOnly(product);
   return {
     ...product,
-    titleVariants: local
-      ? []
-      : [
-          { language: "en_US", value: product.title },
-          { language: "ja_JP", value: "静かな夜の物語 — サンプル作品" },
-        ],
+    titleVariants:
+      product.titleVariants ??
+      (local
+        ? []
+        : [
+            { language: "en_US", value: product.title },
+            { language: "ja_JP", value: "静かな夜の物語 — サンプル作品" },
+          ]),
     makerId: local ? null : "RG01234567",
-    makerNames: product.makerName
-      ? [
-          { language: "en_US", value: product.makerName },
-          { language: "ja_JP", value: "北窓スタジオ" },
-        ]
-      : [],
+    makerNames:
+      product.makerNames ??
+      (product.makerName
+        ? [
+            { language: "en_US", value: product.makerName },
+            { language: "ja_JP", value: "北窓スタジオ" },
+          ]
+        : []),
     contentSizeBytes: local ? null : 482_000_000,
     registeredAt: local ? null : "2026-07-20T00:00:00Z",
     lastDetailSyncAt: "2026-09-28T05:00:00Z",

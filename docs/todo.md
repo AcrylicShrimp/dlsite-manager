@@ -1,5 +1,11 @@
 # Next steps
 
+- Issue #49 is implemented through three completed plans, in dependency order:
+  [localized JSON as the name source](plans/2026-10-19.00-use-localized-names-as-storage-source.md),
+  [persist and apply language priority](plans/2026-10-19.01-apply-name-language-priority.md),
+  then [edit priority in Settings](plans/2026-10-19.02-edit-name-language-priority-in-settings.md).
+  All three steps are complete. Database upgrade, Rust/frontend checks, builds, and mocked-IPC browser regression checks passed.
+
 - Stable 3.5.0 is published with the redesigned workspace and native-QA fixes.
   All platform builds and uploaded artifact signatures/checksums passed; public
   latest.json serves 3.5.0. Linux startup, update checks and correlated diagnostic

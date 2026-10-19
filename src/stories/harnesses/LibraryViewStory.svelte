@@ -118,7 +118,7 @@
     {filtersOpen}
     {accounts}
     facets={{
-      makers: [{ name: "North Window Studio", count: 18 }],
+      makers: [{ key: "name:North Window Studio", name: "North Window Studio", count: 18 }],
       customTags: [{ name: "Favorites", count: 12 }],
     }}
     rangeLabel={viewState === "loading"

@@ -24,7 +24,18 @@
   import ProductDetailDialog from "$lib/features/library/ProductDetailDialog.svelte";
   import ProductImagePreviewView from "$lib/features/library/ProductImagePreview.svelte";
   import SettingsView from "$lib/features/settings/SettingsView.svelte";
-  import { DLSITE_URL, GITHUB_URL } from "$lib/model/constants";
+  import {
+    DEFAULT_LANGUAGE_PRIORITY,
+    DLSITE_URL,
+    GITHUB_URL,
+  } from "$lib/model/constants";
+  import {
+    buildLanguagePriority,
+    languagePriorityPatch,
+    mergeLanguageDiscovery,
+    moveLanguagePriority,
+    sameLanguagePriority,
+  } from "$lib/utils/name-language-priority";
   import {
     errorMessage,
     formatBytes,
@@ -79,6 +90,12 @@
   let downloadRoot = $state("");
   let settingsLoading = $state(true);
   let settingsSaving = $state(false);
+  let draftLanguagePriority = $state([...DEFAULT_LANGUAGE_PRIORITY]);
+  let savedLanguagePriority = $state([...DEFAULT_LANGUAGE_PRIORITY]);
+  let baselineLanguagePriority = $state([...DEFAULT_LANGUAGE_PRIORITY]);
+  let observedNameLanguages = $state<string[]>([]);
+  let languageDiscoveryLoading = $state(false);
+  let languageDiscoveryError = $state("");
   let appInfo = $state<AppInfo | null>(null);
   let appInfoLoading = $state(true);
   let updatePhase = $state<"idle" | "checking" | "downloading" | "installing">(
@@ -104,7 +121,7 @@
   let selectedProductTypes = $state<string[]>([]);
   let selectedAgeCategories = $state<string[]>([]);
   let selectedProductSources = $state<string[]>([]);
-  let selectedMakerNames = $state<string[]>([]);
+  let selectedMakerKeys = $state<string[]>([]);
   let selectedCustomTagNames = $state<string[]>([]);
   let excludedCustomTagNames = $state<string[]>([]);
   let productFilterFacets = $state<ProductFilterFacets>({
@@ -131,6 +148,7 @@
     notifyError(errorMessage(error)),
   );
   const detailGeneration = new RequestGeneration();
+  const settingsGeneration = new RequestGeneration();
   const auditGeneration = new RequestGeneration();
   const libraryQuery = new LibraryQueryController(commands, {
     loading: (value) => {
@@ -191,6 +209,7 @@
   });
 
   onDestroy(() => {
+    settingsGeneration.invalidate();
     auditGeneration.invalidate();
     for (const timer of toastTimers.values()) {
       clearTimeout(timer);
@@ -234,18 +253,74 @@
   }
 
   async function loadSettings() {
+    if (settingsSaving || languageDiscoveryLoading) return;
+    const generation = settingsGeneration.invalidate();
     settingsLoading = true;
+    languageDiscoveryError = "";
 
     try {
-      const settings = await commands.getSettings();
-      const defaultDownloadRoot = await systemDownloadRoot();
+      const [settings, defaultDownloadRoot] = await Promise.all([
+        commands.getSettings(),
+        systemDownloadRoot(),
+      ]);
+      if (!settingsGeneration.current(generation)) return;
       libraryRoot = settings.libraryRoot ?? "";
       downloadRoot = settings.downloadRoot ?? defaultDownloadRoot;
+      savedLanguagePriority = [...settings.languagePriority];
+      draftLanguagePriority = buildLanguagePriority(
+        savedLanguagePriority,
+        observedNameLanguages,
+      );
+      baselineLanguagePriority = [...draftLanguagePriority];
+      await readNameLanguages(generation);
     } catch (err) {
-      notifyError(errorMessage(err));
+      if (settingsGeneration.current(generation))
+        notifyError(errorMessage(err));
     } finally {
-      settingsLoading = false;
+      if (settingsGeneration.current(generation)) settingsLoading = false;
     }
+  }
+
+  async function readNameLanguages(generation: number) {
+    try {
+      const codes = await commands.listNameLanguages();
+      if (!settingsGeneration.current(generation)) return;
+      observedNameLanguages = codes;
+      const merged = mergeLanguageDiscovery(
+        savedLanguagePriority,
+        draftLanguagePriority,
+        baselineLanguagePriority,
+        codes,
+      );
+      draftLanguagePriority = merged.draft;
+      baselineLanguagePriority = merged.baseline;
+      languageDiscoveryError = "";
+    } catch (err) {
+      if (!settingsGeneration.current(generation)) return;
+      languageDiscoveryError = errorMessage(err);
+      notifyError(languageDiscoveryError);
+    }
+  }
+
+  async function retryNameLanguages() {
+    if (settingsLoading || settingsSaving || languageDiscoveryLoading) return;
+    const generation = settingsGeneration.invalidate();
+    languageDiscoveryLoading = true;
+    try {
+      await readNameLanguages(generation);
+    } finally {
+      if (settingsGeneration.current(generation))
+        languageDiscoveryLoading = false;
+    }
+  }
+
+  function moveLanguage(code: string, direction: -1 | 1) {
+    if (settingsLoading || settingsSaving || languageDiscoveryLoading) return;
+    draftLanguagePriority = moveLanguagePriority(
+      draftLanguagePriority,
+      code,
+      direction,
+    );
   }
 
   async function checkForUpdates() {
@@ -296,14 +371,37 @@
 
   async function saveSettings(event: Event) {
     event.preventDefault();
+    if (settingsLoading || settingsSaving || languageDiscoveryLoading) return;
     settingsSaving = true;
 
     try {
       const settings = await commands.saveSettings({
         libraryRoot: valueOrNull(libraryRoot),
         downloadRoot: valueOrNull(downloadRoot),
+        ...languagePriorityPatch(
+          draftLanguagePriority,
+          baselineLanguagePriority,
+        ),
       });
-      const defaultDownloadRoot = await systemDownloadRoot();
+      const priorityChanged = !sameLanguagePriority(
+        settings.languagePriority,
+        savedLanguagePriority,
+      );
+      savedLanguagePriority = [...settings.languagePriority];
+      draftLanguagePriority = buildLanguagePriority(
+        savedLanguagePriority,
+        observedNameLanguages,
+      );
+      baselineLanguagePriority = [...draftLanguagePriority];
+      // Start invalidation synchronously after commit, before another await can
+      // allow an old list/detail response to overwrite the saved projection.
+      const refresh = priorityChanged
+        ? refreshLibraryAfterMutation(true)
+        : Promise.resolve();
+      const [defaultDownloadRoot] = await Promise.all([
+        systemDownloadRoot(),
+        refresh,
+      ]);
       libraryRoot = settings.libraryRoot ?? "";
       downloadRoot = settings.downloadRoot ?? defaultDownloadRoot;
       notifySuccess("Settings saved");
@@ -463,11 +561,11 @@
     detailGeneration.invalidate();
   }
 
-  async function refreshLibraryAfterMutation() {
+  async function refreshLibraryAfterMutation(resetPage = false) {
     invalidateLibrary();
     const detailId = productDetailLoadingWorkId ?? productDetail?.workId;
     await Promise.all([
-      loadProducts({ clampInvalidPage: true }),
+      loadProducts({ resetPage, clampInvalidPage: !resetPage }),
       detailId ? loadProductDetail(detailId) : Promise.resolve(),
     ]);
   }
@@ -479,7 +577,7 @@
       typeGroups: selectedProductTypes,
       ageCategories: selectedAgeCategories,
       sourceGroups: selectedProductSources,
-      makerNames: selectedMakerNames,
+      makerKeys: selectedMakerKeys,
       customTagNames: selectedCustomTagNames,
       excludedCustomTagNames,
       sort: productSort,
@@ -565,7 +663,7 @@
       typeGroups: selectedProductTypes,
       ageCategories: selectedAgeCategories,
       sourceGroups: selectedProductSources,
-      makerNames: selectedMakerNames,
+      makerKeys: selectedMakerKeys,
       customTagNames: selectedCustomTagNames,
       excludedCustomTagNames,
       sort: productSort,
@@ -610,8 +708,8 @@
     await loadProducts({ resetPage: true });
   }
 
-  async function toggleMakerFilter(makerName: string) {
-    selectedMakerNames = toggleFilterValue(selectedMakerNames, makerName);
+  async function toggleMakerFilter(makerKey: string) {
+    selectedMakerKeys = toggleFilterValue(selectedMakerKeys, makerKey);
     await loadProducts({ resetPage: true });
   }
 
@@ -670,7 +768,7 @@
   }
 
   async function clearMakerFilters() {
-    selectedMakerNames = [];
+    selectedMakerKeys = [];
     await loadProducts({ resetPage: true });
   }
 
@@ -691,7 +789,7 @@
     selectedProductTypes = [];
     selectedAgeCategories = [];
     selectedProductSources = [];
-    selectedMakerNames = [];
+    selectedMakerKeys = [];
     selectedCustomTagNames = [];
     excludedCustomTagNames = [];
     productSort = "latestPurchaseDesc";
@@ -1531,7 +1629,7 @@
       selectedSources={selectedProductSources}
       selectedAges={selectedAgeCategories}
       selectedTypes={selectedProductTypes}
-      selectedMakers={selectedMakerNames}
+      selectedMakers={selectedMakerKeys}
       selectedCustomTags={selectedCustomTagNames}
       excludedCustomTags={excludedCustomTagNames}
       rangeLabel={productRangeLabel()}
@@ -1628,6 +1726,9 @@
     <SettingsView
       bind:libraryRoot
       bind:downloadRoot
+      bind:languagePriority={draftLanguagePriority}
+      {languageDiscoveryLoading}
+      {languageDiscoveryError}
       loading={settingsLoading}
       saving={settingsSaving}
       {appInfo}
@@ -1635,6 +1736,8 @@
       {updatePhase}
       {updateProgressMessage}
       onReload={loadSettings}
+      onMoveLanguage={moveLanguage}
+      onRetryLanguages={retryNameLanguages}
       onChooseDirectory={chooseSettingsDirectory}
       onUseDefaultDownloadRoot={useDefaultDownloadRoot}
       onSave={saveSettings}

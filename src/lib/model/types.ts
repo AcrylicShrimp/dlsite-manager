@@ -1,6 +1,7 @@
 export type AppSettings = {
   libraryRoot: string | null;
   downloadRoot: string | null;
+  languagePriority: string[];
 };
 
 export type AppInfo = {
@@ -103,6 +104,7 @@ export type ProductFilterFacets = {
 };
 
 export type ProductMakerFacet = {
+  key: string;
   name: string;
   count: number;
 };

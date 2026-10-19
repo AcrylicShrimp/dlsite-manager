@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, Utc};
 use dm_api::{
     ContentCount, ContentQuery, Credentials, DlsiteClient, DmApiError, DownloadFile, DownloadPlan,
-    Language, LocalizedText, LoginOutcome, PublicWork, Purchase, SerialNumber, SessionSnapshot,
-    SessionStatus, TwoFactorChallenge, Work, WorkId,
+    LoginOutcome, PublicWork, Purchase, SerialNumber, SessionSnapshot, SessionStatus,
+    TwoFactorChallenge, Work, WorkId,
 };
 use dm_credentials::{CredentialRef, CredentialStore, CredentialsError};
 use dm_download::{
@@ -949,19 +949,55 @@ impl Library {
         })
     }
 
+    async fn resolved_query(&self, query: &ProductListQuery) -> Result<ProductListQuery> {
+        let mut query = query.clone();
+        query.language_priority = self.storage.app_settings().await?.language_priority;
+        Ok(query)
+    }
+
     pub async fn list_products(&self, query: &ProductListQuery) -> Result<ProductListPage> {
-        Ok(self.storage.list_products(query).await?)
+        Ok(self
+            .storage
+            .list_products(&self.resolved_query(query).await?)
+            .await?)
+    }
+
+    pub async fn available_name_languages(&self) -> Result<Vec<String>> {
+        Ok(self.storage.available_name_languages().await?)
+    }
+
+    pub async fn select_bulk_candidates(
+        &self,
+        query: &ProductListQuery,
+        skip_downloaded: bool,
+    ) -> Result<BulkDownloadCandidates> {
+        let selection = self
+            .bulk_download_selection(query, skip_downloaded, None, None)
+            .await?;
+        Ok(BulkDownloadCandidates {
+            total_count: selection.total_count,
+            skipped_downloaded_count: selection.skipped_downloaded_count,
+            work_ids: selection
+                .items
+                .into_iter()
+                .map(|item| item.work_id)
+                .collect(),
+        })
     }
 
     pub async fn product_filter_facets(
         &self,
         query: &ProductListQuery,
     ) -> Result<ProductFilterFacets> {
-        Ok(self.storage.product_filter_facets(query).await?)
+        Ok(self
+            .storage
+            .product_filter_facets(&self.resolved_query(query).await?)
+            .await?)
     }
 
     pub async fn product_detail(&self, work_id: &str) -> Result<ProductDetail> {
-        Ok(self.storage.product_detail(work_id).await?)
+        let priority = self.storage.app_settings().await?.language_priority;
+        Ok(self.storage.product_detail(work_id, &priority).await?)
     }
 
     pub async fn set_product_custom_tags(
@@ -1615,23 +1651,26 @@ impl Library {
 
         let allowed_work_ids =
             work_ids.map(|work_ids| work_ids.iter().map(String::as_str).collect::<BTreeSet<_>>());
-        let total_count = self.storage.list_products(query).await?.total_count;
-        let mut query = query.clone();
-        query.limit = BULK_DOWNLOAD_PAGE_LIMIT;
-        query.offset = 0;
+        let query = self.resolved_query(query).await?;
+        let total_count = self.storage.list_products(&query).await?.total_count;
+        let mut pages = BulkProductPages::new(query);
 
         let mut work_ids = Vec::new();
         let mut skipped_downloaded_count = 0usize;
+        let mut seen = BTreeSet::new();
 
         loop {
             if cancellation_token.is_some_and(CancellationToken::is_cancelled) {
                 return Err(LibraryError::Cancelled);
             }
 
-            let page = self.storage.list_products(&query).await?;
-            let page_len = page.products.len();
-
+            let Some(page) = pages.next(&self.storage).await? else {
+                break;
+            };
             for product in page.products {
+                if !seen.insert(product.work_id.clone()) {
+                    continue;
+                }
                 if skip_downloaded && product.download.status == WorkDownloadStatus::Downloaded {
                     skipped_downloaded_count += 1;
                     continue;
@@ -1648,12 +1687,6 @@ impl Library {
                     content_size_bytes: product.content_size_bytes,
                 });
             }
-
-            if page_len == 0 || page_len < query.limit as usize {
-                break;
-            }
-
-            query.offset = query.offset.saturating_add(page_len as u32);
         }
 
         Ok(BulkWorkDownloadSelection {
@@ -2240,6 +2273,40 @@ pub trait WorkDownloadProgressSink: Send + Sync {
     fn emit(&self, progress: WorkDownloadProgress);
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BulkDownloadCandidates {
+    pub total_count: u64,
+    pub skipped_downloaded_count: usize,
+    pub work_ids: Vec<String>,
+}
+
+/// Holds one resolved name preference for the whole paginated selection.
+struct BulkProductPages {
+    query: ProductListQuery,
+    exhausted: bool,
+}
+
+impl BulkProductPages {
+    fn new(mut query: ProductListQuery) -> Self {
+        query.limit = BULK_DOWNLOAD_PAGE_LIMIT;
+        query.offset = 0;
+        Self {
+            query,
+            exhausted: false,
+        }
+    }
+
+    async fn next(&mut self, storage: &Storage) -> Result<Option<ProductListPage>> {
+        if self.exhausted {
+            return Ok(None);
+        }
+        let page = storage.list_products(&self.query).await?;
+        self.exhausted = page.products.len() < self.query.limit as usize;
+        self.query.offset = self.query.offset.saturating_add(page.products.len() as u32);
+        Ok(Some(page))
+    }
+}
+
 struct BulkWorkDownloadSelection {
     total_count: u64,
     skipped_downloaded_count: usize,
@@ -2705,20 +2772,14 @@ struct AccountSyncBuild {
 }
 
 fn cached_work_from_api(work: Work, synced_at: &str) -> Result<CachedWork> {
-    let title = preferred_localized_text(&work.name)
-        .cloned()
-        .unwrap_or_else(|| work.id.to_string());
-    let maker_name = preferred_localized_text(&work.maker.name).cloned();
     let age_category = serde_json::to_value(&work.age_category)?
         .as_str()
         .map(str::to_owned);
 
     Ok(CachedWork {
         work_id: work.id.as_ref().to_owned(),
-        title,
         title_json: serde_json::to_string(&work.name)?,
         maker_id: Some(work.maker.id.clone()),
-        maker_name,
         maker_json: Some(serde_json::to_string(&work.maker.name)?),
         work_type: Some(work.work_kind.code.clone()),
         age_category,
@@ -2739,7 +2800,7 @@ fn cached_work_from_public_api(work: PublicWork, synced_at: &str) -> Result<Cach
         .and_then(non_empty_trimmed)
         .unwrap_or(work_id.as_str())
         .to_owned();
-    let title_json = localized_japanese_json(&title)?;
+    let title_json = localized_unspecified_json(&title)?;
     let maker_name = work
         .maker_name
         .as_deref()
@@ -2747,20 +2808,18 @@ fn cached_work_from_public_api(work: PublicWork, synced_at: &str) -> Result<Cach
         .map(str::to_owned);
     let maker_json = maker_name
         .as_deref()
-        .map(localized_japanese_json)
+        .map(localized_unspecified_json)
         .transpose()?;
     let content_size = public_work_content_size(&work);
 
     Ok(CachedWork {
         work_id,
-        title,
         title_json,
         maker_id: work
             .maker_id
             .as_deref()
             .and_then(non_empty_trimmed)
             .map(str::to_owned),
-        maker_name,
         maker_json,
         work_type: work
             .work_kind
@@ -2801,10 +2860,8 @@ fn cached_work_from_purchase_placeholder(
 
     Ok(CachedWork {
         work_id: work_id.clone(),
-        title: work_id.clone(),
-        title_json: serde_json::to_string(&serde_json::json!({ "en_US": work_id }))?,
+        title_json: serde_json::to_string(&serde_json::json!({ "und": work_id }))?,
         maker_id: None,
-        maker_name: None,
         maker_json: None,
         work_type: None,
         age_category: None,
@@ -2833,10 +2890,8 @@ fn cached_work_from_local_folder(
 
     Ok(CachedWork {
         work_id: work_id.to_owned(),
-        title: title.to_owned(),
-        title_json: serde_json::to_string(&serde_json::json!({ "en_US": title }))?,
+        title_json: serde_json::to_string(&serde_json::json!({ "und": title }))?,
         maker_id: None,
-        maker_name: None,
         maker_json: None,
         work_type: None,
         age_category: None,
@@ -2849,17 +2904,8 @@ fn cached_work_from_local_folder(
     })
 }
 
-fn preferred_localized_text(text: &LocalizedText) -> Option<&String> {
-    text.get(&Language::English)
-        .or_else(|| text.get(&Language::Japanese))
-        .or_else(|| text.get(&Language::Korean))
-        .or_else(|| text.get(&Language::Taiwanese))
-        .or_else(|| text.get(&Language::Chinese))
-        .or_else(|| text.values().next())
-}
-
-fn localized_japanese_json(value: &str) -> Result<String> {
-    let text = BTreeMap::from([(Language::Japanese, value.to_owned())]);
+fn localized_unspecified_json(value: &str) -> Result<String> {
+    let text = BTreeMap::from([("und", value)]);
 
     Ok(serde_json::to_string(&text)?)
 }
@@ -3344,9 +3390,10 @@ fn now_string() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod language_priority;
     use dm_api::{
-        AgeCategory, DownloadFile, DownloadFileKind, DownloadPlan, DownloadStreamRequest, Maker,
-        PublicWorkImage, PublicWorkImageObject, WorkKind, WorkThumbnail,
+        AgeCategory, DownloadFile, DownloadFileKind, DownloadPlan, DownloadStreamRequest, Language,
+        LocalizedText, Maker, PublicWorkImage, PublicWorkImageObject, WorkKind, WorkThumbnail,
     };
     use dm_credentials::InMemoryCredentialStore;
     use dm_download::{DownloadPhase, DownloadedFile};
@@ -3359,6 +3406,28 @@ mod tests {
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
     use url::Url;
+
+    #[test]
+    fn cached_names_preserve_unknown_languages_and_unlabeled_sources() -> Result<()> {
+        let mut source = work("RJ000001", "作品", "制作元", "2026-01-01T00:00:00Z");
+        source
+            .name
+            .insert(Language::Unknown("pt_BR".into()), "Título".into());
+        source.maker.name.insert(Language::Korean, "제작자".into());
+        let cached = cached_work_from_api(source, "2026-10-19")?;
+        let names: Value = serde_json::from_str(&cached.title_json)?;
+        assert_eq!(names["ja_JP"], "作品");
+        assert_eq!(names["pt_BR"], "Título");
+        let makers: Value = serde_json::from_str(cached.maker_json.as_deref().unwrap())?;
+        assert_eq!(makers["ko_KR"], "제작자");
+        let public =
+            cached_work_from_public_api(public_work("RJ000002", "Public", "Maker"), "2026-10-19")?;
+        assert_eq!(public.title_json, r#"{"und":"Public"}"#);
+        assert_eq!(public.maker_json.as_deref(), Some(r#"{"und":"Maker"}"#));
+        let local = cached_work_from_local_folder("RJ000003", "Local folder", "2026-10-19")?;
+        assert_eq!(local.title_json, r#"{"und":"Local folder"}"#);
+        Ok(())
+    }
 
     #[test]
     fn support_details_preserve_safe_api_failure_context() {

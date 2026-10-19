@@ -10,7 +10,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 function query(overrides: Partial<ProductListRequest> = {}): ProductListRequest {
-  return { search: null, accountIds: [], typeGroups: [], ageCategories: [], sourceGroups: [], makerNames: [], customTagNames: [], excludedCustomTagNames: [], sort: "latestPurchaseDesc", limit: 100, offset: 0, ...overrides };
+  return { search: null, accountIds: [], typeGroups: [], ageCategories: [], sourceGroups: [], makerKeys: [], customTagNames: [], excludedCustomTagNames: [], sort: "latestPurchaseDesc", limit: 100, offset: 0, ...overrides };
 }
 const page = (totalCount: number): ProductListPage => ({ products: [], totalCount });
 function fixture() {
@@ -75,11 +75,11 @@ describe("Library query lifecycle", () => {
     const { controller, port, view } = fixture();
     const clamp = deferred<ProductListPage>();
     port.listProducts.mockResolvedValueOnce(page(2)).mockReturnValueOnce(clamp.promise).mockResolvedValueOnce(page(8));
-    const input = query({ search: "old", makerNames: ["original"], limit: 100, offset: 200 });
+    const input = query({ search: "old", makerKeys: ["original"], limit: 100, offset: 200 });
     const first = controller.load(input, true);
-    input.makerNames[0] = "mutated";
+    input.makerKeys[0] = "mutated";
     await Promise.resolve();
-    expect(port.listProducts).toHaveBeenNthCalledWith(2, { ...input, makerNames: ["original"], offset: 0 });
+    expect(port.listProducts).toHaveBeenNthCalledWith(2, { ...input, makerKeys: ["original"], offset: 0 });
     await controller.load(query({ search: "reset", offset: 0 }));
     clamp.resolve(page(2)); await first;
     expect(view.page).toHaveBeenCalledExactlyOnceWith(page(8), 0);
