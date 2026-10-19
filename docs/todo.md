@@ -6,6 +6,11 @@
   then [edit priority in Settings](plans/2026-10-19.02-edit-name-language-priority-in-settings.md).
   All three steps are complete. Database upgrade, Rust/frontend checks, builds, and mocked-IPC browser regression checks passed.
 
+- Preparing 3.6.0 for the name-language preference feature; see
+  [release notes](releases/3.6.0.md). Version metadata is synchronized and local
+  workspace/frontend release checks passed. Platform artifacts will be built
+  into a draft release; native desktop acceptance remains pending.
+
 - Stable 3.5.0 is published with the redesigned workspace and native-QA fixes.
   All platform builds and uploaded artifact signatures/checksums passed; public
   latest.json serves 3.5.0. Linux startup, update checks and correlated diagnostic

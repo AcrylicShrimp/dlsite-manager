@@ -1262,3 +1262,14 @@
   reopening a real SQLite file. No live account/native-WebView check was run;
   that is outside this change's required mocked-IPC smoke gate. All three
   plan files are Completed with actual evidence; no required work is deferred.
+
+- Committed issue #49 as `2e42728` at the maintainer's request and prepared
+  3.6.0 as the next feature release. Synchronized package/Tauri/Cargo app
+  versions and Cargo.lock; added release notes with schema upgrade behavior,
+  verified coverage and remaining native checks. Local release gates passed:
+  `cargo test --workspace --locked`, workspace all-target Clippy with
+  `-D warnings`, `cargo fmt --all --check`, frontend check (zero errors/warnings),
+  21 frontend tests and production build. Opt-in live suites returned without
+  real-account access. Frontend scripts used the previously documented pnpm
+  version-switch workaround. Release automation will assemble a draft from
+  the explicit tag after main/release are pushed.
