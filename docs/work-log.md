@@ -1287,3 +1287,10 @@
   actual results. Native desktop acceptance/updater installation remain
   unverified; public Latest remains 3.5.0 and 3.6.0 remains a draft as requested
   by the release-preparation scope.
+
+- Shortened the 3.6.0 release notes at the maintainer's request. Kept the user
+  changes, database upgrade compatibility notice and platform caveats; removed
+  validation reports and implementation details from the release text. Detailed
+  verification remains in this work log and the completed plans. Documentation
+  validation: whitespace check and exact GitHub/local release-body comparison;
+  no code tests were needed for this prose-only change.
