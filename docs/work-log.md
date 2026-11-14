@@ -1359,3 +1359,12 @@
   follows the agreed strict CP932 policy rather than that PR's UTF-8 probing and
   CP437 fallback. Existing validation remains applicable; final whitespace check
   passed and origin/main matched the local base before committing.
+
+## 2026-11-15 — Prepare combined 3.6.0 publication
+
+- Maintainer authorized publishing the pending name-language feature together
+  with issue #50's ZIP fix as stable 3.6.0. Expanded release notes, referencing
+  contributor PR #51. Existing 3.6.0 is still a draft; its old artifacts lack
+  the ZIP fix and must be rebuilt before publication. Main CI on `5d91795`
+  passed (run `43615233054`). Release tag will be updated from its unpublished
+  draft revision, release branch advanced, and all platform bundles rebuilt.
