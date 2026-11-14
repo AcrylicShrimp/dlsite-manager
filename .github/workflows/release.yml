@@ -114,7 +114,7 @@ jobs:
       matrix:
         include:
           - label: macOS
-            os: macos-14
+            os: macos-15
             artifact-name: dlsite-manager-macos
           - label: Windows
             os: windows-latest

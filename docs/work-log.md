@@ -1368,3 +1368,9 @@
   the ZIP fix and must be rebuilt before publication. Main CI on `5d91795`
   passed (run `43615233054`). Release tag will be updated from its unpublished
   draft revision, release branch advanced, and all platform bundles rebuilt.
+
+- Release run `43617276464` could not start macOS: GitHub rejected retired
+  `macos-14-arm64-us-default`. Official runner-images documentation confirms
+  macOS 14 retirement on November 2, 2026 and macos-15 as ARM64 replacement.
+  Cancelled the incomplete run and changed the release matrix to macos-15;
+  a fresh build of all platforms is required before publishing.
