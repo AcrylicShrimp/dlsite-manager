@@ -1,6 +1,6 @@
 # Next steps
 
-- Issue #50 is fixed locally: ZIP filenames honor explicit Unicode information;
+- Issue #50 shipped in stable 3.6.0: ZIP filenames honor explicit Unicode information;
   unlabeled names use strict CP932 directly; undecodable names fail without CP437 fallback. Synthetic
   extraction, encoding-error cleanup and decoded-path safety regressions pass.
   Real downloaded CP932 archive/native-app validation remains unperformed.
@@ -11,15 +11,15 @@
   then [edit priority in Settings](plans/2026-10-19.02-edit-name-language-priority-in-settings.md).
   All three steps are complete. Database upgrade, Rust/frontend checks, builds, and mocked-IPC browser regression checks passed.
 
-- 3.6.0 is prepared as a draft for the name-language preference feature; see
-  [release notes](releases/3.6.0.md). Main/release CI and all platform builds
-  passed. All 13 assets, checksums, updater signatures/manifest and macOS app
-  signature/version are verified. Native desktop acceptance and publication
-  remain pending; the public latest release is still 3.5.0.
+- Stable 3.6.0 is published with name-language preferences and the ZIP filename
+  fix; see [release notes](releases/3.6.0.md). Main/release CI and all platform
+  builds passed. All 13 assets, checksums, updater signatures/manifest and macOS
+  app signature/version are verified; public latest.json serves 3.6.0. Native
+  desktop acceptance and an actual updater installation remain unverified.
 
 - Stable 3.5.0 is published with the redesigned workspace and native-QA fixes.
-  All platform builds and uploaded artifact signatures/checksums passed; public
-  latest.json serves 3.5.0. Linux startup, update checks and correlated diagnostic
+  All platform builds and uploaded artifact signatures/checksums passed; its
+  updater manifest was verified at publication. Linux startup, update checks and correlated diagnostic
   export passed. Actual installation through the updater remains unverified.
 
 - Local OrbStack Linux GUI baseline is available; see `docs/linux-qa.md`.

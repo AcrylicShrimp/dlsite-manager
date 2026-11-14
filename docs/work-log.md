@@ -1374,3 +1374,30 @@
   macOS 14 retirement on November 2, 2026 and macos-15 as ARM64 replacement.
   Cancelled the incomplete run and changed the release matrix to macos-15;
   a fresh build of all platforms is required before publishing.
+
+- Checked Codex review on contributor PR #51 before publication. Its directory
+  misclassification finding is already covered by decoded-name directory checks
+  and the extensionless `表` extraction fixture in main; reran
+  `cargo test -p dm-archive --locked --offline decodes_zip_filenames_before_extracting`
+  successfully. Its validation-log finding is covered by the entries above.
+  At the maintainer's explicit request, posted the approved message
+  (issuecomment-6880996957) and closed PR #51 without merging.
+
+## 2026-11-15 — Publish stable 3.6.0
+
+- Published the combined name-language preference and ZIP filename fix release
+  at `v3.6.0` / `8474cb8`, marking it stable and Latest. Main/release CI runs
+  `43617358101` and `43617358106` passed; all three builds and publish job in
+  release run `43617368700` passed after switching to macos-15.
+- `gh release download v3.6.0` and the temporary Node verifier checked all
+  SHA-256 manifests, four Ed25519/BLAKE2b signatures and trusted version comments,
+  and all three platform entries in latest.json. All 13 draft assets were
+  replaced by this build. Downloaded macOS/Linux files match workflow artifacts.
+  macOS `codesign --verify --deep --strict` passed; plist version is 3.6.0,
+  binary is ARM64 and includes the new ZIP decoding error. Release body matches
+  `docs/releases/3.6.0.md`. Verification files are retained in
+  `/tmp/dlsite-manager-3.6.0-final.cH5qnQ`.
+- After `gh release edit v3.6.0 --draft=false --prerelease=false --latest`,
+  confirmed the public latest/download/latest.json equals the verified 3.6.0
+  manifest. Updated next steps. No actual updater installation or new native
+  desktop acceptance was performed; the release retains documented caveats.
