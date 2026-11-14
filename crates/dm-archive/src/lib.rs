@@ -1,7 +1,9 @@
 use std::{
+    borrow::Cow,
     fs, io,
     path::{Component, Path, PathBuf},
 };
+use zip::read::HasZipMetadata;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ArchiveExtractOptions {
@@ -35,6 +37,10 @@ pub enum ArchiveError {
     Rar(#[from] unrar_ng::error::UnrarError),
     #[error("unsafe archive entry path: {entry}")]
     UnsafeArchiveEntry { entry: String },
+    #[error(
+        "ZIP entry filename is invalid for its declared Unicode encoding or assumed Shift-JIS"
+    )]
+    InvalidZipEntryEncoding,
     #[error("archive extraction target already exists: {path}")]
     TargetAlreadyExists { path: PathBuf },
     #[error("archive plan is not extractable yet: {kind}")]
@@ -72,6 +78,7 @@ impl ArchiveError {
                 _ => "rar_other",
             },
             Self::UnsafeArchiveEntry { .. } => "unsafe_entry",
+            Self::InvalidZipEntryEncoding => "zip_filename_encoding",
             Self::TargetAlreadyExists { .. } => "target_exists",
             Self::UnsupportedPlan { .. } => "unsupported_plan",
         }
@@ -297,9 +304,10 @@ fn extract_single_zip_inner(
 
     for index in 0..zip.len() {
         let mut entry = zip.by_index(index)?;
-        let entry_path = safe_archive_entry_path(staging_dir, entry.name())?;
+        let entry_name = zip_entry_name(entry.name_raw(), entry.get_metadata().is_utf8)?;
+        let entry_path = safe_archive_entry_path(staging_dir, &entry_name)?;
 
-        if entry.is_dir() {
+        if entry_name.ends_with('/') {
             fs::create_dir_all(&entry_path)?;
             continue;
         }
@@ -329,6 +337,19 @@ fn extract_single_zip_inner(
         extracted_paths,
         removed_sources,
     })
+}
+
+fn zip_entry_name(raw: &[u8], is_utf8: bool) -> Result<Cow<'_, str>> {
+    // zip applies validated Unicode Path extra fields to name_raw and sets is_utf8.
+    if is_utf8 {
+        return std::str::from_utf8(raw)
+            .map(Cow::Borrowed)
+            .map_err(|_| ArchiveError::InvalidZipEntryEncoding);
+    }
+    // Unlabeled Japanese Windows filenames are CP932. Do not guess or fall back.
+    encoding_rs::SHIFT_JIS
+        .decode_without_bom_handling_and_without_replacement(raw)
+        .ok_or(ArchiveError::InvalidZipEntryEncoding)
 }
 
 fn content_root(staging_dir: &Path, flatten_single_root: bool) -> Result<PathBuf> {
@@ -564,6 +585,99 @@ mod tests {
         assert!(archive.exists());
 
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn decodes_zip_filenames_before_extracting() {
+        for (fixture, expected) in [
+            (
+                "cp932.zip",
+                vec![
+                    "サンプル/説明書.txt",
+                    "サンプル/画像フォルダ/表紙.txt",
+                    "ソ能十予.txt",
+                    "表",
+                ],
+            ),
+            ("unicode-path.zip", vec!["正しい名前.txt"]),
+        ] {
+            let dir = test_dir("filename-decoding");
+            let archive = dir.join("input.zip");
+            std::fs::copy(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures")
+                    .join(fixture),
+                &archive,
+            )
+            .unwrap();
+            extract_single_zip(
+                &archive,
+                &dir,
+                ArchiveExtractOptions {
+                    flatten_single_root: false,
+                    remove_sources: true,
+                },
+            )
+            .unwrap();
+            for name in expected {
+                assert_eq!(
+                    std::fs::read(dir.join(name)).unwrap(),
+                    b"hello",
+                    "{fixture}: {name}"
+                );
+            }
+            assert!(!archive.exists());
+            assert!(!dir.join(".dm-archive-0").exists());
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_encodings_and_unsafe_decoded_paths_without_losing_sources() {
+        for (fixture, encoding_error) in [
+            ("invalid-filename.zip", true),
+            ("invalid-flagged-utf8.zip", true),
+            ("unflagged-utf8.zip", true),
+            ("cp932-traversal.zip", false),
+            ("cp932-backslash.zip", false),
+            ("cp932-absolute.zip", false),
+        ] {
+            let dir = test_dir("filename-rejection");
+            let archive = dir.join("input.zip");
+            std::fs::copy(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures")
+                    .join(fixture),
+                &archive,
+            )
+            .unwrap();
+            let output = dir.join("output");
+            let err = extract_single_zip(&archive, &output, ArchiveExtractOptions::default())
+                .unwrap_err();
+            if encoding_error {
+                assert!(
+                    matches!(err, ArchiveError::InvalidZipEntryEncoding),
+                    "{fixture}: {err:?}"
+                );
+                assert_eq!(err.diagnostic_kind(), "zip_filename_encoding");
+            } else {
+                assert!(
+                    matches!(err, ArchiveError::UnsafeArchiveEntry { .. }),
+                    "{fixture}: {err:?}"
+                );
+            }
+            assert!(archive.exists());
+            assert_eq!(std::fs::read_dir(&output).unwrap().count(), 0);
+            assert!(!dir.join("表.txt").exists());
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn unflagged_names_use_cp932_even_when_valid_utf8() {
+        // The same bytes are © in UTF-8 and two halfwidth characters in CP932.
+        assert_eq!(zip_entry_name(b"\xc2\xa9", false).unwrap(), "ﾂｩ");
+        assert_eq!(zip_entry_name(b"\xc2\xa9", true).unwrap(), "©");
     }
 
     #[test]

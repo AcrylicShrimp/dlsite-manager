@@ -1058,6 +1058,7 @@ name = "dm-archive"
 version = "3.3.0"
 dependencies = [
  "dotenvy",
+ "encoding_rs",
  "thiserror 2.0.20",
  "unrar-ng",
  "zip 8.6.0",

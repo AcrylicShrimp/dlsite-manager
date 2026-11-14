@@ -1294,3 +1294,68 @@
   verification remains in this work log and the completed plans. Documentation
   validation: whitespace check and exact GitHub/local release-body comparison;
   no code tests were needed for this prose-only change.
+
+## 2026-11-15 — Reproduce issue #50
+
+- Confirmed both reported ZIP failures on macOS using current `4087506`
+  `dm-archive::extract_single_zip`, with production code unchanged. Constructed
+  the reporter's stored CP932 ZIP fixtures with UTF-8 flags cleared; Python
+  verified CRCs and recovered the expected names by decoding raw bytes as CP932.
+- `a.zip` succeeds with mojibake (`âTâôâvâï/Éαû╛Åæ.txt` instead of
+  `サンプル/説明書.txt`); `b.zip` adds `表紙.txt` and fails with
+  `UnsafeArchiveEntry` because CP932's 0x5C trail byte becomes a backslash.
+  Failed extraction leaves an empty output directory with staging cleaned.
+  An equivalent UTF-8 ZIP succeeds, including correct `表紙.txt` contents.
+- Temporary fixtures, output directories and assertion-based Rust harness are
+  retained at `/tmp/dlsite-issue-50.6porQ0`. Options disable root flattening and
+  source removal for inspection. All three source ZIPs remain present.
+  Repeated the reproduction using a copy of repository Cargo.lock to retain
+  its dependency versions; both runs confirmed the same behavior. Harness:
+  `CARGO_TARGET_DIR=/Users/ashrimp/Devel/dlsite-manager/target cargo run --manifest-path /tmp/dlsite-issue-50.6porQ0/Cargo.toml --offline`
+  (remove only this harness's a-out/b-out/utf8-out directories before rerunning).
+- Validation: `cargo test -p dm-archive --locked --offline` passed all 15 unit
+  tests; the opt-in live RAR test returned without live fixture execution.
+  Existing tests do not cover these CP932 cases. Updated `docs/todo.md`;
+  decoding policy, regression tests and a fix remain next steps.
+
+## 2026-11-15 — Fix issue #50 filename decoding
+
+- Added explicit UTF-8/Unicode metadata handling, unflagged UTF-8 recognition,
+  then strict CP932 decoding in `dm-archive`. Per maintainer policy there is no
+  CP437 fallback: undecodable names return `InvalidZipEntryEncoding`, keeping
+  source ZIPs and cleaning staging through the existing error path. Detection
+  is metadata/UTF-8 validation, not a general statistical encoding detector.
+- Path validation and directory detection now use decoded names; extensionless
+  `表` is a file even though its CP932 bytes end with 0x5C. Added the sanitized
+  `zip_filename_encoding` diagnostic code to `dm-audit`'s allowlist. Reused the
+  locked `encoding_rs` version; no dependency versions changed.
+- Added eight reproducible synthetic ZIP fixtures and a Python generator;
+  regression cases cover CP932 names, 0x5C trail bytes, unflagged UTF-8,
+  authoritative Unicode Path metadata, malformed names/UTF-8 flags, cleanup
+  after partial staging, and decoded traversal/backslash/absolute path rejection.
+  Updated fixture README, archive design notes and next steps.
+- Validation: `cargo test -p dm-archive --locked --offline` (17 unit tests),
+  `cargo test -p dm-audit --locked --offline` (13 tests), targeted all-target
+  Clippy with `-D warnings`, formatting and `git diff --check` passed. The live
+  RAR test remained opt-in; no real download/native-app validation was run.
+
+## 2026-11-15 — Finalize CP932-only policy for unlabeled ZIP names
+
+- Per maintainer direction, removed unflagged UTF-8 probing. Explicit Unicode
+  metadata remains authoritative; unlabeled filenames now use strict CP932
+  directly and fail without detection or fallback. Updated the encoding error
+  wording, fixture expectations, TODO and archive design; captured the final
+  decision in `docs/designs/2026-11-15.00-zip-filename-encoding.md`.
+- Added a regression proving ambiguous UTF-8/CP932 bytes use CP932 when
+  unlabeled, and changed unflagged non-CP932 input to require failure and source
+  preservation. Validation: 18 archive unit tests and all-target archive Clippy
+  with `-D warnings` passed; formatting and whitespace checks passed. Live RAR
+  remained opt-in, and no native-app/real-download validation was performed.
+
+## 2026-11-15 — Publish issue #50 fix
+
+- Prepared the reviewed local changes for commit/push on main at the maintainer's
+  request. Commit references issue #50 and contributor PR #51; this implementation
+  follows the agreed strict CP932 policy rather than that PR's UTF-8 probing and
+  CP437 fallback. Existing validation remains applicable; final whitespace check
+  passed and origin/main matched the local base before committing.

@@ -1,5 +1,10 @@
 # Next steps
 
+- Issue #50 is fixed locally: ZIP filenames honor explicit Unicode information;
+  unlabeled names use strict CP932 directly; undecodable names fail without CP437 fallback. Synthetic
+  extraction, encoding-error cleanup and decoded-path safety regressions pass.
+  Real downloaded CP932 archive/native-app validation remains unperformed.
+
 - Issue #49 is implemented through three completed plans, in dependency order:
   [localized JSON as the name source](plans/2026-10-19.00-use-localized-names-as-storage-source.md),
   [persist and apply language priority](plans/2026-10-19.01-apply-name-language-priority.md),

@@ -183,6 +183,7 @@ pub(crate) fn known_code(s: &str) -> &str {
         | "zip_missing_entry"
         | "zip_password"
         | "zip_compression"
+        | "zip_filename_encoding"
         | "rar_corrupt"
         | "rar_format"
         | "rar_open"

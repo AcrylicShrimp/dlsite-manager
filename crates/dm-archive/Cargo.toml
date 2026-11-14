@@ -6,6 +6,7 @@ license = "MIT"
 publish = false
 
 [dependencies]
+encoding_rs = "0.8.40"
 thiserror = "2.0.20"
 unrar-ng = "0.7.7"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
