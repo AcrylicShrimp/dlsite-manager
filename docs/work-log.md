@@ -1401,3 +1401,11 @@
   confirmed the public latest/download/latest.json equals the verified 3.6.0
   manifest. Updated next steps. No actual updater installation or new native
   desktop acceptance was performed; the release retains documented caveats.
+
+## 2026-11-15 — Close shipped issues and link #49 in release notes
+
+- Closed #49 and #50 as completed after stable 3.6.0 publication; removed
+  #49's stale in-progress label. Added #49's link and original Japanese name
+  preference wording to the existing name-language feature in both local and
+  published release notes. Verified exact local/GitHub release-body agreement
+  and whitespace; no code tests needed for this documentation-only change.
