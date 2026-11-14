@@ -1294,3 +1294,15 @@
   verification remains in this work log and the completed plans. Documentation
   validation: whitespace check and exact GitHub/local release-body comparison;
   no code tests were needed for this prose-only change.
+
+- Fixed issue #50: ZIP entry names without the UTF-8 flag were decoded as
+  CP437 by the `zip` crate, so CP932 (Shift-JIS) names from Japanese Windows
+  archivers extracted as mojibake, and names with a 0x5C trail byte (表, ソ,
+  能, ...) failed the backslash check with `UnsafeArchiveEntry`.
+  `dm-archive` now picks the name from `name_raw()`: ASCII and valid UTF-8
+  as-is, then strict CP932 via `encoding_rs` (already in Cargo.lock), then the
+  crate's CP437 text. Decoded names still go through
+  `safe_archive_entry_path`. Added unit tests for CP932 with a 0x5C trail
+  byte, UTF-8/ASCII passthrough and the CP437 fallback; updated the archive
+  boundary design note. Known limit: archives in other legacy code pages
+  (for example GBK) may decode as valid but wrong CP932.

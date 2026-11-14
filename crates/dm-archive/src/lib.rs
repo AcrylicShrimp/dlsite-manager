@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     fs, io,
     path::{Component, Path, PathBuf},
 };
@@ -297,7 +298,8 @@ fn extract_single_zip_inner(
 
     for index in 0..zip.len() {
         let mut entry = zip.by_index(index)?;
-        let entry_path = safe_archive_entry_path(staging_dir, entry.name())?;
+        let entry_name = zip_entry_name(entry.name_raw(), entry.name());
+        let entry_path = safe_archive_entry_path(staging_dir, &entry_name)?;
 
         if entry.is_dir() {
             fs::create_dir_all(&entry_path)?;
@@ -329,6 +331,29 @@ fn extract_single_zip_inner(
         extracted_paths,
         removed_sources,
     })
+}
+
+/// Picks the text for a zip entry name. The `zip` crate decodes every name
+/// without the UTF-8 flag (general purpose bit 11) as CP437, but archives made
+/// by Japanese Windows tools store CP932 (Shift-JIS) without setting that flag.
+fn zip_entry_name<'a>(raw: &'a [u8], cp437: &'a str) -> Cow<'a, str> {
+    if raw.is_ascii() {
+        return Cow::Borrowed(cp437);
+    }
+
+    // Flagged UTF-8, Info-ZIP Unicode Path extra fields (the crate stores their
+    // UTF-8 in name_raw), and unflagged UTF-8 from macOS/Linux archivers.
+    if let Ok(name) = std::str::from_utf8(raw) {
+        return Cow::Borrowed(name);
+    }
+
+    if let Some(name) =
+        encoding_rs::SHIFT_JIS.decode_without_bom_handling_and_without_replacement(raw)
+    {
+        return name;
+    }
+
+    Cow::Borrowed(cp437)
 }
 
 fn content_root(staging_dir: &Path, flatten_single_root: bool) -> Result<PathBuf> {
@@ -438,6 +463,29 @@ fn has_extension(path: &Path, expected: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zip_entry_name_decodes_unflagged_cp932() {
+        // 表 is CP932 0x95 0x5C; read as CP437 its trail byte becomes a backslash.
+        let name = "サンプル/画像フォルダ/表紙.txt";
+        let raw = encoding_rs::SHIFT_JIS.encode(name).0;
+
+        assert_eq!(zip_entry_name(&raw, "cp437 text"), name);
+    }
+
+    #[test]
+    fn zip_entry_name_keeps_utf8_and_ascii() {
+        let utf8 = "サンプル/説明書.txt";
+
+        assert_eq!(zip_entry_name(utf8.as_bytes(), "cp437 text"), utf8);
+        assert_eq!(zip_entry_name(b"Readme.txt", "Readme.txt"), "Readme.txt");
+    }
+
+    #[test]
+    fn zip_entry_name_falls_back_to_cp437_for_invalid_cp932() {
+        // 0xFF is neither a CP932 lead byte nor valid UTF-8; CP437 maps it to U+00A0.
+        assert_eq!(zip_entry_name(b"\xff.txt", "\u{a0}.txt"), "\u{a0}.txt");
+    }
     use std::{
         io::Write,
         time::{SystemTime, UNIX_EPOCH},
